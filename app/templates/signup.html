@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-md mx-auto mt-12 bg-gray-800 rounded-xl shadow-lg p-8 animate-fade-in">
+    <h2 class="text-3xl font-bold mb-6 text-center text-indigo-300">Sign Up</h2>
+    <form method="POST" action="/auth/signup" class="space-y-6">
+        <div>
+            <label for="username" class="block text-sm font-medium text-gray-300">Username</label>
+            <input type="text" name="username" id="username" required
+                class="mt-1 w-full p-3 rounded-lg bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition placeholder-gray-400" placeholder="Choose a username">
+        </div>
+        <div>
+            <label for="password" class="block text-sm font-medium text-gray-300">Password</label>
+            <input type="password" name="password" id="password" required
+                class="mt-1 w-full p-3 rounded-lg bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition placeholder-gray-400" placeholder="Choose a password">
+        </div>
+        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 p-3 rounded-lg font-semibold transition transform hover:scale-105">Sign Up</button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LLM WebUI</title>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- TailwindCSS via CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.7/dist/tailwind.min.css" rel="stylesheet" />
+
+    <!-- Syntax-highlighting theme (GitHub Dark) -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/styles.css" />
+
+    <!-- marked.js (Markdown → HTML) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- highlight.js core + common languages -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+
+    <!-- Global Markdown / highlighting config -->
+    <script>
+      marked.setOptions({
+        breaks: true,                             // soft-breaks → <br>
+        mangle: false,                            // keep email addresses
+        highlight: (code, lang) => {
+          try {
+            return hljs.highlight(code, { language: lang || 'plaintext' }).value;
+          } catch {
+            return hljs.highlightAuto(code).value;
+          }
+        }
+      });
+    </script>
+</head>
+
+<body class="flex flex-col min-h-screen bg-gray-900 text-white font-sans">
+    <!-- Navbar -->
+    <nav class="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 shadow-lg sticky top-0 z-50">
+        <div class="container mx-auto flex justify-between items-center">
+            <a href="/" class="text-2xl font-bold tracking-tight text-white">LLM WebUI</a>
+
+            <div class="space-x-4 flex items-center">
+                {% if request.session.username %}
+                    <a href="/chat" class="text-white hover:text-indigo-200 transition font-medium">Chat</a>
+                    <a href="/rag"  class="text-white hover:text-indigo-200 transition font-medium">RAG</a>
+                    {% if request.session.role == 'admin' %}
+                        <a href="/auth/users" class="text-white hover:text-indigo-200 transition font-medium">Users</a>
+                    {% endif %}
+                    <a href="/auth/logout" class="text-white hover:text-indigo-200 transition font-medium">Logout</a>
+                {% else %}
+                    <a href="/auth/signin" class="text-white hover:text-indigo-200 transition font-medium">Sign In</a>
+                    <a href="/auth/signup" class="text-white hover:text-indigo-200 transition font-medium">Sign Up</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <!-- Flash Message -->
+    <div class="container mx-auto px-4 sm:px-6 lg:px-8 flex-grow">
+        {% if request.session.flash %}
+            <div class="bg-red-600 p-4 rounded-lg mb-6 shadow-lg animate-fade-in max-w-2xl mx-auto mt-6">
+                <p class="text-center">{{ request.session.flash }}</p>
+            </div>
+            {% set _ = request.session.pop('flash') %}
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Page-specific JS files -->
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

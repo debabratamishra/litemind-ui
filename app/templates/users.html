@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-3xl mx-auto mt-12 bg-gray-800 rounded-xl shadow-lg p-8 animate-fade-in">
+    <h2 class="text-3xl font-bold mb-6 text-center text-indigo-300">Users</h2>
+    <div class="space-y-4">
+        {% for user in users %}
+            <div class="bg-gray-900 p-4 rounded-lg shadow flex justify-between items-center">
+                <span class="text-gray-300">{{ user }}</span>
+            </div>
+        {% else %}
+            <p class="text-gray-400 text-center">No users found.</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,5 @@
+uploads/
+instance/
+*.db
+chroma_db/
+__pycache__/

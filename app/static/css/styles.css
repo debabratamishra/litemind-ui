@@ -1,0 +1,166 @@
+/* styles.css — ChatGPT-like dark theme with bubble design
+   ------------------------------------------------------- */
+
+/* ---------- Global page layout ---------- */
+body {
+    background: linear-gradient(135deg, #0f172a, #1e293b);
+    min-height: 100vh;
+    font-family: 'Inter', sans-serif;
+    color: #e2e8f0;
+    display: flex;
+    flex-direction: column;
+}
+
+nav {
+    background: linear-gradient(to right, #3b82f6, #8b5cf6);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+}
+
+/* ---------- Interactive elements ---------- */
+button,
+input,
+textarea {
+    transition: all 0.2s ease;
+}
+
+button:hover {
+    transform: scale(1.03);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* ---------- Chat area ---------- */
+#chat-container {
+    background: #1e293b;
+    border-radius: 1rem;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+    border: 1px solid #374151;
+    padding: 1rem;
+    flex-grow: 1;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #4b5563 #1e293b;
+}
+
+/* ---------- Message bubbles ---------- */
+.message-bubble {
+    max-width: 70%;
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+    border-radius: 1rem;
+    line-height: 1.4;
+    word-wrap: break-word;
+    display: flex;
+    flex-direction: column;
+    /* white-space: pre-wrap;          KEEP markdown line-breaks */
+}
+
+.message-bubble.user {
+    background: #3b82f6;
+    color: #fff;
+    margin-left: auto;
+    border-bottom-right-radius: 0.25rem;
+}
+
+.message-bubble.llm {
+    background: #334155;
+    color: #e2e8f0;
+    margin-right: auto;
+    border-bottom-left-radius: 0.25rem;
+}
+
+/* Markdown lists inside bubbles look like real ChatGPT */
+.message-bubble ol,
+.message-bubble ul {
+    padding-left: 1.5em;
+    margin: 0.5em 0 0.5em 0;
+}
+
+.message-bubble li {
+    margin-bottom: 0.35em;
+}
+
+/* --- Markdown resets (fix bold / italics / code) --- */
+.message-bubble strong { font-weight: 600; }
+.message-bubble em    { font-style : italic; }
+
+/* Inline `code` */
+.message-bubble code {
+    background: #1e293b;
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.25rem;
+    font-family: ui-monospace, SFMono-Regular, 'Consolas', 'Menlo', monospace;
+    color: #e2e8f0;
+    /* white-space: pre-wrap; */
+}
+
+/* Fenced code blocks ``` */
+.message-bubble pre {
+    background: #0f172a;
+    padding: 1rem;
+    border-radius: 0.75rem;
+    /* white-space: pre;              preserve indentation exactly */
+    overflow-x: auto;
+    margin: 0.75rem 0;
+    /* white-space: pre-wrap; */
+    font-family: ui-monospace, SFMono-Regular, 'Consolas', 'Menlo', monospace;
+}
+
+/* Chunks fade-in while streaming */
+.stream-segment {
+    opacity: 0;
+    animation: fadeIn 0.5s ease-out forwards;
+}
+
+/* ---------- Typing indicator ---------- */
+#typing-indicator {
+    display: none;
+    color: #94a3b8;
+    font-style: italic;
+    margin: 0.5rem 0;
+}
+
+/* ---------- Animations ---------- */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in { animation: fadeIn 0.5s ease-out; }
+
+@keyframes pulse {
+    0%,100% { opacity: 0.5; }
+    50%     { opacity: 1;   }
+}
+
+.typing {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+}
+
+.typing span {
+    width: 8px;
+    height: 8px;
+    background: #94a3b8;
+    border-radius: 50%;
+    animation: pulse 1.2s infinite;
+}
+
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+
+/* ---------- Scrollbar styling ---------- */
+::-webkit-scrollbar { width: 8px; }
+
+::-webkit-scrollbar-track { background: #1e293b; }
+
+::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover { background: #6b7280; }
