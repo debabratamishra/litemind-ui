@@ -18,6 +18,14 @@
     <!-- Custom CSS -->
     <link rel="stylesheet" href="/static/css/styles.css" />
 
+    <!-- PWA: Manifest, Icons, and Theme -->
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#3b82f6">
+    <link rel="icon" href="/static/icons/icon-192.png" sizes="192x192">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
     <!-- marked.js (Markdown → HTML) -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
@@ -78,5 +86,19 @@
 
     <!-- Page-specific JS files -->
     <script src="/static/js/main.js"></script>
+
+    <!-- PWA: Service Worker registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/static/service-worker.js')
+            .then(function(registration) {
+              console.log('ServiceWorker registered:', registration);
+            }, function(err) {
+              console.log('ServiceWorker registration failed:', err);
+            });
+        });
+      }
+    </script>
 </body>
 </html>
