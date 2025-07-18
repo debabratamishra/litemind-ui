@@ -1,72 +1,128 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="flex justify-center items-start py-12 px-4">
-  <div class="card-glass w-full max-w-4xl animate__animated animate__fadeIn space-y-6">
 
-    <h2 class="text-3xl font-extrabold text-center text-indigo-300">Chat with LLM</h2>
+<div class="flex flex-col items-center justify-start w-full pt-6 pb-8 px-4">
+  <!-- Responsive container -->
+  <div class="w-full max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl mx-auto">
 
-    <!-- message history -->
+    <!-- Chat area -->
     <div id="chat-container"
-         class="h-[60vh] overflow-y-auto space-y-4 rounded-xl bg-gray-800/70 p-4 border border-gray-700"></div>
-
-    <!-- typing dots -->
-    <div id="typing-indicator" class="flex gap-1" style="display:none">
-      <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+         class="max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl mx-auto chat-outer-margin" style="margin-top:20px; margin-left:50px; margin-right:50px; height: 500px;">
+      
+      <div class="message-bubble llm">
+        <div class="font-semibold text-blue-200 mb-1">Assistant</div>
+        <div class="text-[14px]">Hello! I'm your AI assistant. How can I help you today?</div>
+      </div>
     </div>
 
-    <!-- prompt input -->
-    <form id="chat-form" class="flex gap-2" autocomplete="off" onsubmit="return false;">
-      <input  id="prompt"
-              type="text"
-              placeholder="Type your message…"
-              class="flex-1 p-3 rounded-lg bg-gray-800 border border-gray-700
-                     focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-400"/>
-      <button id="send-btn"
-              class="px-5 py-3 rounded-lg font-semibold bg-gradient-to-r from-indigo-500 to-purple-600
-                     hover:from-indigo-600 hover:to-purple-700 transition">Send</button>
-    </form>
+    <!-- Prompt -->
+    <form id="chat-form" class="w-full flex items-center justify-center mt-8" autocomplete="off" onsubmit="return false;">
+    <div class="relative w-full max-w-xl">
+      <input
+        id="prompt"
+        name="prompt"
+        type="text"
+        autocomplete="off"
+        required
+        placeholder="Ask me anything..."
+        class="w-full rounded-full pl-5 pr-12 py-3 bg-white/10 border border-white/20 text-white placeholder-gray-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+        style="font-size: 14px;"
+      />
+    </div>
+  </form>
 
   </div>
 </div>
 
 <script>
-const chatContainer   = document.getElementById('chat-container');
-const promptInput     = document.getElementById('prompt');
-const typingIndicator = document.getElementById('typing-indicator');
-const sendBtn         = document.getElementById('send-btn');
+const chatContainer = document.getElementById('chat-container');
+const promptInput = document.getElementById('prompt');
+const sendBtn = document.getElementById('send-btn');
 
-const scrollToBottom = () => chatContainer.scrollTo({top : chatContainer.scrollHeight, behavior : 'smooth'});
+let isStreaming = false;
+let shouldAutoScroll = true;
 
-sendBtn.addEventListener('click', async () => {
+// Auto-resize textarea
+promptInput.addEventListener('input', () => {
+  promptInput.style.height = 'auto';
+  promptInput.style.height = Math.min(promptInput.scrollHeight, 200) + 'px';
+});
+
+
+promptInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+const scrollToBottom = () => {
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+};
+
+chatContainer.addEventListener('scroll', () => {
+  const isAtBottom = chatContainer.scrollTop + chatContainer.clientHeight >= chatContainer.scrollHeight - 32;
+  shouldAutoScroll = isAtBottom;
+});
+
+function createUserMessage(text) {
+  const bubble = document.createElement('div');
+  bubble.className = 'message-bubble user bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-xl px-4 py-3 ml-auto max-w-[80%] shadow';
+  bubble.innerHTML = `<div class="font-semibold text-[13px] mb-1 text-right">You</div>
+    <div class="text-[13px] text-right">${text}</div>`;
+  return bubble;
+}
+
+function createAIMessage() {
+  const bubble = document.createElement('div');
+  bubble.className = 'message-bubble llm bg-gray-700/80 text-gray-100 rounded-xl px-4 py-3 max-w-[80%] shadow';
+  bubble.innerHTML = `<div class="font-semibold text-blue-200 mb-1">Assistant</div>
+    <div class="ai-response text-[13px]"></div>`;
+  return { bubble, streamDiv: bubble.querySelector('.ai-response') };
+}
+
+async function sendMessage() {
   const prompt = promptInput.value.trim();
   if (!prompt) return;
+  sendBtn.disabled = true;
+  promptInput.disabled = true;
+  isStreaming = true;
+  shouldAutoScroll = true;
 
-  /* user bubble */
-  const userBubble = document.createElement('div');
-  userBubble.className   = 'message-bubble user';
-  userBubble.textContent = `You: ${prompt}`;
-  chatContainer.appendChild(userBubble);
+  const userMsg = createUserMessage(prompt);
+  chatContainer.appendChild(userMsg);
   scrollToBottom();
+  promptInput.value = '';
+  promptInput.style.height = '44px';
 
-  typingIndicator.style.display = 'flex';
+  const typingBubble = document.createElement('div');
+  typingBubble.className = 'message-bubble llm bg-gray-700/80 text-gray-100 rounded-xl px-4 py-3 max-w-[80%] shadow';
+  typingBubble.innerHTML = `<div class="font-semibold text-blue-200 mb-1">Assistant</div>
+    <div>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+    </div>`;
+  chatContainer.appendChild(typingBubble);
+  scrollToBottom();
 
   try {
     const res = await fetch('/chat/api/chat', {
-      method  : 'POST',
-      headers : {'Content-Type':'application/json'},
-      body    : JSON.stringify({prompt})
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt})
     });
+
     if (!res.ok) throw new Error(await res.text());
 
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let mdBuffer  = '';
+    chatContainer.removeChild(typingBubble);
+    const { bubble, streamDiv } = createAIMessage();
+    chatContainer.appendChild(bubble);
+    scrollToBottom();
 
-    const botBubble = document.createElement('div');
-    botBubble.className = 'message-bubble llm';
-    const streamDiv = document.createElement('div');
-    botBubble.appendChild(streamDiv);
-    chatContainer.appendChild(botBubble);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let mdBuffer = '';
 
     while (true) {
       const {done, value} = await reader.read();
@@ -74,18 +130,26 @@ sendBtn.addEventListener('click', async () => {
       mdBuffer += decoder.decode(value);
       streamDiv.innerHTML = marked.parse(mdBuffer);
       hljs.highlightAll();
-      scrollToBottom();
+      if (shouldAutoScroll) scrollToBottom();
     }
+
   } catch (err) {
-    const errB = document.createElement('div');
-    errB.className = 'message-bubble llm text-red-400';
-    errB.textContent = `Error: ${err.message || 'Network error'}`;
-    chatContainer.appendChild(errB);
+    chatContainer.removeChild(typingBubble);
+    const { bubble, streamDiv } = createAIMessage();
+    streamDiv.innerHTML = `<p class="text-red-400">❌ Error: ${err.message || 'Network error'}</p>`;
+    chatContainer.appendChild(bubble);
+    scrollToBottom();
   } finally {
-    typingIndicator.style.display = 'none';
-    promptInput.value = '';
+    isStreaming = false;
+    sendBtn.disabled = false;
+    promptInput.disabled = false;
+    promptInput.focus();
     scrollToBottom();
   }
-});
+}
+
+sendBtn.addEventListener('click', sendMessage);
+document.addEventListener('DOMContentLoaded', () => promptInput.focus());
 </script>
+
 {% endblock %}
