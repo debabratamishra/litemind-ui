@@ -1,47 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="max-w-3xl mx-auto mt-8 mb-8 flex flex-col flex-grow">
-    <h2 class="text-3xl font-bold mb-6 text-center text-indigo-300">Chat with LLM</h2>
+<div class="flex justify-center items-start py-12 px-4">
+  <div class="card-glass w-full max-w-4xl animate__animated animate__fadeIn space-y-6">
 
-    <div id="chat-container" class="flex-grow h-[calc(100vh-16rem)] overflow-y-auto"></div>
+    <h2 class="text-3xl font-extrabold text-center text-indigo-300">Chat with LLM</h2>
+
+    <!-- message history -->
+    <div id="chat-container"
+         class="h-[60vh] overflow-y-auto space-y-4 rounded-xl bg-gray-800/70 p-4 border border-gray-700"></div>
 
     <!-- typing dots -->
-    <div id="typing-indicator" class="typing">
-        <span></span><span></span><span></span>
+    <div id="typing-indicator" class="flex gap-1" style="display:none">
+      <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
     </div>
 
     <!-- prompt input -->
-    <div class="mt-4 flex space-x-2">
-        <input type="text" id="prompt"
-               class="flex-1 p-3 rounded-lg bg-gray-800 border border-gray-700
-                      focus:outline-none focus:ring-2 focus:ring-indigo-500 transition
-                      placeholder-gray-400"
-               placeholder="Type your message…">
-        <button id="send-btn"
-                class="bg-indigo-600 hover:bg-indigo-700 p-3 rounded-lg font-semibold transition">
-            Send
-        </button>
-    </div>
+    <form id="chat-form" class="flex gap-2" autocomplete="off" onsubmit="return false;">
+      <input  id="prompt"
+              type="text"
+              placeholder="Type your message…"
+              class="flex-1 p-3 rounded-lg bg-gray-800 border border-gray-700
+                     focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-400"/>
+      <button id="send-btn"
+              class="px-5 py-3 rounded-lg font-semibold bg-gradient-to-r from-indigo-500 to-purple-600
+                     hover:from-indigo-600 hover:to-purple-700 transition">Send</button>
+    </form>
+
+  </div>
 </div>
 
 <script>
 const chatContainer   = document.getElementById('chat-container');
+const promptInput     = document.getElementById('prompt');
 const typingIndicator = document.getElementById('typing-indicator');
 const sendBtn         = document.getElementById('send-btn');
-const promptInput     = document.getElementById('prompt');
 
-/** Scroll helper */
-const scrollToBottom = () => {
-  chatContainer.scrollTop = chatContainer.scrollHeight;
-};
+const scrollToBottom = () => chatContainer.scrollTo({top : chatContainer.scrollHeight, behavior : 'smooth'});
 
 sendBtn.addEventListener('click', async () => {
   const prompt = promptInput.value.trim();
   if (!prompt) return;
 
-  /* -- user bubble -- */
-  const userBubble       = document.createElement('div');
-  userBubble.className   = 'message-bubble user animate-fade-in';
+  /* user bubble */
+  const userBubble = document.createElement('div');
+  userBubble.className   = 'message-bubble user';
   userBubble.textContent = `You: ${prompt}`;
   chatContainer.appendChild(userBubble);
   scrollToBottom();
@@ -50,40 +52,35 @@ sendBtn.addEventListener('click', async () => {
 
   try {
     const res = await fetch('/chat/api/chat', {
-      method : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body   : JSON.stringify({ prompt })
+      method  : 'POST',
+      headers : {'Content-Type':'application/json'},
+      body    : JSON.stringify({prompt})
     });
-
     if (!res.ok) throw new Error(await res.text());
 
-    const reader   = res.body.getReader();
-    const decoder  = new TextDecoder();
-    let   mdBuffer = '';
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let mdBuffer  = '';
 
-    /* -- assistant bubble (single, keeps updating) -- */
-    const botBubble    = document.createElement('div');
-    botBubble.className= 'message-bubble llm';
-    const streamDiv    = document.createElement('div');
+    const botBubble = document.createElement('div');
+    botBubble.className = 'message-bubble llm';
+    const streamDiv = document.createElement('div');
     botBubble.appendChild(streamDiv);
     chatContainer.appendChild(botBubble);
 
     while (true) {
-      const { done, value } = await reader.read();
+      const {done, value} = await reader.read();
       if (done) break;
-
       mdBuffer += decoder.decode(value);
-
-      /* render full Markdown every tick */
       streamDiv.innerHTML = marked.parse(mdBuffer);
       hljs.highlightAll();
       scrollToBottom();
     }
   } catch (err) {
-    const errBubble = document.createElement('div');
-    errBubble.className = 'message-bubble llm text-red-500 animate-fade-in';
-    errBubble.textContent = `Error: ${err.message || 'Network error'}`;
-    chatContainer.appendChild(errBubble);
+    const errB = document.createElement('div');
+    errB.className = 'message-bubble llm text-red-400';
+    errB.textContent = `Error: ${err.message || 'Network error'}`;
+    chatContainer.appendChild(errB);
   } finally {
     typingIndicator.style.display = 'none';
     promptInput.value = '';

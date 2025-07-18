@@ -1,22 +1,43 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="max-w-md mx-auto mt-12 bg-gray-800 p-8 rounded-xl shadow-xl animate-fade-in">
-    <h2 class="text-3xl font-bold text-indigo-300 mb-6 text-center">Sign In</h2>
-    <form method="POST" action="/auth/signin" class="space-y-6">
+<div class="flex items-center justify-center min-h-[calc(100vh-150px)] px-4">
+  <div class="w-full max-w-sm mx-auto">
+    <div class="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl shadow-2xl p-6 animate__animated animate__fadeInUp">
+      <div class="text-center mb-6">
+        <h2 class="text-xl font-bold text-white mb-2">Welcome Back</h2>
+        <p class="text-gray-400 text-sm">Please sign in to your account</p>
+      </div>
+      
+      <form method="POST" action="/auth/signin" class="space-y-4">
         <div>
-            <label for="username" class="block text-sm font-medium text-gray-300">Username</label>
-            <input type="text" id="username" name="username" required
-                class="mt-1 w-full px-4 py-3 rounded-lg bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition placeholder-gray-400" placeholder="Enter your username" />
+          <label for="username" class="block text-sm font-medium text-gray-300 mb-2">Username</label>
+          <input type="text" id="username" name="username" required
+            class="w-full px-3 py-2.5 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition duration-200 backdrop-blur-sm text-sm"
+            placeholder="Enter your username" />
         </div>
+
         <div>
-            <label for="password" class="block text-sm font-medium text-gray-300">Password</label>
-            <input type="password" id="password" name="password" required
-                class="mt-1 w-full px-4 py-3 rounded-lg bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition placeholder-gray-400" placeholder="Enter your password" />
+          <label for="password" class="block text-sm font-medium text-gray-300 mb-2">Password</label>
+          <input type="password" id="password" name="password" required
+            class="w-full px-3 py-2.5 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition duration-200 backdrop-blur-sm text-sm"
+            placeholder="Enter your password" />
         </div>
+
         <button type="submit"
-            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-semibold transition transform hover:scale-105">
-            Sign In
+          class="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium py-2.5 px-4 rounded-lg transition duration-200 transform hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 shadow-lg text-sm">
+          Sign In
         </button>
-    </form>
+      </form>
+
+      <div class="mt-4 text-center">
+        <p class="text-gray-400 text-xs">
+          Don't have an account? 
+          <a href="/auth/signup" class="text-blue-400 hover:text-blue-300 font-medium transition duration-200">
+            Sign up here
+          </a>
+        </p>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}

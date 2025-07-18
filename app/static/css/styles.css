@@ -1,38 +1,183 @@
-/* ---------- Global page layout ---------- */
+/* ---------- Global styles ---------- */
 body {
-    background: linear-gradient(135deg, #0f172a, #1e293b);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    margin: 0;
+    padding: 0;
+    background: linear-gradient(135deg, #0f172a, #1e293b 65%, #18181b 100%);
     min-height: 100vh;
-    font-family: 'Inter', sans-serif;
     color: #e2e8f0;
-    display: flex;
-    flex-direction: column;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
-nav {
-    background: linear-gradient(to right, #3b82f6, #8b5cf6);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-    position: sticky;
+/* ---------- Professional Modern Navigation Pills ---------- */
+.nav-pill-modern {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    border-radius: 12px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(20px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    color: #e2e8f0;
+    position: relative;
+    overflow: hidden;
+    min-width: 100px;
+}
+
+.nav-pill-modern::before {
+    content: '';
+    position: absolute;
     top: 0;
-    z-index: 50;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transition: left 0.5s;
 }
 
-/* ---------- Interactive elements ---------- */
-button,
-input,
-textarea {
+.nav-pill-modern:hover::before {
+    left: 100%;
+}
+
+.nav-pill-modern:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.25);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.nav-pill-modern:active {
+    transform: translateY(0);
+}
+
+/* Active state */
+.nav-pill-active {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    color: white;
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+}
+
+.nav-pill-active:hover {
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.5);
+}
+
+/* Primary button */
+.nav-pill-primary {
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    color: white;
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+}
+
+.nav-pill-primary:hover {
+    background: linear-gradient(135deg, #2563eb, #4f46e5);
+    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.5);
+}
+
+/* Secondary button */
+.nav-pill-secondary {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #e2e8f0;
+}
+
+.nav-pill-secondary:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Logout button */
+.nav-pill-logout {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    color: white;
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3);
+}
+
+.nav-pill-logout:hover {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    box-shadow: 0 8px 32px rgba(239, 68, 68, 0.5);
+}
+
+/* ---------- Legacy nav styles (keeping for backward compatibility) ---------- */
+.nav-link-modern {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-decoration: none;
     transition: all 0.2s ease;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #e2e8f0;
+    backdrop-filter: blur(10px);
+    white-space: nowrap;
 }
 
-button:hover {
-    transform: scale(1.03);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+.nav-link-modern:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.nav-link-primary {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    color: white;
+}
+
+.nav-link-primary:hover {
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+}
+
+.nav-link-secondary {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.nav-link-secondary:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.nav-link-logout {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+}
+
+.nav-link-logout:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* ---------- Glass effect for cards and forms ---------- */
+.card-glass {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 1rem;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    padding: 2rem;
+    margin: auto;
+    width: 100%;
 }
 
 /* ---------- Chat area ---------- */
 #chat-container {
-    background: #1e293b;
+    background: rgba(30, 41, 59, 0.6);
     border-radius: 1rem;
-    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.17);
     border: 1px solid #374151;
     padding: 1rem;
     flex-grow: 1;
@@ -51,12 +196,14 @@ button:hover {
     word-wrap: break-word;
     display: flex;
     flex-direction: column;
-    /* white-space: pre-wrap;          KEEP markdown line-breaks */
+    font-size: 1.05rem;
+    box-shadow: 0 2px 8px rgba(64, 72, 132, 0.10);
+    animation: fadeInUp 0.5s ease-out both;
 }
 
 .message-bubble.user {
-    background: #3b82f6;
-    color: #fff;
+    background: linear-gradient(90deg, #4f46e5, #6366f1);
+    color: #ffffff;
     margin-left: auto;
     border-bottom-right-radius: 0.25rem;
 }
@@ -68,96 +215,326 @@ button:hover {
     border-bottom-left-radius: 0.25rem;
 }
 
-/* Markdown lists inside bubbles look like real ChatGPT */
-.message-bubble ol,
-.message-bubble ul {
-    padding-left: 1.5em;
-    margin: 0.5em 0 0.5em 0;
-}
-
-.message-bubble li {
-    margin-bottom: 0.35em;
-}
-
-/* --- Markdown resets (fix bold / italics / code) --- */
 .message-bubble strong { font-weight: 600; }
-.message-bubble em    { font-style : italic; }
+.message-bubble em { font-style: italic; }
 
-/* Inline `code` */
 .message-bubble code {
     background: #1e293b;
     padding: 0.2rem 0.4rem;
     border-radius: 0.25rem;
     font-family: ui-monospace, SFMono-Regular, 'Consolas', 'Menlo', monospace;
     color: #e2e8f0;
-    /* white-space: pre-wrap; */
 }
 
-/* Fenced code blocks ``` */
 .message-bubble pre {
     background: #0f172a;
     padding: 1rem;
     border-radius: 0.75rem;
-    /* white-space: pre;              preserve indentation exactly */
     overflow-x: auto;
     margin: 0.75rem 0;
-    /* white-space: pre-wrap; */
     font-family: ui-monospace, SFMono-Regular, 'Consolas', 'Menlo', monospace;
 }
 
-/* Chunks fade-in while streaming */
-.stream-segment {
-    opacity: 0;
-    animation: fadeIn 0.5s ease-out forwards;
+.message-bubble ol,
+.message-bubble ul {
+    padding-left: 1.5em;
+    margin: 0.5em 0;
 }
 
-/* ---------- Typing indicator ---------- */
-#typing-indicator {
-    display: none;
-    color: #94a3b8;
-    font-style: italic;
-    margin: 0.5rem 0;
+.message-bubble li {
+    margin-bottom: 0.35em;
 }
 
 /* ---------- Animations ---------- */
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(5px); }
-    to   { opacity: 1; transform: translateY(0); }
+@keyframes fadeInUp {
+    0% { opacity: 0; transform: translateY(24px); }
+    100% { opacity: 1; transform: translateY(0); }
 }
 
-.animate-fade-in { animation: fadeIn 0.5s ease-out; }
-
-@keyframes pulse {
-    0%,100% { opacity: 0.5; }
-    50%     { opacity: 1;   }
-}
-
-.typing {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin: 0.5rem 0;
-}
-
-.typing span {
+/* ---------- Typing indicator ---------- */
+.typing-dot {
     width: 8px;
     height: 8px;
-    background: #94a3b8;
+    background: #818cf8;
     border-radius: 50%;
-    animation: pulse 1.2s infinite;
+    margin-right: 4px;
+    display: inline-block;
+    animation: pulse 1.2s infinite ease-in-out;
 }
 
-.typing span:nth-child(2) { animation-delay: 0.2s; }
-.typing span:nth-child(3) { animation-delay: 0.4s; }
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
 
 /* ---------- Scrollbar styling ---------- */
 ::-webkit-scrollbar { width: 8px; }
-
 ::-webkit-scrollbar-track { background: #1e293b; }
-
 ::-webkit-scrollbar-thumb {
     background: #4b5563;
     border-radius: 4px;
 }
-
 ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+
+/* ---------- Form improvements ---------- */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+textarea {
+    font-family: 'Inter', sans-serif;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+textarea:focus {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* ---------- Button improvements ---------- */
+button {
+    font-family: 'Inter', sans-serif;
+    font-weight: 500;
+    letter-spacing: 0.025em;
+}
+
+button:active {
+    transform: translateY(1px);
+}
+
+/* ---------- Responsive improvements ---------- */
+@media (max-width: 640px) {
+    .nav-pill-modern {
+        padding: 0.5rem 1rem;
+        font-size: 0.8rem;
+        min-width: 80px;
+    }
+    
+    .nav-link-modern {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.7rem;
+    }
+    
+    .card-glass {
+        padding: 1.25rem;
+        margin: 0.5rem;
+    }
+}
+
+/* ---------- Utility classes ---------- */
+.flex {
+    display: flex;
+}
+
+.items-center {
+    align-items: center;
+}
+
+.justify-center {
+    justify-content: center;
+}
+
+.mx-auto {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.w-full {
+    width: 100%;
+}
+
+.max-w-sm {
+    max-width: 24rem;
+}
+
+.max-w-4xl {
+    max-width: 56rem;
+}
+
+.space-y-6 > * + * {
+    margin-top: 1.5rem;
+}
+
+.space-y-4 > * + * {
+    margin-top: 1rem;
+}
+
+/* ---------- Updated Header and Navigation Styles ---------- */
+
+/* Header section for logo only */
+header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Navigation bar positioned below header */
+nav {
+    position: sticky;
+    top: 120px; /* Adjust based on header height */
+    z-index: 40;
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Logo section styling */
+.logo-section {
+    text-align: center;
+    padding: 1.5rem 0;
+}
+
+.logo-section h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa, #6366f1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.5rem;
+}
+
+.logo-section p {
+    color: #9ca3af;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+/* Navigation section styling */
+.nav-section {
+    padding: 1rem 0;
+}
+
+/* Professional Modern Navigation Pills - keeping existing styles */
+.nav-pill-modern {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    border-radius: 12px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(20px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    color: #e2e8f0;
+    position: relative;
+    overflow: hidden;
+    min-width: 100px;
+}
+
+.nav-pill-modern::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transition: left 0.5s;
+}
+
+.nav-pill-modern:hover::before {
+    left: 100%;
+}
+
+.nav-pill-modern:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.25);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.nav-pill-modern:active {
+    transform: translateY(0);
+}
+
+/* Active state */
+.nav-pill-active {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    color: white;
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+}
+
+.nav-pill-active:hover {
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.5);
+}
+
+/* Primary button */
+.nav-pill-primary {
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    color: white;
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+}
+
+.nav-pill-primary:hover {
+    background: linear-gradient(135deg, #2563eb, #4f46e5);
+    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.5);
+}
+
+/* Secondary button */
+.nav-pill-secondary {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #e2e8f0;
+}
+
+.nav-pill-secondary:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Logout button */
+.nav-pill-logout {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    color: white;
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3);
+}
+
+.nav-pill-logout:hover {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    box-shadow: 0 8px 32px rgba(239, 68, 68, 0.5);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .logo-section h1 {
+        font-size: 2rem;
+    }
+    
+    nav {
+        top: 100px; /* Adjust for smaller header on mobile */
+    }
+    
+    .nav-pill-modern {
+        padding: 0.5rem 1rem;
+        font-size: 0.8rem;
+        min-width: 80px;
+    }
+}
+
+/* Content adjustment to account for sticky navigation */
+main {
+    margin-top: 2rem;
+}
+
+/* Ensure content doesn't hide behind sticky nav */
+.content-wrapper {
+    padding-top: 1rem;
+}
