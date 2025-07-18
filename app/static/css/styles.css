@@ -9,7 +9,63 @@ body {
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
-/* ---------- Professional Modern Navigation Pills ---------- */
+/* ---------- Header and Navigation Layout ---------- */
+/* Header section for logo only */
+header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Navigation bar positioned below header */
+nav {
+    position: sticky;
+    top: 120px; /* Adjust based on header height */
+    z-index: 40;
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Logo section styling */
+.logo-section {
+    text-align: center;
+    padding: 1.5rem 0;
+}
+
+.logo-section h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa, #6366f1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.5rem;
+}
+
+.logo-section p {
+    color: #9ca3af;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+/* Navigation section styling */
+.nav-section {
+    padding: 1rem 0;
+}
+
+.nav-container {
+    padding: 1.5rem 0;
+}
+
+.nav-links-spacing {
+    gap: 2rem;
+}
+
+/* ---------- Modern Navigation Pills ---------- */
 .nav-pill-modern {
     display: inline-flex;
     align-items: center;
@@ -27,6 +83,7 @@ body {
     position: relative;
     overflow: hidden;
     min-width: 100px;
+    margin: 0 0.5rem;
 }
 
 .nav-pill-modern::before {
@@ -55,7 +112,7 @@ body {
     transform: translateY(0);
 }
 
-/* Active state */
+/* Navigation pill variants */
 .nav-pill-active {
     background: linear-gradient(135deg, #3b82f6, #8b5cf6);
     border: 1px solid rgba(59, 130, 246, 0.5);
@@ -68,7 +125,6 @@ body {
     box-shadow: 0 8px 32px rgba(59, 130, 246, 0.5);
 }
 
-/* Primary button */
 .nav-pill-primary {
     background: linear-gradient(135deg, #3b82f6, #6366f1);
     border: 1px solid rgba(59, 130, 246, 0.5);
@@ -81,7 +137,6 @@ body {
     box-shadow: 0 8px 32px rgba(59, 130, 246, 0.5);
 }
 
-/* Secondary button */
 .nav-pill-secondary {
     background: rgba(255, 255, 255, 0.12);
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -93,7 +148,6 @@ body {
     border-color: rgba(255, 255, 255, 0.3);
 }
 
-/* Logout button */
 .nav-pill-logout {
     background: linear-gradient(135deg, #ef4444, #dc2626);
     border: 1px solid rgba(239, 68, 68, 0.5);
@@ -305,7 +359,28 @@ button:active {
     transform: translateY(1px);
 }
 
-/* ---------- Responsive improvements ---------- */
+/* ---------- Content Layout ---------- */
+main {
+    margin-top: 2rem;
+}
+
+.content-wrapper {
+    padding-top: 1rem;
+}
+
+/* ---------- Utility classes ---------- */
+.flex { display: flex; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.mx-auto { margin-left: auto; margin-right: auto; }
+.text-center { text-align: center; }
+.w-full { width: 100%; }
+.max-w-sm { max-width: 24rem; }
+.max-w-4xl { max-width: 56rem; }
+.space-y-6 > * + * { margin-top: 1.5rem; }
+.space-y-4 > * + * { margin-top: 1rem; }
+
+/* ---------- Responsive Design ---------- */
 @media (max-width: 640px) {
     .nav-pill-modern {
         padding: 0.5rem 1rem;
@@ -324,217 +399,22 @@ button:active {
     }
 }
 
-/* ---------- Utility classes ---------- */
-.flex {
-    display: flex;
-}
-
-.items-center {
-    align-items: center;
-}
-
-.justify-center {
-    justify-content: center;
-}
-
-.mx-auto {
-    margin-left: auto;
-    margin-right: auto;
-}
-
-.text-center {
-    text-align: center;
-}
-
-.w-full {
-    width: 100%;
-}
-
-.max-w-sm {
-    max-width: 24rem;
-}
-
-.max-w-4xl {
-    max-width: 56rem;
-}
-
-.space-y-6 > * + * {
-    margin-top: 1.5rem;
-}
-
-.space-y-4 > * + * {
-    margin-top: 1rem;
-}
-
-/* ---------- Updated Header and Navigation Styles ---------- */
-
-/* Header section for logo only */
-header {
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(16px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* Navigation bar positioned below header */
-nav {
-    position: sticky;
-    top: 120px; /* Adjust based on header height */
-    z-index: 40;
-    background: rgba(255, 255, 255, 0.03);
-    backdrop-filter: blur(16px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-/* Logo section styling */
-.logo-section {
-    text-align: center;
-    padding: 1.5rem 0;
-}
-
-.logo-section h1 {
-    font-size: 2.5rem;
-    font-weight: 700;
-    background: linear-gradient(135deg, #60a5fa, #a78bfa, #6366f1);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 0.5rem;
-}
-
-.logo-section p {
-    color: #9ca3af;
-    font-size: 0.875rem;
-    font-weight: 500;
-}
-
-/* Navigation section styling */
-.nav-section {
-    padding: 1rem 0;
-}
-
-/* Professional Modern Navigation Pills - keeping existing styles */
-.nav-pill-modern {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.75rem 1.5rem;
-    border-radius: 12px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    text-decoration: none;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    backdrop-filter: blur(20px);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    color: #e2e8f0;
-    position: relative;
-    overflow: hidden;
-    min-width: 100px;
-}
-
-.nav-pill-modern::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
-    transition: left 0.5s;
-}
-
-.nav-pill-modern:hover::before {
-    left: 100%;
-}
-
-.nav-pill-modern:hover {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.25);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-}
-
-.nav-pill-modern:active {
-    transform: translateY(0);
-}
-
-/* Active state */
-.nav-pill-active {
-    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-    border: 1px solid rgba(59, 130, 246, 0.5);
-    color: white;
-    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
-}
-
-.nav-pill-active:hover {
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
-    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.5);
-}
-
-/* Primary button */
-.nav-pill-primary {
-    background: linear-gradient(135deg, #3b82f6, #6366f1);
-    border: 1px solid rgba(59, 130, 246, 0.5);
-    color: white;
-    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
-}
-
-.nav-pill-primary:hover {
-    background: linear-gradient(135deg, #2563eb, #4f46e5);
-    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.5);
-}
-
-/* Secondary button */
-.nav-pill-secondary {
-    background: rgba(255, 255, 255, 0.12);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #e2e8f0;
-}
-
-.nav-pill-secondary:hover {
-    background: rgba(255, 255, 255, 0.2);
-    border-color: rgba(255, 255, 255, 0.3);
-}
-
-/* Logout button */
-.nav-pill-logout {
-    background: linear-gradient(135deg, #ef4444, #dc2626);
-    border: 1px solid rgba(239, 68, 68, 0.5);
-    color: white;
-    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3);
-}
-
-.nav-pill-logout:hover {
-    background: linear-gradient(135deg, #dc2626, #b91c1c);
-    box-shadow: 0 8px 32px rgba(239, 68, 68, 0.5);
-}
-
-/* Responsive adjustments */
 @media (max-width: 768px) {
     .logo-section h1 {
         font-size: 2rem;
     }
     
     nav {
-        top: 100px; /* Adjust for smaller header on mobile */
+        top: 100px;
     }
     
-    .nav-pill-modern {
-        padding: 0.5rem 1rem;
-        font-size: 0.8rem;
-        min-width: 80px;
+    .nav-links-spacing {
+        gap: 1.5rem;
     }
 }
 
-/* Content adjustment to account for sticky navigation */
-main {
-    margin-top: 2rem;
-}
-
-/* Ensure content doesn't hide behind sticky nav */
-.content-wrapper {
-    padding-top: 1rem;
+@media (min-width: 1024px) {
+    .nav-links-spacing {
+        gap: 3rem;
+    }
 }
