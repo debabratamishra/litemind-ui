@@ -7,7 +7,8 @@
 
     <!-- Chat area -->
     <div id="chat-container"
-         class="max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl mx-auto chat-outer-margin" style="margin-top:20px; margin-left:50px; margin-right:50px; height: 500px;">
+         class="max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl mx-auto chat-outer-margin"
+         style="margin-top:20px; margin-left:50px; margin-right:50px; height: 500px; overflow-y: auto;">
       
       <div class="message-bubble llm">
         <div class="font-semibold text-blue-200 mb-1">Assistant</div>
@@ -17,19 +18,19 @@
 
     <!-- Prompt -->
     <form id="chat-form" class="w-full flex items-center justify-center mt-8" autocomplete="off" onsubmit="return false;">
-    <div class="relative w-full max-w-xl">
-      <input
-        id="prompt"
-        name="prompt"
-        type="text"
-        autocomplete="off"
-        required
-        placeholder="Ask me anything..."
-        class="w-full rounded-full pl-5 pr-12 py-3 bg-white/10 border border-white/20 text-white placeholder-gray-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-        style="font-size: 14px;"
-      />
-    </div>
-  </form>
+      <div class="relative w-full max-w-xl">
+        <input
+          id="prompt"
+          name="prompt"
+          type="text"
+          autocomplete="off"
+          required
+          placeholder="Ask me anything..."
+          class="w-full rounded-full pl-5 pr-12 py-3 bg-white/10 border border-white/20 text-white placeholder-gray-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+          style="font-size: 14px;"
+        />
+      </div>
+    </form>
 
   </div>
 </div>
@@ -37,18 +38,17 @@
 <script>
 const chatContainer = document.getElementById('chat-container');
 const promptInput = document.getElementById('prompt');
-const sendBtn = document.getElementById('send-btn');
 
 let isStreaming = false;
 let shouldAutoScroll = true;
 
-// Auto-resize textarea
+// Auto-resize input
 promptInput.addEventListener('input', () => {
   promptInput.style.height = 'auto';
   promptInput.style.height = Math.min(promptInput.scrollHeight, 200) + 'px';
 });
 
-
+// Submit on Enter, allow Shift+Enter for newline
 promptInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -84,7 +84,7 @@ function createAIMessage() {
 async function sendMessage() {
   const prompt = promptInput.value.trim();
   if (!prompt) return;
-  sendBtn.disabled = true;
+
   promptInput.disabled = true;
   isStreaming = true;
   shouldAutoScroll = true;
@@ -141,14 +141,13 @@ async function sendMessage() {
     scrollToBottom();
   } finally {
     isStreaming = false;
-    sendBtn.disabled = false;
     promptInput.disabled = false;
     promptInput.focus();
     scrollToBottom();
   }
 }
 
-sendBtn.addEventListener('click', sendMessage);
+// Focus input when page loads
 document.addEventListener('DOMContentLoaded', () => promptInput.focus());
 </script>
 
