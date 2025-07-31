@@ -4,7 +4,7 @@ from config import Config
 import json
 import re
 
-async def stream_ollama(messages, model="llama3.2:1b"):
+async def stream_ollama(messages, model="gemma3n:e2b"):
     """
     Streams RAW Markdown coming from Ollama. Front-end will render it.
     """
