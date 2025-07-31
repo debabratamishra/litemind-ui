@@ -1,6 +1,6 @@
 import chromadb
 from chromadb.utils import embedding_functions
-import PyPDF2
+import pypdf
 from .ollama import stream_ollama
 import os
 from config import Config
@@ -21,7 +21,7 @@ class RAGService:
 
     async def add_document(self, file_path, doc_id, chunk_size=500):
         with open(file_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
+            reader = pypdf.PdfReader(file)
             text = ""
             for page in reader.pages:
                 text += page.extract_text() or ""

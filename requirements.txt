@@ -7,7 +7,7 @@ sentence-transformers
 httpx
 python-dotenv
 werkzeug
-PyPDF2
+pypdf
 jinja2
 starlette
 jinja_partials
