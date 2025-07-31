@@ -24,3 +24,9 @@ A simple and efficient web-based interface for working with Large Language Model
 python run.py
 ```
 5. Then navigate to http://localhost:5100
+
+---
+
+To Do : 
+1. Advanced RAG implementation using hybrid search handling images + text using local LLM
+2. Support for Local LLM and Third party models(e.g. OpenAI GPT series models, Google Gemini series models, etc.)
