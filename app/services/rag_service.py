@@ -1,4 +1,3 @@
-from __future__ import annotations
 import chromadb
 from chromadb.utils import embedding_functions
 import pypdf
@@ -7,16 +6,23 @@ import os
 from config import Config
 from crewai import Agent, LLM
 import os
+import re
+import httpx
+import ast
+from chromadb.errors import NotFoundError
+import shutil
 
 class RAGService:
     def __init__(self):
+        # Wipe entire Chroma DB directory for a true reset
+        if os.path.exists(Config.CHROMA_DB_PATH):
+            shutil.rmtree(Config.CHROMA_DB_PATH)
+
         self.client = chromadb.PersistentClient(path=Config.CHROMA_DB_PATH)
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
         
-        # Reset collection for fresh start (called on init, which is on backend startup)
         collection_name = "documents"
-        if self.client.get_collection(collection_name):
-            self.client.delete_collection(collection_name)
+        # After deletion, collection won't exist, so no need to delete individually
         self.collection = self.client.create_collection(
             name=collection_name,
             embedding_function=self.embedding_function
@@ -60,6 +66,8 @@ class CrewAIRAGOrchestrator:
             api_base=os.getenv("OLLAMA_API_BASE", "http://localhost:11434"),
             temperature=0.0
         )
+        self.model_name = model_name
+        self.context_length = self._get_context_length(model_name)
 
         self.refiner = Agent(
             role="Query Refiner",
@@ -75,26 +83,89 @@ class CrewAIRAGOrchestrator:
             llm=self.ollama_llm
         )
 
-    # ----------------------------- async generator -----------------------------
+    def _get_context_length(self, model_name: str) -> int:
+        """Synchronously fetch the model's context length from Ollama."""
+        model = model_name.replace("ollama/", "") if "ollama/" in model_name else model_name
+        with httpx.Client(timeout=10.0) as client:
+            try:
+                resp = client.post(
+                    f"{os.getenv('OLLAMA_API_BASE', 'http://localhost:11434')}/api/show",
+                    json={"name": model}
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                params = data.get('model_info', '')
+                # If params is a string, parse to dict
+                if isinstance(params, str):
+                    import ast
+                    params = ast.literal_eval(params)
+                # Find key ending with "context_length"
+                for key, value in params.items():
+                    if key.endswith("context_length"):
+                        return int(value)
+                return 4096  # default if not found
+            except Exception:
+                return 4096
+
+    async def _generate_summary(self, text: str, system_prompt: str) -> str:
+        """Generate a summary using stream_ollama."""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text}
+        ]
+        model = self.model_name.replace("ollama/", "")
+        response = ""
+        async for chunk in stream_ollama(messages, model=model):
+            response += chunk
+        return response
+
+    def chunk_text(self, text: str, chunk_size: int):
+        """Split text into chunks."""
+        return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+    async def summarize_context(self, text: str, target_length: int) -> str:
+        """Recursively summarize text using map-reduce to fit target length."""
+        if len(text) <= target_length:
+            return text
+
+        # Split into smaller chunks (approx half target for recursion)
+        chunk_size = target_length // 2
+        chunks = self.chunk_text(text, chunk_size)
+        summaries = []
+        for chunk in chunks:
+            sum_prompt = "Provide a concise summary of the following text:"
+            summ = await self._generate_summary(chunk, sum_prompt)
+            summaries.append(summ)
+
+        combined = " ".join(summaries)
+        # Recurse if still too long
+        return await self.summarize_context(combined, target_length)
+
     async def query(self, user_query: str, system_prompt: str, n_results: int = 3):
-        """Multi-step RAG implemented as an *async generator* so callers can
-        `async for` over the outgoing chunks."""
-        # 1) refine the question
+        """Multi-step RAG implemented as an async generator."""
+        # 1) Refine the question
         refine_prompt = (
             "Refine the following user query so it is precise, self-contained "
             "and uses full nouns:\n\n"
             f"{user_query}"
         )
         refined = await self.refiner.kickoff_async(refine_prompt)
-        refined_query = refined.raw.strip()  # LiteAgentOutput → text
+        refined_query = refined.raw.strip()
 
-        # 2) retrieve context from the vector-DB
+        # 2) Retrieve context from the vector-DB
         res = self.rag_service.collection.query(
             query_texts=[refined_query], n_results=n_results
         )
         context = " ".join(res["documents"][0]) if res["documents"] else ""
 
-        # 3) compose the answer
+        # 3) Summarize context if it exceeds model limits
+        approx_tokens = len(context) // 4 + 1  # Rough token estimate (1 token ~ 4 chars)
+        target_tokens = self.context_length * 0.6  # Conservative target (leave buffer)
+        if approx_tokens > target_tokens:
+            target_chars = target_tokens * 4
+            context = await self.summarize_context(context, target_chars)
+
+        # 4) Compose the answer
         compose_prompt = (
             f"Context:\n{context}\n\nOriginal question:\n{user_query}\n\n"
             f"Follow these instructions when you answer:\n{system_prompt}"
@@ -102,7 +173,7 @@ class CrewAIRAGOrchestrator:
         final = await self.composer.kickoff_async(compose_prompt)
         answer = final.raw
 
-        # 4) stream back in ~400-character chunks
+        # 5) Stream back in ~400-character chunks
         for i in range(0, len(answer), 400):
             yield answer[i : i + 400]
 

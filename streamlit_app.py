@@ -10,6 +10,10 @@ import streamlit as st
 from app.services.ollama import stream_ollama
 from streamlit.components.v1 import html
 import time
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Configure FastAPI backend
 FASTAPI_URL = "http://localhost:8000"
@@ -114,10 +118,12 @@ with tab1:
 
     # Temperature slider
     temperature = st.slider("Temperature (0.0 = deterministic, 1.0 = creative):", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
+    logger.info(f"Selected model: {selected_model}, Temperature: {temperature}")
 
     # Chat input
     user_input = st.chat_input("Enter your message:")
     if user_input:
+        logger.info(f"User input: {user_input}")
         # Add user message
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
 
