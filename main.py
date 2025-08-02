@@ -89,6 +89,7 @@ class ChatResponse(BaseModel):
 
 class RAGQueryRequest(BaseModel):
     query: str
+    model: Optional[str] = "default"
     system_prompt: Optional[str] = "You are a helpful assistant."
     chunk_size: Optional[int] = 500
     n_results: Optional[int] = 3
@@ -185,7 +186,7 @@ async def rag_query(request: RAGQueryRequest):
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not available")
         
-        orchestrator = CrewAIRAGOrchestrator(rag_service)
+        orchestrator = CrewAIRAGOrchestrator(rag_service, model_name=request.model)
 
         async def generate():
             async for chunk in orchestrator.query(
@@ -213,12 +214,11 @@ async def get_uploaded_documents():
 async def process_llm_request(message: str, model: str, temperature: float) -> str:
     """Process LLM request using your existing services"""
     messages = [{"role": "user", "content": message}]
-    
     response = ""
-    async for chunk in stream_ollama(messages):
+    async for chunk in stream_ollama(messages, model=model, temperature=temperature):  # Pass temperature
         response += chunk
-    
     return response
+
 
 # ================== ERROR HANDLERS ==================
 

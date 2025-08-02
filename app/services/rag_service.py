@@ -73,7 +73,7 @@ class CrewAIRAGOrchestrator:
         )
 
     # ----------------------------- async generator -----------------------------
-    async def query(self, user_query: str, system_prompt: str, n_results: int = 3):
+    async def query(self, user_query: str, model: str, system_prompt: str, n_results: int = 3):
         """Multi-step RAG implemented as an *async generator* so callers can
         `async for` over the outgoing chunks."""
         # 1) refine the question

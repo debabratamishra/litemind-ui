@@ -1,138 +1,3 @@
-# """
-# Streamlit front-end for the LLM WebUI
-# ------------------------------------
-# Run it with:
-#     streamlit run streamlit_app.py
-# """
-
-# from __future__ import annotations
-
-# import asyncio
-# from pathlib import Path
-
-# import nest_asyncio
-# import streamlit as st
-
-# from app.services.ollama import stream_ollama
-# from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
-# from streamlit.components.v1 import html
-
-# # one-line injection; height=0 keeps it invisible
-# html("""
-# <link rel="manifest" href="/pwa/manifest.webmanifest">
-# <script>
-# if ('serviceWorker' in navigator) {
-#   window.addEventListener('load', () => {
-#     navigator.serviceWorker.register('/pwa/sw.js').catch(()=>{});
-#   });
-# }
-# </script>
-# """, height=0)
-
-# nest_asyncio.apply()  # allow nested event-loops inside Streamlit callbacks
-
-
-# def run_async(coro):
-#     """Run an async coroutine from Streamlit’s sync context."""
-#     return asyncio.run(coro)
-
-# st.set_page_config(
-#     page_title="LLM WebUI (Streamlit)",
-#     page_icon="🪄",
-#     layout="wide",
-# )
-
-# st.sidebar.title("🧭 Navigation")
-# page = st.sidebar.radio("Choose a mode", ["Chat", "Document QA (RAG)"])
-
-# # one RAG client across reruns
-# @st.cache_resource(show_spinner=False)
-# def _get_rag():
-#     return RAGService()
-
-# rag_service = _get_rag()
-# orchestrator = CrewAIRAGOrchestrator(rag_service)
-
-# # chat history persists across reruns
-# if "chat_history" not in st.session_state:
-#     st.session_state.chat_history = []           # [{role, content}, …]
-
-# # ---------------------------------------------------------------------------
-# # CHAT
-# # ---------------------------------------------------------------------------
-# if page == "Chat":
-#     st.header("💬 Chat")
-
-#     for m in st.session_state.chat_history:
-#         with st.chat_message(m["role"]):
-#             st.markdown(m["content"])
-
-#     if prompt := st.chat_input("Ask me anything …"):
-#         # log & render the user’s turn
-#         st.session_state.chat_history.append({"role": "user", "content": prompt})
-#         with st.chat_message("user"):
-#             st.markdown(prompt)
-
-#         # assistant placeholder
-#         with st.chat_message("assistant"):
-#             placeholder = st.empty()
-#             placeholder.markdown("_thinking…_")
-
-#         # collect streamed chunks from Ollama
-#         async def _answer(p: str) -> str:
-#             chunks: list[str] = []
-#             async for chunk in stream_ollama([{"role": "user", "content": p}]):
-#                 chunks.append(chunk)
-#                 placeholder.markdown("".join(chunks) + "▌")
-#             return "".join(chunks)
-
-#         answer = run_async(_answer(prompt))
-#         placeholder.markdown(answer)
-#         st.session_state.chat_history.append({"role": "assistant", "content": answer})
-
-# # ---------------------------------------------------------------------------
-# # DOCUMENT QA / RAG
-# # ---------------------------------------------------------------------------
-# else:
-#     st.header("📄 Document QA (RAG)")
-
-#     # upload & ingest PDFs
-#     pdf = st.file_uploader("Upload a PDF to index", type=["pdf"])
-#     if pdf is not None:
-#         path = Path("uploads") / pdf.name
-#         path.parent.mkdir(exist_ok=True)
-#         path.write_bytes(pdf.getvalue())
-#         with st.spinner("Indexing document …"):
-#             run_async(rag_service.add_document(str(path), pdf.name))
-#         st.success("Document added! You can ask questions below.")
-
-#     # query controls
-#     sys_prompt = st.text_area(
-#         "System prompt (optional)",
-#         value=(
-#             "You are a helpful assistant.  Answer *only* from the context. "
-#             "If the answer is not in the context, say you don’t know."
-#         ),
-#         height=70,
-#     )
-#     query = st.text_area("Question about your documents", height=100)
-    
-
-#     if st.button("Ask") and query.strip():
-#         placeholder = st.empty()
-#         placeholder.markdown("_thinking…_")
-
-#         async def _rag(q: str) -> str:
-#             chunks: list[str] = []
-#             async for ch in orchestrator.query(q, system_prompt=sys_prompt, n_results=3):
-#                 chunks.append(ch)
-#                 placeholder.markdown("".join(chunks) + "▌")
-#             return "".join(chunks)
-
-#         answer = run_async(_rag(query))
-#         placeholder.markdown(answer)
-
-
 """
 Streamlit front-end for the LLM WebUI with FastAPI backend detection
 """
@@ -144,7 +9,6 @@ from pathlib import Path
 import nest_asyncio
 import streamlit as st
 from app.services.ollama import stream_ollama
-from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
 from streamlit.components.v1 import html
 import time
 
@@ -160,12 +24,12 @@ def check_fastapi_backend():
     except (requests.exceptions.RequestException, requests.exceptions.Timeout):
         return False
 
-def call_fastapi_chat(message: str, model: str = "default"):
+def call_fastapi_chat(message: str, model: str = "default", temperature: float = 0.7):
     """Call FastAPI chat endpoint"""
     try:
         response = requests.post(
             f"{FASTAPI_URL}/api/chat",
-            json={"message": message, "model": model},
+            json={"message": message, "model": model, "temperature": temperature},
             timeout=30
         )
         if response.status_code == 200:
@@ -177,25 +41,27 @@ def call_fastapi_chat(message: str, model: str = "default"):
         st.error(f"FastAPI Connection Error: {str(e)}")
         return None
 
-async def call_local_ollama(messages):
+async def call_local_ollama(messages, model: str = "default", temperature: float = 0.7):
     """Fallback to local Ollama service"""
     response = ""
-    async for chunk in stream_ollama(messages):
+    async for chunk in stream_ollama(messages, model=model, temperature=temperature):
         response += chunk
     return response
 
-def call_fastapi_rag_query(query: str, system_prompt: str, chunk_size: int = 500, n_results: int = 3):
+
+def call_fastapi_rag_query(query: str, model: str, system_prompt: str, chunk_size: int = 500, n_results: int = 3):
     """Call FastAPI RAG query endpoint"""
     try:
         response = requests.post(
             f"{FASTAPI_URL}/api/rag/query",
             json={
                 "query": query,
+                "model": model,
                 "system_prompt": system_prompt,
                 "chunk_size": chunk_size,
                 "n_results": n_results
             },
-            timeout=60
+            timeout=120
         )
         return response.text if response.status_code == 200 else None
     except Exception as e:
@@ -233,10 +99,9 @@ tab1, tab2 = st.tabs(["💬 Chat", "📚 RAG"])
 
 with tab1:
     st.header("Chat Interface")
-    
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
-    
+
     # Model selection
     if backend_available:
         try:
@@ -245,38 +110,48 @@ with tab1:
         except:
             available_models = ["default"]
     else:
-        available_models = ["local-ollama"]
-    
+        available_models = ["gemma3n:e2b"] # Fallback to local model: "gemma3n:e2b" available in my local Ollama setup
     selected_model = st.selectbox("Select Model:", available_models)
-    
+
+    # Temperature slider
+    temperature = st.slider("Temperature (0.0 = deterministic, 1.0 = creative):", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
+
     # Chat input
     user_input = st.chat_input("Enter your message:")
-    
     if user_input:
         # Add user message
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
-        
+
         # Process with appropriate backend
         with st.spinner("Processing..."):
             if backend_available:
-                response = call_fastapi_chat(user_input, selected_model)
+                # Updated to pass temperature
+                response = call_fastapi_chat(user_input, selected_model, temperature)
                 if response:
                     st.session_state.chat_messages.append({"role": "assistant", "content": response})
             else:
                 # Fallback to local processing
                 messages = [{"role": "user", "content": user_input}]
-                response = asyncio.run(call_local_ollama(messages))
+                response = asyncio.run(call_local_ollama(messages, model=selected_model, temperature=temperature))
                 st.session_state.chat_messages.append({"role": "assistant", "content": response})
-    
+
     # Display chat history
     for message in st.session_state.chat_messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
+
 with tab2:
     st.header("RAG Interface")
     
     if backend_available:
+        try:
+            models_response_rag = requests.get(f"{FASTAPI_URL}/models")
+            available_models_rag = models_response_rag.json().get("models", ["default"])
+        except:
+            available_models_rag = ["default"]
+        selected_model_rag = st.selectbox("Select Base Model:", available_models_rag)
+
         # File upload
         uploaded_file = st.file_uploader("Upload Document", type=['pdf', 'txt', 'docx'])
         if uploaded_file and st.button("Upload"):
@@ -300,7 +175,7 @@ with tab2:
         
         if st.button("Query Documents") and rag_query:
             with st.spinner("Querying documents..."):
-                response = call_fastapi_rag_query(rag_query, system_prompt, chunk_size, n_results)
+                response = call_fastapi_rag_query(rag_query, selected_model_rag, system_prompt, chunk_size, n_results)
                 if response:
                     st.write("**Response:**")
                     st.write(response)
