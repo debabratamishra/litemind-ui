@@ -1,7 +1,4 @@
-"""
-Complete FastAPI backend with lifespan events and proper uvicorn configuration
-"""
-
+""" Complete FastAPI backend with lifespan events and proper uvicorn configuration """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends
 from fastapi.responses import RedirectResponse, HTMLResponse, StreamingResponse
@@ -10,12 +7,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
-from typing import Optional
+from typing import Optional, List
 import uvicorn
 from pathlib import Path
 import os
 import httpx
-
 # Import your services
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
@@ -29,22 +25,25 @@ rag_service = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Lifespan event handler - replaces @app.on_event decorators
-    """
+    """ Lifespan event handler - replaces @app.on_event decorators """
     # Startup logic
     print("🚀 LLM WebUI API starting up...")
     print(f"📁 Upload folder: {UPLOAD_FOLDER}")
-    
+
+    # Clear uploads folder for fresh start
+    for file in UPLOAD_FOLDER.iterdir():
+        if file.is_file():
+            file.unlink()
+    print("🗑️ Uploads folder cleared")
+
     # Initialize services here
     global rag_service
     rag_service = RAGService()
-    
     print("📚 RAG service ready")
     print("💬 Chat service ready")
-    
+
     yield  # App is running
-    
+
     # Shutdown logic
     print("👋 LLM WebUI API shutting down...")
     # Cleanup resources here if needed
@@ -116,9 +115,7 @@ async def get_available_models():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not fetch models from Ollama: {str(e)}")
 
-
 # ================== CHAT ROUTES ==================
-
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """Process chat messages asynchronously"""
@@ -133,7 +130,7 @@ async def chat_page(request: Request):
     """Serve chat HTML page (if using templates)"""
     if templates:
         return templates.TemplateResponse("chat.html", {"request": request})
-    return HTMLResponse("<h1>Chat Interface</h1><p>Templates not configured</p>")
+    return HTMLResponse("<h1>Templates not configured</h1>")
 
 @app.post('/api/chat/stream')
 async def chat_stream(request: Request):
@@ -141,43 +138,44 @@ async def chat_stream(request: Request):
     data = await request.json()
     prompt = data.get('prompt', '')
     messages = [{"role": "user", "content": prompt}]
-
     async def generate():
         async for chunk in stream_ollama(messages):
             yield chunk + "\n"
-
     return StreamingResponse(generate(), media_type="text/plain")
 
 # ================== RAG ROUTES ==================
-
 @app.get("/rag", response_class=HTMLResponse)
 async def rag_page(request: Request):
     """Serve RAG HTML page"""
     if templates:
         return templates.TemplateResponse("rag.html", {"request": request})
-    return HTMLResponse("<h1>RAG Interface</h1><p>Templates not configured</p>")
+    return HTMLResponse("<h1>Templates not configured</h1>")
 
 @app.post('/api/rag/upload')
-async def upload_document(file: UploadFile = File(...)):
-    """Upload and process documents for RAG"""
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file selected")
-
-    filename = file.filename
-    file_path = UPLOAD_FOLDER / filename
-
-    # Save file
-    with file_path.open('wb') as f:
-        content = await file.read()
-        f.write(content)
-
-    # Process with RAG service
-    try:
-        if rag_service:
-            await rag_service.add_document(str(file_path), filename)
-        return {"message": "File uploaded and processed successfully", "filename": filename}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+async def upload_document(files: List[UploadFile] = File(...)):
+    """Upload and process multiple documents for RAG"""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files selected")
+    
+    processed_files = []
+    for file in files:
+        if not file.filename:
+            continue
+        filename = file.filename
+        file_path = UPLOAD_FOLDER / filename
+        # Save file
+        with file_path.open('wb') as f:
+            content = await file.read()
+            f.write(content)
+        # Process with RAG service
+        try:
+            if rag_service:
+                await rag_service.add_document(str(file_path), filename)
+            processed_files.append(filename)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Processing failed for {filename}: {str(e)}")
+    
+    return {"message": "Files uploaded and processed successfully", "filenames": processed_files}
 
 @app.post('/api/rag/query')
 async def rag_query(request: RAGQueryRequest):
@@ -185,17 +183,12 @@ async def rag_query(request: RAGQueryRequest):
     try:
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not available")
-        
         orchestrator = CrewAIRAGOrchestrator(rag_service, model_name=request.model)
-
         async def generate():
             async for chunk in orchestrator.query(
-                request.query, 
-                request.system_prompt, 
-                request.n_results
+                request.query, request.system_prompt, request.n_results
             ):
                 yield chunk + "\n"
-
         return StreamingResponse(generate(), media_type="text/plain")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -210,7 +203,6 @@ async def get_uploaded_documents():
         raise HTTPException(status_code=500, detail=str(e))
 
 # ================== UTILITY FUNCTIONS ==================
-
 async def process_llm_request(message: str, model: str, temperature: float) -> str:
     """Process LLM request using your existing services"""
     messages = [{"role": "user", "content": message}]
@@ -219,9 +211,7 @@ async def process_llm_request(message: str, model: str, temperature: float) -> s
         response += chunk
     return response
 
-
 # ================== ERROR HANDLERS ==================
-
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     return {"error": "Endpoint not found", "path": str(request.url.path)}
@@ -231,12 +221,11 @@ async def internal_error_handler(request: Request, exc):
     return {"error": "Internal server error", "detail": str(exc)}
 
 # ================== MAIN ==================
-
 if __name__ == "__main__":
     # FIXED: Pass app as import string to resolve the warning
     uvicorn.run(
         "main:app",  # Import string format: "filename:app_variable"
-        host="localhost", 
+        host="localhost",
         port=8000,
         reload=True,
         log_level="info"

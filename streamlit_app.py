@@ -1,7 +1,6 @@
 """
 Streamlit front-end for the LLM WebUI with FastAPI backend detection
 """
-
 from __future__ import annotations
 import asyncio
 import requests
@@ -48,7 +47,6 @@ async def call_local_ollama(messages, model: str = "default", temperature: float
         response += chunk
     return response
 
-
 def call_fastapi_rag_query(query: str, model: str, system_prompt: str, chunk_size: int = 500, n_results: int = 3):
     """Call FastAPI RAG query endpoint"""
     try:
@@ -69,9 +67,9 @@ def call_fastapi_rag_query(query: str, model: str, system_prompt: str, chunk_siz
         return None
 
 def upload_file_to_fastapi(file):
-    """Upload file to FastAPI backend"""
+    """Upload a single file to FastAPI backend"""
     try:
-        files = {"file": (file.name, file.getvalue(), file.type)}
+        files = {"files": (file.name, file.getvalue(), file.type)}  # Note: Endpoint expects 'files' key for list
         response = requests.post(f"{FASTAPI_URL}/api/rag/upload", files=files)
         return response.status_code == 200
     except Exception as e:
@@ -110,7 +108,8 @@ with tab1:
         except:
             available_models = ["default"]
     else:
-        available_models = ["gemma3n:e2b"] # Fallback to local model: "gemma3n:e2b" available in my local Ollama setup
+        available_models = ["gemma3n:e2b"]  # Fallback to local model
+
     selected_model = st.selectbox("Select Model:", available_models)
 
     # Temperature slider
@@ -125,7 +124,6 @@ with tab1:
         # Process with appropriate backend
         with st.spinner("Processing..."):
             if backend_available:
-                # Updated to pass temperature
                 response = call_fastapi_chat(user_input, selected_model, temperature)
                 if response:
                     st.session_state.chat_messages.append({"role": "assistant", "content": response})
@@ -140,10 +138,8 @@ with tab1:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-
 with tab2:
     st.header("RAG Interface")
-    
     if backend_available:
         try:
             models_response_rag = requests.get(f"{FASTAPI_URL}/models")
@@ -152,14 +148,18 @@ with tab2:
             available_models_rag = ["default"]
         selected_model_rag = st.selectbox("Select Base Model:", available_models_rag)
 
-        # File upload
-        uploaded_file = st.file_uploader("Upload Document", type=['pdf', 'txt', 'docx'])
-        if uploaded_file and st.button("Upload"):
-            if upload_file_to_fastapi(uploaded_file):
-                st.success("File uploaded successfully!")
+        # File upload (support multiple)
+        uploaded_files = st.file_uploader("Upload Documents", type=['pdf', 'txt', 'docx'], accept_multiple_files=True)
+        if uploaded_files and st.button("Upload"):
+            success = True
+            for uploaded_file in uploaded_files:
+                if not upload_file_to_fastapi(uploaded_file):
+                    success = False
+            if success:
+                st.success("All files uploaded successfully!")
             else:
-                st.error("Upload failed!")
-        
+                st.error("Some uploads failed!")
+
         # RAG Query
         col1, col2 = st.columns(2)
         with col1:
@@ -167,12 +167,9 @@ with tab2:
         with col2:
             n_results = st.number_input("Number of Results:", value=3, min_value=1)
 
-        
-        system_prompt = st.text_area("System Prompt:", 
-            value="You are a helpful assistant. Answer based on the document context only. If the answer is not in the context, say you don’t know.")
-        
+        system_prompt = st.text_area("System Prompt:",
+                                     value="You are a helpful assistant. Answer based on the document context only. If the answer is not in the context, say you don’t know.")
         rag_query = st.text_area("Enter your query:")
-        
         if st.button("Query Documents") and rag_query:
             with st.spinner("Querying documents..."):
                 response = call_fastapi_rag_query(rag_query, selected_model_rag, system_prompt, chunk_size, n_results)

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import chromadb
 from chromadb.utils import embedding_functions
 import pypdf
@@ -11,8 +12,13 @@ class RAGService:
     def __init__(self):
         self.client = chromadb.PersistentClient(path=Config.CHROMA_DB_PATH)
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
-        self.collection = self.client.get_or_create_collection(
-            name="documents",
+        
+        # Reset collection for fresh start (called on init, which is on backend startup)
+        collection_name = "documents"
+        if self.client.get_collection(collection_name):
+            self.client.delete_collection(collection_name)
+        self.collection = self.client.create_collection(
+            name=collection_name,
             embedding_function=self.embedding_function
         )
 
@@ -26,12 +32,12 @@ class RAGService:
             for page in reader.pages:
                 text += page.extract_text() or ""
         chunks = self.chunk_text(text, chunk_size)
-        chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+        chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]  # Unique per file and chunk
         self.collection.add(documents=chunks, ids=chunk_ids)
 
     # Old (single agent) RAG for fallback or simple use
     async def query(self, query_text, system_prompt="You are a helpful assistant. You need to answer the user based on the context of the document. If the user asks anything which is not there in the context of the uploaded document, then just answer that you can't help with anything outside of the context of the document.",
-                     n_results=3):
+                    n_results=3):
         results = self.collection.query(query_texts=[query_text], n_results=n_results)
         context = " ".join(results['documents'][0]) if results['documents'] else ""
         messages = [
@@ -42,15 +48,12 @@ class RAGService:
             yield chunk
 
 # ===================== CREWAI MULTI-AGENT ORCHESTRATION =====================
-
 class CrewAIRAGOrchestrator:
     def __init__(self, rag_service: RAGService, model_name="gemma3n:e2b"):
         self.rag_service = rag_service
-
         # Ensure the model string is properly prefixed
         if not model_name.startswith("ollama/"):
             model_name = f"ollama/{model_name}"
-
         self.ollama_llm = LLM(
             provider="ollama",
             model=model_name,
@@ -73,7 +76,7 @@ class CrewAIRAGOrchestrator:
         )
 
     # ----------------------------- async generator -----------------------------
-    async def query(self, user_query: str, model: str, system_prompt: str, n_results: int = 3):
+    async def query(self, user_query: str, system_prompt: str, n_results: int = 3):
         """Multi-step RAG implemented as an *async generator* so callers can
         `async for` over the outgoing chunks."""
         # 1) refine the question
@@ -83,7 +86,7 @@ class CrewAIRAGOrchestrator:
             f"{user_query}"
         )
         refined = await self.refiner.kickoff_async(refine_prompt)
-        refined_query = refined.raw.strip()          # LiteAgentOutput → text
+        refined_query = refined.raw.strip()  # LiteAgentOutput → text
 
         # 2) retrieve context from the vector-DB
         res = self.rag_service.collection.query(
