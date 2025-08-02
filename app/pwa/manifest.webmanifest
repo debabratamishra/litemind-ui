@@ -1,0 +1,12 @@
+{
+  "name": "LLM WebUI",
+  "short_name": "LLM UI",
+  "icons": [
+    { "src": "/app/pwa/logo192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/app/pwa/logo512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0a63ff",
+  "background_color": "#ffffff"
+}

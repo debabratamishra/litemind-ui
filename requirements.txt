@@ -14,7 +14,9 @@ jinja_partials
 fastapi-websocket-pubsub
 markdown
 python-multipart
-sentence-transformers
 itsdangerous
 crewai
 crewai-tools
+streamlit           # ← new: the Streamlit framework
+nest_asyncio        # ← new: lets Streamlit run async coroutines safely
+watchdog
