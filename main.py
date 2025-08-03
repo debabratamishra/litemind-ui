@@ -222,9 +222,8 @@ async def internal_error_handler(request: Request, exc):
 
 # ================== MAIN ==================
 if __name__ == "__main__":
-    # FIXED: Pass app as import string to resolve the warning
     uvicorn.run(
-        "main:app",  # Import string format: "filename:app_variable"
+        "main:app",
         host="localhost",
         port=8000,
         reload=True,

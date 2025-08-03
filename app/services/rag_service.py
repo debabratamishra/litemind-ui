@@ -6,10 +6,7 @@ import os
 from config import Config
 from crewai import Agent, LLM
 import os
-import re
 import httpx
-import ast
-from chromadb.errors import NotFoundError
 import shutil
 
 class RAGService:
@@ -176,5 +173,3 @@ class CrewAIRAGOrchestrator:
         # 5) Stream back in ~400-character chunks
         for i in range(0, len(answer), 400):
             yield answer[i : i + 400]
-
-# ===================== END CREWAI ORCHESTRATION =====================

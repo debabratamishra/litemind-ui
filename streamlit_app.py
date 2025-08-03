@@ -63,7 +63,7 @@ def call_fastapi_rag_query(query: str, model: str, system_prompt: str, chunk_siz
                 "chunk_size": chunk_size,
                 "n_results": n_results
             },
-            timeout=120
+            timeout=120 # Increased timeout for RAG queries
         )
         return response.text if response.status_code == 200 else None
     except Exception as e:
@@ -154,6 +154,8 @@ with tab2:
             available_models_rag = ["default"]
         selected_model_rag = st.selectbox("Select Base Model:", available_models_rag)
 
+        logger.info(f"Selected RAG model: {selected_model_rag}")
+
         # File upload (support multiple)
         uploaded_files = st.file_uploader("Upload Documents", type=['pdf', 'txt', 'docx'], accept_multiple_files=True)
         if uploaded_files and st.button("Upload"):
@@ -163,6 +165,7 @@ with tab2:
                     success = False
             if success:
                 st.success("All files uploaded successfully!")
+                logger.info("Files uploaded successfully for RAG processing")
             else:
                 st.error("Some uploads failed!")
 
