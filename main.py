@@ -15,6 +15,17 @@ import httpx
 # Import your services
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
+from fastapi.responses import StreamingResponse
+import json
+from huggingface_hub import snapshot_download
+from tqdm import tqdm
+from chromadb.utils.embedding_functions import OllamaEmbeddingFunction, SentenceTransformerEmbeddingFunction
+from sentence_transformers import SentenceTransformer  # For pre-loading to trigger download
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Upload folder setup
 UPLOAD_FOLDER = Path('./uploads')
@@ -151,31 +162,31 @@ async def rag_page(request: Request):
         return templates.TemplateResponse("rag.html", {"request": request})
     return HTMLResponse("<h1>Templates not configured</h1>")
 
-@app.post('/api/rag/upload')
-async def upload_document(files: List[UploadFile] = File(...)):
-    """Upload and process multiple documents for RAG"""
-    if not files:
-        raise HTTPException(status_code=400, detail="No files selected")
+# @app.post('/api/rag/upload')
+# async def upload_document(files: List[UploadFile] = File(...)):
+#     """Upload and process multiple documents for RAG"""
+#     if not files:
+#         raise HTTPException(status_code=400, detail="No files selected")
     
-    processed_files = []
-    for file in files:
-        if not file.filename:
-            continue
-        filename = file.filename
-        file_path = UPLOAD_FOLDER / filename
-        # Save file
-        with file_path.open('wb') as f:
-            content = await file.read()
-            f.write(content)
-        # Process with RAG service
-        try:
-            if rag_service:
-                await rag_service.add_document(str(file_path), filename)
-            processed_files.append(filename)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Processing failed for {filename}: {str(e)}")
+#     processed_files = []
+#     for file in files:
+#         if not file.filename:
+#             continue
+#         filename = file.filename
+#         file_path = UPLOAD_FOLDER / filename
+#         # Save file
+#         with file_path.open('wb') as f:
+#             content = await file.read()
+#             f.write(content)
+#         # Process with RAG service
+#         try:
+#             if rag_service:
+#                 await rag_service.add_document(str(file_path), filename)
+#             processed_files.append(filename)
+#         except Exception as e:
+#             raise HTTPException(status_code=500, detail=f"Processing failed for {filename}: {str(e)}")
     
-    return {"message": "Files uploaded and processed successfully", "filenames": processed_files}
+#     return {"message": "Files uploaded and processed successfully", "filenames": processed_files}
 
 @app.post('/api/rag/query')
 async def rag_query(request: RAGQueryRequest):
@@ -219,6 +230,96 @@ async def not_found_handler(request: Request, exc):
 @app.exception_handler(500)
 async def internal_error_handler(request: Request, exc):
     return {"error": "Internal server error", "detail": str(exc)}
+
+
+# ===== EMBEDDING FUNCTIONS =====
+# New endpoint for setting embedding
+@app.post("/api/rag/set_embedding")
+async def set_embedding(request: dict):
+    provider = request.get("provider")
+    model_name = request.get("model_name")
+    if not provider or not model_name:
+        raise HTTPException(status_code=400, detail="Provider and model_name are required")
+
+    def progress_generator():
+        try:
+            if provider.lower() == "ollama":
+                # Check if model exists
+                yield "Checking for Ollama model...\n"
+                resp = httpx.get("http://localhost:11434/api/tags")
+                models = [m["name"] for m in resp.json().get("models", [])]
+                if model_name not in models:
+                    yield f"Model not found. Pulling '{model_name}' from Ollama...\n"
+                    pull_url = "http://localhost:11434/api/pull"
+                    pull_payload = {"name": model_name, "stream": True}
+                    with httpx.stream("POST", pull_url, json=pull_payload) as pull_resp:
+                        for chunk in pull_resp.aiter_text():
+                            try:
+                                data = json.loads(chunk)
+                                if "status" in data:
+                                    yield f"{data['status']} ({data.get('completed', 0)}/{data.get('total', 0)})\n"
+                            except:
+                                pass
+                    yield "Ollama model pulled successfully.\n"
+                else:
+                    yield "Ollama model already available.\n"
+                
+                rag_service.embedding_function = OllamaEmbeddingFunction(
+                    url="http://localhost:11434/api/embeddings",  # Explicit URL for reliability
+                    model_name=model_name
+                )
+                yield "Ollama embedding function set.\n"
+
+            elif provider.lower() == "huggingface":
+                yield f"Downloading HuggingFace model: {model_name}\n"
+                # Use snapshot_download with tqdm for progress
+                for path in tqdm(snapshot_download(repo_id=model_name, ignore_patterns=["*.msgpack", "*.h5"]), desc="Downloading files"):
+                    yield f"Downloaded: {path}\n"
+                # Load to ensure it's ready
+                SentenceTransformer(model_name)
+                rag_service.embedding_function = SentenceTransformerEmbeddingFunction(model_name=model_name)
+                yield "HuggingFace embedding function set.\n"
+
+            else:
+                raise ValueError("Invalid provider")
+
+            # Recreate collection and re-index
+            yield "Recreating collection and re-indexing documents...\n"
+            rag_service.recreate_collection()
+            yield "Embedding model updated successfully.\n"
+        except Exception as e:
+            yield f"Error: {str(e)}\n"
+
+    return StreamingResponse(progress_generator(), media_type="text/plain")
+
+# In the upload endpoint, ensure files are saved and added to RAG
+@app.post("/api/rag/upload")
+async def upload_documents(files: List[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+    failed_files = []
+    try:
+        for file in files:
+            if not file.filename.lower().endswith(('.pdf', '.txt', '.docx')):
+                failed_files.append(f"{file.filename}: Unsupported file type")
+                continue
+            file_path = UPLOAD_FOLDER / file.filename
+            with open(file_path, "wb") as f:
+                f.write(await file.read())
+            try:
+                await rag_service.add_document(str(file_path), file.filename)
+                logger.info(f"Uploaded and indexed: {file.filename}")
+            except Exception as e:
+                failed_files.append(f"{file.filename}: {str(e)}")
+                logger.error(f"Failed to index {file.filename}: {str(e)}")
+                # Optionally remove the saved file if indexing fails: os.remove(file_path)
+        
+        if failed_files:
+            return {"message": "Partial success - some files failed", "failed": failed_files}, 207  # 207 Multi-Status
+        return {"message": "All files uploaded and indexed successfully"}
+    except Exception as e:
+        logger.error(f"Unexpected upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 # ================== MAIN ==================
 if __name__ == "__main__":

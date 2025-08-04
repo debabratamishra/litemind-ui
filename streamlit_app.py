@@ -1,7 +1,9 @@
 """
 Streamlit front-end for the LLM WebUI with FastAPI backend detection
 """
+
 from __future__ import annotations
+
 import asyncio
 import requests
 from pathlib import Path
@@ -11,6 +13,8 @@ from app.services.ollama import stream_ollama
 from streamlit.components.v1 import html
 import time
 import logging
+import io  # For streaming text updates
+import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -63,22 +67,49 @@ def call_fastapi_rag_query(query: str, model: str, system_prompt: str, chunk_siz
                 "chunk_size": chunk_size,
                 "n_results": n_results
             },
-            timeout=120 # Increased timeout for RAG queries
+            timeout=120  # Increased timeout for RAG queries
         )
         return response.text if response.status_code == 200 else None
     except Exception as e:
         st.error(f"RAG API Error: {str(e)}")
         return None
-
-def upload_file_to_fastapi(file):
-    """Upload a single file to FastAPI backend"""
+    
+# New function for multi-file upload
+def upload_files_to_fastapi(uploaded_files):
+    """Upload multiple files to FastAPI backend in one request"""
+    if not uploaded_files:
+        return False
     try:
-        files = {"files": (file.name, file.getvalue(), file.type)}  # Note: Endpoint expects 'files' key for list
+        files = [("files", (file.name, file.getvalue(), file.type)) for file in uploaded_files]
         response = requests.post(f"{FASTAPI_URL}/api/rag/upload", files=files)
-        return response.status_code == 200
+        if response.status_code == 200:
+            return True
+        else:
+            st.error(f"Upload failed with status {response.status_code}: {response.text}")
+            return False
     except Exception as e:
         st.error(f"Upload Error: {str(e)}")
         return False
+
+def stream_set_embedding(provider: str, model_name: str):
+    """Stream progress from set_embedding endpoint"""
+    try:
+        response = requests.post(
+            f"{FASTAPI_URL}/api/rag/set_embedding",
+            json={"provider": provider, "model_name": model_name},
+            stream=True,
+            timeout=300  # Long timeout for downloads
+        )
+        if response.status_code != 200:
+            st.error(f"Error: {response.text}")
+            yield f"Error: {response.text}"
+            return
+        for chunk in response.iter_content(chunk_size=1024, decode_unicode=True):
+            if chunk:
+                yield chunk
+    except Exception as e:
+        st.error(f"Connection Error: {str(e)}")
+        yield f"Error: {str(e)}"
 
 # Initialize Streamlit app
 st.set_page_config(page_title="LLM WebUI", layout="wide")
@@ -126,7 +157,6 @@ with tab1:
         logger.info(f"User input: {user_input}")
         # Add user message
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
-
         # Process with appropriate backend
         with st.spinner("Processing..."):
             if backend_available:
@@ -153,21 +183,49 @@ with tab2:
         except:
             available_models_rag = ["default"]
         selected_model_rag = st.selectbox("Select Base Model:", available_models_rag)
-
         logger.info(f"Selected RAG model: {selected_model_rag}")
+
+        # New: Embedding model selection
+        st.subheader("Embedding Model Configuration")
+        st.info("**Note**: Changing the embedding model will clear and re-index all uploaded documents.")
+        provider = st.selectbox("Embedding Provider:", ["Ollama", "HuggingFace"])
+
+        if provider == "Ollama":
+            try:
+                models_response = requests.get(f"{FASTAPI_URL}/models")
+                available_embedding_models = [m for m in models_response.json().get("models", []) if "embed" in m.lower()]  # Filter likely embedding models
+                if not available_embedding_models:
+                    available_embedding_models = models_response.json().get("models", [])
+            except:
+                available_embedding_models = []
+            embedding_model = st.selectbox("Select Ollama Embedding Model:", available_embedding_models)
+        else:  # HuggingFace
+            embedding_model = st.text_input("Enter HuggingFace Model Repo (e.g., sentence-transformers/all-MiniLM-L6-v2):")
+
+        if st.button("Load Embedding Model") and embedding_model:
+            with st.spinner("Loading embedding model..."):
+                progress_container = st.empty()
+                accumulated_output = ""
+                has_error = False
+                for chunk in stream_set_embedding(provider, embedding_model):
+                    accumulated_output += chunk
+                    if "Error:" in chunk:
+                        has_error = True
+                    progress_container.text(accumulated_output)  # Use text() for plain text display
+                if has_error:
+                    st.error("Failed to load embedding model. Check the progress log for details.")
+                else:
+                    st.success("Embedding model loaded successfully!")
 
         # File upload (support multiple)
         uploaded_files = st.file_uploader("Upload Documents", type=['pdf', 'txt', 'docx'], accept_multiple_files=True)
         if uploaded_files and st.button("Upload"):
-            success = True
-            for uploaded_file in uploaded_files:
-                if not upload_file_to_fastapi(uploaded_file):
-                    success = False
-            if success:
-                st.success("All files uploaded successfully!")
-                logger.info("Files uploaded successfully for RAG processing")
-            else:
-                st.error("Some uploads failed!")
+            with st.spinner("Uploading and indexing files..."):
+                if upload_files_to_fastapi(uploaded_files):
+                    st.success("All files uploaded and indexed successfully!")
+                    logger.info("Files uploaded successfully for RAG processing")
+                else:
+                    st.error("Upload failed! Check the error details above.")
 
         # RAG Query
         col1, col2 = st.columns(2)
@@ -176,8 +234,7 @@ with tab2:
         with col2:
             n_results = st.number_input("Number of Results:", value=3, min_value=1)
 
-        system_prompt = st.text_area("System Prompt:",
-                                     value="You are a helpful assistant. Answer based on the document context only. If the answer is not in the context, say you don’t know.")
+        system_prompt = st.text_area("System Prompt:", value="You are a helpful assistant. Answer based on the document context only. If the answer is not in the context, say you don’t know.")
         rag_query = st.text_area("Enter your query:")
         if st.button("Query Documents") and rag_query:
             with st.spinner("Querying documents..."):

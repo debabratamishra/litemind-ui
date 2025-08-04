@@ -8,25 +8,68 @@ from crewai import Agent, LLM
 import os
 import httpx
 import shutil
+import logging  # Add logging for warnings
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class RAGService:
     def __init__(self):
         # Wipe entire Chroma DB directory for a true reset
         if os.path.exists(Config.CHROMA_DB_PATH):
             shutil.rmtree(Config.CHROMA_DB_PATH)
-
         self.client = chromadb.PersistentClient(path=Config.CHROMA_DB_PATH)
-        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
-        
+        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")  # Default
         collection_name = "documents"
-        # After deletion, collection won't exist, so no need to delete individually
         self.collection = self.client.create_collection(
             name=collection_name,
             embedding_function=self.embedding_function
         )
+        self.file_paths = []  # Track uploaded files for re-indexing
 
     def chunk_text(self, text, chunk_size=500):
         return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+    async def add_document(self, file_path, doc_id, chunk_size=500):
+        try:
+            with open(file_path, 'rb') as file:
+                reader = pypdf.PdfReader(file)
+                text = ""
+                for page in reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:  # Only add non-empty page text
+                        text += page_text + "\n"
+            
+            if not text.strip():  # Key Fix: Check if text is empty after extraction
+                logger.warning(f"No text extracted from {doc_id}. Skipping indexing.")
+                return  # Skip adding to collection
+            
+            chunks = self.chunk_text(text, chunk_size)
+            chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+            
+            if not chunks:  # Double-check for empty chunks
+                logger.warning(f"Empty chunks for {doc_id}. Skipping.")
+                return
+            
+            self.collection.add(documents=chunks, ids=chunk_ids)
+            if file_path not in self.file_paths:
+                self.file_paths.append(file_path)
+            logger.info(f"Successfully indexed {doc_id} with {len(chunks)} chunks.")
+        except Exception as e:
+            logger.error(f"Error indexing {doc_id}: {str(e)}")
+            raise  # Re-raise to propagate to backend for error response
+
+    def recreate_collection(self):
+        """Recreate collection with current embedding_function and re-add documents"""
+        self.client.delete_collection(name="documents")
+        self.collection = self.client.create_collection(
+            name="documents",
+            embedding_function=self.embedding_function
+        )
+        for file_path in self.file_paths:
+            doc_id = os.path.basename(file_path)
+            self.add_document(file_path, doc_id)  # Note: Sync call for simplicity; make async if needed
 
     async def add_document(self, file_path, doc_id, chunk_size=500):
         with open(file_path, 'rb') as file:
