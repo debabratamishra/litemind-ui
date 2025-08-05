@@ -1,5 +1,7 @@
 """
+
 Streamlit front-end for the LLM WebUI with FastAPI backend detection
+
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from app.services.ollama import stream_ollama
 from streamlit.components.v1 import html
 import time
 import logging
-import io  # For streaming text updates
+import io # For streaming text updates
 import requests
 
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Configure FastAPI backend
 FASTAPI_URL = "http://localhost:8000"
-FASTAPI_TIMEOUT = 10  # seconds
+FASTAPI_TIMEOUT = 10 # seconds
 
 def check_fastapi_backend():
     """Check if FastAPI backend is available"""
@@ -67,13 +69,13 @@ def call_fastapi_rag_query(query: str, model: str, system_prompt: str, chunk_siz
                 "chunk_size": chunk_size,
                 "n_results": n_results
             },
-            timeout=120  # Increased timeout for RAG queries
+            timeout=120 # Increased timeout for RAG queries
         )
         return response.text if response.status_code == 200 else None
     except Exception as e:
         st.error(f"RAG API Error: {str(e)}")
         return None
-    
+
 # New function for multi-file upload
 def upload_files_to_fastapi(uploaded_files):
     """Upload multiple files to FastAPI backend in one request"""
@@ -98,7 +100,7 @@ def stream_set_embedding(provider: str, model_name: str):
             f"{FASTAPI_URL}/api/rag/set_embedding",
             json={"provider": provider, "model_name": model_name},
             stream=True,
-            timeout=300  # Long timeout for downloads
+            timeout=300 # Long timeout for downloads
         )
         if response.status_code != 200:
             st.error(f"Error: {response.text}")
@@ -116,6 +118,7 @@ st.set_page_config(page_title="LLM WebUI", layout="wide")
 
 # Check backend status
 backend_available = check_fastapi_backend()
+
 if backend_available:
     st.success("✅ FastAPI Backend Connected")
     backend_mode = "FastAPI"
@@ -124,14 +127,17 @@ else:
     backend_mode = "Local"
 
 st.title("🤖 LLM WebUI")
-st.sidebar.title("Configuration")
-st.sidebar.write(f"**Backend Mode:** {backend_mode}")
 
 # Main application logic
 tab1, tab2 = st.tabs(["💬 Chat", "📚 RAG"])
 
 with tab1:
     st.header("Chat Interface")
+    
+    # Sidebar configuration for Chat
+    st.sidebar.title("Configuration")
+    st.sidebar.write(f"**Backend Mode:** {backend_mode}")
+    
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
 
@@ -143,20 +149,23 @@ with tab1:
         except:
             available_models = ["default"]
     else:
-        available_models = ["gemma3n:e2b"]  # Fallback to local model
+        available_models = ["gemma3n:e2b"] # Fallback to local model
 
     selected_model = st.selectbox("Select Model:", available_models)
-
+    
     # Temperature slider
     temperature = st.slider("Temperature (0.0 = deterministic, 1.0 = creative):", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
+    
     logger.info(f"Selected model: {selected_model}, Temperature: {temperature}")
 
     # Chat input
     user_input = st.chat_input("Enter your message:")
+
     if user_input:
         logger.info(f"User input: {user_input}")
         # Add user message
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
+
         # Process with appropriate backend
         with st.spinner("Processing..."):
             if backend_available:
@@ -176,76 +185,143 @@ with tab1:
 
 with tab2:
     st.header("RAG Interface")
+    
+    # ============ SIDEBAR CONFIGURATION ============
+    st.sidebar.header("📊 RAG Parameters")
+    
+    # Embedding Provider Selection
+    provider = st.sidebar.selectbox(
+        "Embedding Provider:", 
+        ["Ollama", "HuggingFace"], 
+        index=0,  # Default to Ollama
+        help="Choose the provider for document embeddings"
+    )
+    
+    # Embedding Model Selection
+    if provider == "Ollama":
+        try:
+            models_response = requests.get(f"{FASTAPI_URL}/models")
+            available_embedding_models = [m for m in models_response.json().get("models", []) if "embed" in m.lower()]
+            if not available_embedding_models:
+                available_embedding_models = models_response.json().get("models", [])
+        except:
+            available_embedding_models = ["nomic-embed-text"]  # Default fallback
+        
+        embedding_model = st.sidebar.selectbox(
+            "Ollama Embedding Model:", 
+            available_embedding_models,
+            index=0 if available_embedding_models else None,
+            help="Select an embedding model from your Ollama installation"
+        )
+    else:  # HuggingFace
+        embedding_model = st.sidebar.text_input(
+            "HuggingFace Model Repo:", 
+            value="sentence-transformers/all-MiniLM-L6-v2",
+            help="Enter a HuggingFace model repository path"
+        )
+    
+    # Query Parameters
+    chunk_size = st.sidebar.number_input(
+        "Chunk Size:", 
+        value=500, 
+        min_value=100, 
+        max_value=2000,
+        step=100,
+        help="Size of text chunks for document processing"
+    )
+    
+    n_results = st.sidebar.number_input(
+        "Number of Results:", 
+        value=3, 
+        min_value=1, 
+        max_value=10,
+        help="Number of relevant chunks to retrieve"
+    )
+    
+    # Load Embedding Model Button
+    if st.sidebar.button("🔄 Load Embedding Model", type="primary") and embedding_model:
+        with st.spinner("Loading embedding model..."):
+            progress_container = st.empty()
+            accumulated_output = ""
+            has_error = False
+            
+            for chunk in stream_set_embedding(provider, embedding_model):
+                accumulated_output += chunk
+                if "Error:" in chunk:
+                    has_error = True
+                progress_container.text(accumulated_output)
+            
+            if has_error:
+                st.error("Failed to load embedding model. Check the progress log for details.")
+            else:
+                st.success("Embedding model loaded successfully!")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.info("💡 **Tip**: Change embedding settings to experiment with different retrieval approaches")
+    
+    # ============ CENTER PANEL CONTENT ============
+    
     if backend_available:
+        # Base Model Selection
         try:
             models_response_rag = requests.get(f"{FASTAPI_URL}/models")
             available_models_rag = models_response_rag.json().get("models", ["default"])
         except:
             available_models_rag = ["default"]
-        selected_model_rag = st.selectbox("Select Base Model:", available_models_rag)
+        
+        selected_model_rag = st.selectbox(
+            "Select Base Model:", 
+            available_models_rag,
+            help="Choose the language model for generating responses"
+        )
         logger.info(f"Selected RAG model: {selected_model_rag}")
-
-        # New: Embedding model selection
-        st.subheader("Embedding Model Configuration")
-        st.info("**Note**: Changing the embedding model will clear and re-index all uploaded documents.")
-        provider = st.selectbox("Embedding Provider:", ["Ollama", "HuggingFace"])
-
-        if provider == "Ollama":
-            try:
-                models_response = requests.get(f"{FASTAPI_URL}/models")
-                available_embedding_models = [m for m in models_response.json().get("models", []) if "embed" in m.lower()]  # Filter likely embedding models
-                if not available_embedding_models:
-                    available_embedding_models = models_response.json().get("models", [])
-            except:
-                available_embedding_models = []
-            embedding_model = st.selectbox("Select Ollama Embedding Model:", available_embedding_models)
-        else:  # HuggingFace
-            embedding_model = st.text_input("Enter HuggingFace Model Repo (e.g., sentence-transformers/all-MiniLM-L6-v2):")
-
-        if st.button("Load Embedding Model") and embedding_model:
-            with st.spinner("Loading embedding model..."):
-                progress_container = st.empty()
-                accumulated_output = ""
-                has_error = False
-                for chunk in stream_set_embedding(provider, embedding_model):
-                    accumulated_output += chunk
-                    if "Error:" in chunk:
-                        has_error = True
-                    progress_container.text(accumulated_output)  # Use text() for plain text display
-                if has_error:
-                    st.error("Failed to load embedding model. Check the progress log for details.")
-                else:
-                    st.success("Embedding model loaded successfully!")
-
-        # File upload (support multiple)
-        uploaded_files = st.file_uploader("Upload Documents", type=['pdf', 'txt', 'docx'], accept_multiple_files=True)
-        if uploaded_files and st.button("Upload"):
+        
+        # File Upload Section
+        st.subheader("📁 Document Upload")
+        uploaded_files = st.file_uploader(
+            "Upload Documents", 
+            type=['pdf', 'txt', 'docx'], 
+            accept_multiple_files=True,
+            help="Upload PDF, TXT, or DOCX files for RAG processing"
+        )
+        
+        if uploaded_files and st.button("📤 Upload & Index Documents", type="primary"):
             with st.spinner("Uploading and indexing files..."):
                 if upload_files_to_fastapi(uploaded_files):
-                    st.success("All files uploaded and indexed successfully!")
+                    st.success("✅ All files uploaded and indexed successfully!")
                     logger.info("Files uploaded successfully for RAG processing")
                 else:
-                    st.error("Upload failed! Check the error details above.")
-
-        # RAG Query
-        col1, col2 = st.columns(2)
-        with col1:
-            chunk_size = st.number_input("Chunk Size:", value=500, min_value=100)
-        with col2:
-            n_results = st.number_input("Number of Results:", value=3, min_value=1)
-
-        system_prompt = st.text_area("System Prompt:", value="You are a helpful assistant. Answer based on the document context only. If the answer is not in the context, say you don’t know.")
-        rag_query = st.text_area("Enter your query:")
-        if st.button("Query Documents") and rag_query:
+                    st.error("❌ Upload failed! Check the error details above.")
+        
+        # System Prompt Configuration
+        st.subheader("⚙️ System Configuration")
+        system_prompt = st.text_area(
+            "System Prompt:", 
+            value="You are a helpful assistant. Answer based on the document context only. If the answer is not in the context, say you don't know.",
+            height=100,
+            help="Define how the AI should behave when answering questions"
+        )
+        
+        # Query Section
+        st.subheader("🔍 Query Documents")
+        rag_query = st.text_area(
+            "Enter your query:",
+            height=100,
+            placeholder="Ask a question about your uploaded documents..."
+        )
+        
+        if st.button("Query Documents", type="primary") and rag_query:
             with st.spinner("Querying documents..."):
                 response = call_fastapi_rag_query(rag_query, selected_model_rag, system_prompt, chunk_size, n_results)
                 if response:
-                    st.write("**Response:**")
+                    st.subheader("📋 Response:")
                     st.write(response)
+                else:
+                    st.error("❌ No response received. Please check your query and try again.")
     else:
-        st.info("RAG functionality requires FastAPI backend. Please start the backend server.")
+        st.info("📡 RAG functionality requires FastAPI backend. Please start the backend server.")
 
-# Status footer
+# Status footer in sidebar
 st.sidebar.markdown("---")
 st.sidebar.write("**System Status:**")
 st.sidebar.write(f"Backend: {backend_mode}")
