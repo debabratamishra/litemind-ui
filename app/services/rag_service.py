@@ -8,7 +8,8 @@ from crewai import Agent, LLM
 import os
 import httpx
 import shutil
-import logging  # Add logging for warnings
+import logging
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,6 +22,7 @@ class RAGService:
             shutil.rmtree(Config.CHROMA_DB_PATH)
         self.client = chromadb.PersistentClient(path=Config.CHROMA_DB_PATH)
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")  # Default
+        self.default_chunk_size = 500  # NEW: Store default chunk size
         collection_name = "documents"
         self.collection = self.client.create_collection(
             name=collection_name,
@@ -31,7 +33,11 @@ class RAGService:
     def chunk_text(self, text, chunk_size=500):
         return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
-    async def add_document(self, file_path, doc_id, chunk_size=500):
+    async def add_document(self, file_path, doc_id, chunk_size=None):
+        """Add document with specified chunk size (used during indexing)"""
+        if chunk_size is None:
+            chunk_size = self.default_chunk_size
+            
         try:
             with open(file_path, 'rb') as file:
                 reader = pypdf.PdfReader(file)
@@ -40,50 +46,41 @@ class RAGService:
                     page_text = page.extract_text()
                     if page_text:  # Only add non-empty page text
                         text += page_text + "\n"
-            
             if not text.strip():  # Key Fix: Check if text is empty after extraction
                 logger.warning(f"No text extracted from {doc_id}. Skipping indexing.")
                 return  # Skip adding to collection
-            
             chunks = self.chunk_text(text, chunk_size)
             chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
-            
             if not chunks:  # Double-check for empty chunks
                 logger.warning(f"Empty chunks for {doc_id}. Skipping.")
                 return
-            
             self.collection.add(documents=chunks, ids=chunk_ids)
             if file_path not in self.file_paths:
                 self.file_paths.append(file_path)
-            logger.info(f"Successfully indexed {doc_id} with {len(chunks)} chunks.")
+            logger.info(f"Successfully indexed {doc_id} with {len(chunks)} chunks (chunk_size: {chunk_size}).")
         except Exception as e:
             logger.error(f"Error indexing {doc_id}: {str(e)}")
             raise  # Re-raise to propagate to backend for error response
 
     def recreate_collection(self):
         """Recreate collection with current embedding_function and re-add documents"""
-        self.client.delete_collection(name="documents")
+        try:
+            self.client.delete_collection(name="documents")
+        except:
+            pass  # Collection might not exist
         self.collection = self.client.create_collection(
             name="documents",
             embedding_function=self.embedding_function
         )
+        # Re-index existing files with current chunk size
         for file_path in self.file_paths:
             doc_id = os.path.basename(file_path)
-            self.add_document(file_path, doc_id)  # Note: Sync call for simplicity; make async if needed
+            asyncio.run(self.add_document(file_path, doc_id, self.default_chunk_size))
 
-    async def add_document(self, file_path, doc_id, chunk_size=500):
-        with open(file_path, 'rb') as file:
-            reader = pypdf.PdfReader(file)
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() or ""
-        chunks = self.chunk_text(text, chunk_size)
-        chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]  # Unique per file and chunk
-        self.collection.add(documents=chunks, ids=chunk_ids)
-
-    # Old (single agent) RAG for fallback or simple use
+    # Simple RAG query method - chunk_size not needed here as it uses pre-indexed chunks
     async def query(self, query_text, system_prompt="You are a helpful assistant. You need to answer the user based on the context of the document. If the user asks anything which is not there in the context of the uploaded document, then just answer that you can't help with anything outside of the context of the document.",
                     n_results=3):
+        """Query using pre-indexed chunks (chunk_size not relevant here)"""
         results = self.collection.query(query_texts=[query_text], n_results=n_results)
         context = " ".join(results['documents'][0]) if results['documents'] else ""
         messages = [
@@ -108,14 +105,12 @@ class CrewAIRAGOrchestrator:
         )
         self.model_name = model_name
         self.context_length = self._get_context_length(model_name)
-
         self.refiner = Agent(
             role="Query Refiner",
             goal="Clarify user questions for retrieval.",
             backstory="Understands intent and rewrites prompts.",
             llm=self.ollama_llm
         )
-
         self.composer = Agent(
             role="Answer Composer",
             goal="Craft final answers with citations.",
@@ -167,7 +162,6 @@ class CrewAIRAGOrchestrator:
         """Recursively summarize text using map-reduce to fit target length."""
         if len(text) <= target_length:
             return text
-
         # Split into smaller chunks (approx half target for recursion)
         chunk_size = target_length // 2
         chunks = self.chunk_text(text, chunk_size)
@@ -176,13 +170,12 @@ class CrewAIRAGOrchestrator:
             sum_prompt = "Provide a concise summary of the following text:"
             summ = await self._generate_summary(chunk, sum_prompt)
             summaries.append(summ)
-
         combined = " ".join(summaries)
         # Recurse if still too long
         return await self.summarize_context(combined, target_length)
 
     async def query(self, user_query: str, system_prompt: str, n_results: int = 3):
-        """Multi-step RAG implemented as an async generator."""
+        """Multi-step RAG implemented as an async generator - uses pre-indexed chunks"""
         # 1) Refine the question
         refine_prompt = (
             "Refine the following user query so it is precise, self-contained "
@@ -191,20 +184,21 @@ class CrewAIRAGOrchestrator:
         )
         refined = await self.refiner.kickoff_async(refine_prompt)
         refined_query = refined.raw.strip()
-
-        # 2) Retrieve context from the vector-DB
+        logger.info(f"Refined query: {refined_query}")
+        
+        # 2) Retrieve context from the vector-DB (uses pre-indexed chunks)
         res = self.rag_service.collection.query(
             query_texts=[refined_query], n_results=n_results
         )
         context = " ".join(res["documents"][0]) if res["documents"] else ""
-
+        
         # 3) Summarize context if it exceeds model limits
         approx_tokens = len(context) // 4 + 1  # Rough token estimate (1 token ~ 4 chars)
         target_tokens = self.context_length * 0.6  # Conservative target (leave buffer)
         if approx_tokens > target_tokens:
             target_chars = target_tokens * 4
             context = await self.summarize_context(context, target_chars)
-
+        
         # 4) Compose the answer
         compose_prompt = (
             f"Context:\n{context}\n\nOriginal question:\n{user_query}\n\n"
@@ -212,7 +206,7 @@ class CrewAIRAGOrchestrator:
         )
         final = await self.composer.kickoff_async(compose_prompt)
         answer = final.raw
-
+        
         # 5) Stream back in ~400-character chunks
         for i in range(0, len(answer), 400):
             yield answer[i : i + 400]

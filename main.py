@@ -103,6 +103,13 @@ class RAGQueryRequest(BaseModel):
     system_prompt: Optional[str] = "You are a helpful assistant."
     chunk_size: Optional[int] = 500
     n_results: Optional[int] = 3
+    use_multi_agent: Optional[bool] = False  # NEW: Added for multi-agent toggle
+
+# NEW: Configuration request model
+class RAGConfigRequest(BaseModel):
+    provider: str
+    embedding_model: str
+    chunk_size: int
 
 # Health check endpoint
 @app.get("/health")
@@ -136,6 +143,15 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# New streaming chat endpoint
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    async def event_generator():
+        messages = [{"role": "user", "content": request.message}]
+        async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature):
+            yield chunk + "\n"  # Add newline for clean chunk separation
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_page(request: Request):
     """Serve chat HTML page (if using templates)"""
@@ -162,47 +178,29 @@ async def rag_page(request: Request):
         return templates.TemplateResponse("rag.html", {"request": request})
     return HTMLResponse("<h1>Templates not configured</h1>")
 
-# @app.post('/api/rag/upload')
-# async def upload_document(files: List[UploadFile] = File(...)):
-#     """Upload and process multiple documents for RAG"""
-#     if not files:
-#         raise HTTPException(status_code=400, detail="No files selected")
-    
-#     processed_files = []
-#     for file in files:
-#         if not file.filename:
-#             continue
-#         filename = file.filename
-#         file_path = UPLOAD_FOLDER / filename
-#         # Save file
-#         with file_path.open('wb') as f:
-#             content = await file.read()
-#             f.write(content)
-#         # Process with RAG service
-#         try:
-#             if rag_service:
-#                 await rag_service.add_document(str(file_path), filename)
-#             processed_files.append(filename)
-#         except Exception as e:
-#             raise HTTPException(status_code=500, detail=f"Processing failed for {filename}: {str(e)}")
-    
-#     return {"message": "Files uploaded and processed successfully", "filenames": processed_files}
-
-@app.post('/api/rag/query')
+@app.post("/api/rag/query")
 async def rag_query(request: RAGQueryRequest):
-    """Query documents using RAG"""
-    try:
-        if not rag_service:
-            raise HTTPException(status_code=503, detail="RAG service not available")
-        orchestrator = CrewAIRAGOrchestrator(rag_service, model_name=request.model)
-        async def generate():
-            async for chunk in orchestrator.query(
-                request.query, request.system_prompt, request.n_results
-            ):
-                yield chunk + "\n"
-        return StreamingResponse(generate(), media_type="text/plain")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Process RAG query, switching between simple and multi-agent based on parameter"""
+    async def generate():
+        try:
+            if request.use_multi_agent:
+                logger.info("Using multi-agent RAG orchestration")
+                orchestrator = CrewAIRAGOrchestrator(rag_service, model_name=request.model)
+                async for chunk in orchestrator.query(request.query, request.system_prompt, request.n_results):
+                    yield chunk
+            else:
+                logger.info("Using simple RAG")
+                async for chunk in rag_service.query(
+                    request.query,
+                    request.system_prompt,
+                    n_results=request.n_results
+                ):
+                    yield chunk
+        except Exception as e:
+            logger.error(f"Error in RAG query: {str(e)}")
+            yield f"Error: {str(e)}"
+
+    return StreamingResponse(generate(), media_type="text/plain")
 
 @app.get('/api/rag/documents')
 async def get_uploaded_documents():
@@ -211,6 +209,36 @@ async def get_uploaded_documents():
         documents = [f.name for f in UPLOAD_FOLDER.iterdir() if f.is_file()]
         return {"documents": documents}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# NEW: Save RAG configuration endpoint
+@app.post("/api/rag/save_config")
+async def save_rag_config(request: RAGConfigRequest):
+    """Save RAG configuration and set up embedding function"""
+    try:
+        logger.info(f"Saving RAG config: {request.provider}, {request.embedding_model}, chunk_size: {request.chunk_size}")
+        
+        # Set up the embedding function based on provider
+        if request.provider == "Ollama":
+            rag_service.embedding_function = OllamaEmbeddingFunction(
+                url="http://localhost:11434/api/embeddings",
+                model_name=request.embedding_model
+            )
+        else:  # HuggingFace
+            rag_service.embedding_function = SentenceTransformerEmbeddingFunction(
+                model_name=request.embedding_model
+            )
+        
+        # Store chunk_size for future document uploads
+        rag_service.default_chunk_size = request.chunk_size
+        
+        # Recreate collection with new embedding function
+        rag_service.recreate_collection()
+        
+        return {"status": "success", "message": "Configuration saved successfully"}
+    except Exception as e:
+        logger.error(f"Error saving RAG config: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ================== UTILITY FUNCTIONS ==================
