@@ -77,17 +77,23 @@ class RAGService:
             doc_id = os.path.basename(file_path)
             asyncio.run(self.add_document(file_path, doc_id, self.default_chunk_size))
 
-    # Simple RAG query method - chunk_size not needed here as it uses pre-indexed chunks
-    async def query(self, query_text, system_prompt="You are a helpful assistant. You need to answer the user based on the context of the document. If the user asks anything which is not there in the context of the uploaded document, then just answer that you can't help with anything outside of the context of the document.",
-                    n_results=3):
-        """Query using pre-indexed chunks (chunk_size not relevant here)"""
-        results = self.collection.query(query_texts=[query_text], n_results=n_results)
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3):
+        """Query using pre-indexed chunks, incorporating conversation history"""
+        # MODIFIED: Build context from history
+        history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
+        full_query = f"{history_context}\nUser: {query_text}" if history_context else query_text
+        
+        results = self.collection.query(query_texts=[full_query], n_results=n_results)  # Use full_query for retrieval
+        
         context = " ".join(results['documents'][0]) if results['documents'] else ""
-        messages = [
+        
+        # MODIFIED: Include history in messages for LLM
+        llm_messages = messages + [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"}
         ]
-        async for chunk in stream_ollama(messages):
+        
+        async for chunk in stream_ollama(llm_messages):
             yield chunk
 
 # ===================== CREWAI MULTI-AGENT ORCHESTRATION =====================
@@ -174,22 +180,22 @@ class CrewAIRAGOrchestrator:
         # Recurse if still too long
         return await self.summarize_context(combined, target_length)
 
-    async def query(self, user_query: str, system_prompt: str, n_results: int = 3):
-        """Multi-step RAG implemented as an async generator - uses pre-indexed chunks"""
-        # 1) Refine the question
+    async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3):
+        """Multi-step RAG with history"""
+        # MODIFIED: Incorporate history into refinement
+        history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
         refine_prompt = (
-            "Refine the following user query so it is precise, self-contained "
-            "and uses full nouns:\n\n"
+            f"Previous conversation:\n{history_context}\n\n"
+            "Refine the following user query so it is precise, self-contained and uses full nouns:\n\n"
             f"{user_query}"
         )
+        
         refined = await self.refiner.kickoff_async(refine_prompt)
         refined_query = refined.raw.strip()
         logger.info(f"Refined query: {refined_query}")
         
-        # 2) Retrieve context from the vector-DB (uses pre-indexed chunks)
-        res = self.rag_service.collection.query(
-            query_texts=[refined_query], n_results=n_results
-        )
+        # Retrieve and summarize (existing logic)
+        res = self.rag_service.collection.query(query_texts=[refined_query], n_results=n_results)
         context = " ".join(res["documents"][0]) if res["documents"] else ""
         
         # 3) Summarize context if it exceeds model limits
@@ -201,12 +207,14 @@ class CrewAIRAGOrchestrator:
         
         # 4) Compose the answer
         compose_prompt = (
+            f"Previous conversation:\n{history_context}\n\n"
             f"Context:\n{context}\n\nOriginal question:\n{user_query}\n\n"
             f"Follow these instructions when you answer:\n{system_prompt}"
         )
+        
         final = await self.composer.kickoff_async(compose_prompt)
         answer = final.raw
         
-        # 5) Stream back in ~400-character chunks
+        # Stream back (existing logic)
         for i in range(0, len(answer), 400):
             yield answer[i : i + 400]

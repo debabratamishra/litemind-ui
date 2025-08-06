@@ -20,7 +20,7 @@ import json
 from huggingface_hub import snapshot_download
 from tqdm import tqdm
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction, SentenceTransformerEmbeddingFunction
-from sentence_transformers import SentenceTransformer  # For pre-loading to trigger download
+from sentence_transformers import SentenceTransformer
 import logging
 
 # Setup logging
@@ -99,13 +99,12 @@ class ChatResponse(BaseModel):
 
 class RAGQueryRequest(BaseModel):
     query: str
+    messages: Optional[List[dict]] = []
     model: Optional[str] = "default"
     system_prompt: Optional[str] = "You are a helpful assistant."
-    chunk_size: Optional[int] = 500
     n_results: Optional[int] = 3
-    use_multi_agent: Optional[bool] = False  # NEW: Added for multi-agent toggle
+    use_multi_agent: Optional[bool] = False
 
-# NEW: Configuration request model
 class RAGConfigRequest(BaseModel):
     provider: str
     embedding_model: str
@@ -179,28 +178,32 @@ async def rag_page(request: Request):
     return HTMLResponse("<h1>Templates not configured</h1>")
 
 @app.post("/api/rag/query")
-async def rag_query(request: RAGQueryRequest):
-    """Process RAG query, switching between simple and multi-agent based on parameter"""
-    async def generate():
-        try:
-            if request.use_multi_agent:
-                logger.info("Using multi-agent RAG orchestration")
-                orchestrator = CrewAIRAGOrchestrator(rag_service, model_name=request.model)
-                async for chunk in orchestrator.query(request.query, request.system_prompt, request.n_results):
-                    yield chunk
-            else:
-                logger.info("Using simple RAG")
-                async for chunk in rag_service.query(
-                    request.query,
-                    request.system_prompt,
+async def rag_query_endpoint(request: RAGQueryRequest):
+    """Process RAG query with optional multi-agent orchestration"""
+    try:
+        if request.use_multi_agent:
+            orchestrator = CrewAIRAGOrchestrator(rag_service, model_name=request.model)
+            async def event_generator():
+                async for chunk in orchestrator.query(
+                    user_query=request.query,
+                    system_prompt=request.system_prompt,
+                    messages=request.messages,
                     n_results=request.n_results
                 ):
                     yield chunk
-        except Exception as e:
-            logger.error(f"Error in RAG query: {str(e)}")
-            yield f"Error: {str(e)}"
-
-    return StreamingResponse(generate(), media_type="text/plain")
+            return StreamingResponse(event_generator(), media_type="text/plain")
+        else:
+            async def event_generator():
+                async for chunk in rag_service.query(
+                    query_text=request.query,
+                    system_prompt=request.system_prompt,
+                    messages=request.messages,  # NEW: Pass messages to simple query
+                    n_results=request.n_results
+                ):
+                    yield chunk
+            return StreamingResponse(event_generator(), media_type="text/plain")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get('/api/rag/documents')
 async def get_uploaded_documents():

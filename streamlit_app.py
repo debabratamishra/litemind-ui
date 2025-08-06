@@ -48,6 +48,26 @@ def call_fastapi_chat(message: str, model: str = "default", temperature: float =
         st.error(f"FastAPI Connection Error: {str(e)}")
         return None
 
+def call_fastapi_rag_query(query: str, messages: list, model: str, system_prompt: str, n_results: int = 3, use_multi_agent: bool = False):
+    """Call FastAPI RAG query endpoint with full message history"""
+    try:
+        response = requests.post(
+            f"{FASTAPI_URL}/api/rag/query",
+            json={
+                "query": query,
+                "messages": messages,
+                "model": model,
+                "system_prompt": system_prompt,
+                "n_results": n_results,
+                "use_multi_agent": use_multi_agent
+            },
+            timeout=120
+        )
+        return response.text if response.status_code == 200 else None
+    except Exception as e:
+        st.error(f"RAG API Error: {str(e)}")
+        return None
+
 async def call_local_ollama(messages, model: str = "default", temperature: float = 0.7):
     """Fallback to local Ollama service"""
     response = ""
@@ -55,26 +75,6 @@ async def call_local_ollama(messages, model: str = "default", temperature: float
         response += chunk
     return response
 
-def call_fastapi_rag_query(query: str, model: str, system_prompt: str, n_results: int = 3, use_multi_agent: bool = False):
-    """Call FastAPI RAG query endpoint - chunk_size removed as it's not used during querying"""
-    try:
-        response = requests.post(
-            f"{FASTAPI_URL}/api/rag/query",
-            json={
-                "query": query,
-                "model": model,
-                "system_prompt": system_prompt,
-                "n_results": n_results,
-                "use_multi_agent": use_multi_agent
-            },
-            timeout=120  # Increased timeout for RAG queries
-        )
-        return response.text if response.status_code == 200 else None
-    except Exception as e:
-        st.error(f"RAG API Error: {str(e)}")
-        return None
-
-# NEW: Function to save RAG configuration
 def save_rag_configuration(provider: str, embedding_model: str, chunk_size: int):
     """Save RAG configuration to FastAPI backend"""
     try:
@@ -182,6 +182,10 @@ with tab2:
         st.session_state.config_saved = False
     if "config_message" not in st.session_state:
         st.session_state.config_message = ""
+    
+    # MODIFIED: Initialize session state for RAG messages
+    if "rag_messages" not in st.session_state:
+        st.session_state.rag_messages = []
     
     # Embedding Provider Selection
     provider = st.sidebar.selectbox(
@@ -305,20 +309,39 @@ with tab2:
         
         # Query Section
         st.subheader("🔍 Query Documents")
-        rag_query = st.text_area(
-            "Enter your query:",
-            height=100,
-            placeholder="Ask a question about your uploaded documents..."
-        )
-        
-        if st.button("Query Documents", type="primary") and rag_query:
-            with st.spinner("Querying documents..."):
-                response = call_fastapi_rag_query(rag_query, selected_model_rag, system_prompt, n_results, use_multi_agent)
+
+        # Display RAG chat history
+        for message in st.session_state.rag_messages:
+            with st.chat_message(message["role"]):
+                st.write(message["content"])
+
+        # Chat input for RAG query
+        rag_input = st.chat_input("Ask a context constrained question...")
+
+        if rag_input:
+            # Add user message to history
+            st.session_state.rag_messages.append({"role": "user", "content": rag_input})
+            
+            # Prepare messages for backend (full history)
+            messages = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.rag_messages]
+            
+            with st.spinner("Thinking..."):
+                response = call_fastapi_rag_query(
+                    query=rag_input,  # Still pass the latest query for retrieval
+                    messages=messages,  # NEW: Pass full history for chaining
+                    model=selected_model_rag,
+                    system_prompt=system_prompt,
+                    n_results=n_results,
+                    use_multi_agent=use_multi_agent
+                )
                 if response:
-                    st.subheader("📋 Response:")
-                    st.write(response)
+                    # Add assistant response to history
+                    st.session_state.rag_messages.append({"role": "assistant", "content": response})
+                    
+                    st.rerun()  # Force refresh to show new message
                 else:
                     st.error("❌ No response received. Please check your query and try again.")
+
     else:
         st.info("📡 RAG functionality requires FastAPI backend. Please start the backend server.")
 
