@@ -109,6 +109,7 @@ class RAGQueryRequest(BaseModel):
     system_prompt: Optional[str] = "You are a helpful assistant."
     n_results: Optional[int] = 3
     use_multi_agent: Optional[bool] = False
+    use_hybrid_search: Optional[bool] = False  # New parameter
 
 class RAGConfigRequest(BaseModel):
     provider: str
@@ -182,33 +183,40 @@ async def rag_page(request: Request):
         return templates.TemplateResponse("rag.html", {"request": request})
     return HTMLResponse("<h1>Templates not configured</h1>")
 
+# Update the RAG query endpoint
 @app.post("/api/rag/query")
 async def rag_query_endpoint(request: RAGQueryRequest):
-    """Process RAG query with optional multi-agent orchestration"""
+    """Process RAG queries with optional hybrid search"""
     try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+        
+        response_text = ""
+        
         if request.use_multi_agent:
-            orchestrator = CrewAIRAGOrchestrator(rag_service, model_name=request.model)
-            async def event_generator():
-                async for chunk in orchestrator.query(
-                    user_query=request.query,
-                    system_prompt=request.system_prompt,
-                    messages=request.messages,
-                    n_results=request.n_results
-                ):
-                    yield chunk
-            return StreamingResponse(event_generator(), media_type="text/plain")
+            orchestrator = CrewAIRAGOrchestrator(rag_service, request.model)
+            async for chunk in orchestrator.query(
+                request.query,
+                request.system_prompt,
+                request.messages,
+                request.n_results,
+                request.use_hybrid_search  # Pass hybrid search parameter
+            ):
+                response_text += chunk
         else:
-            async def event_generator():
-                async for chunk in rag_service.query(
-                    query_text=request.query,
-                    system_prompt=request.system_prompt,
-                    messages=request.messages,  # NEW: Pass messages to simple query
-                    n_results=request.n_results
-                ):
-                    yield chunk
-            return StreamingResponse(event_generator(), media_type="text/plain")
+            async for chunk in rag_service.query(
+                request.query,
+                request.system_prompt,
+                request.messages,
+                request.n_results,
+                request.use_hybrid_search  # Pass hybrid search parameter
+            ):
+                response_text += chunk
+        
+        return response_text
+    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"RAG query failed: {str(e)}")
 
 @app.get('/api/rag/documents')
 async def get_uploaded_documents():
@@ -223,31 +231,36 @@ async def get_uploaded_documents():
 # NEW: Save RAG configuration endpoint
 @app.post("/api/rag/save_config")
 async def save_rag_config(request: RAGConfigRequest):
-    """Save RAG configuration and set up embedding function"""
+    """Save RAG configuration and recreate collection if needed"""
     try:
-        logger.info(f"Saving RAG config: {request.provider}, {request.embedding_model}, chunk_size: {request.chunk_size}")
+        global rag_service
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
         
-        # Set up the embedding function based on provider
-        if request.provider == "Ollama":
+        # Update embedding function based on provider
+        if request.provider.lower() == "ollama":
+            from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
             rag_service.embedding_function = OllamaEmbeddingFunction(
-                url="http://localhost:11434/api/embeddings",
-                model_name=request.embedding_model
+                model_name=request.embedding_model,
+                url="http://localhost:11434/api/embeddings"
             )
-        else:  # HuggingFace
+        elif request.provider.lower() == "huggingface":
+            from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
             rag_service.embedding_function = SentenceTransformerEmbeddingFunction(
                 model_name=request.embedding_model
             )
         
-        # Store chunk_size for future document uploads
+        # Update chunk size
         rag_service.default_chunk_size = request.chunk_size
         
-        # Recreate collection with new embedding function
-        rag_service.recreate_collection()
+        # Recreate collection with new settings (now properly async)
+        await rag_service.recreate_collection()
         
-        return {"status": "success", "message": "Configuration saved successfully"}
+        return {"message": "RAG configuration saved successfully", "status": "success"}
+        
     except Exception as e:
         logger.error(f"Error saving RAG config: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to save RAG configuration: {str(e)}")
 
 # ================== UTILITY FUNCTIONS ==================
 async def process_llm_request(message: str, model: str, temperature: float) -> str:

@@ -49,8 +49,8 @@ def call_fastapi_chat(message: str, model: str = "default", temperature: float =
         st.error(f"FastAPI Connection Error: {str(e)}")
         return None
 
-def call_fastapi_rag_query(query: str, messages: list, model: str, system_prompt: str, n_results: int = 3, use_multi_agent: bool = False):
-    """Call FastAPI RAG query endpoint with full message history"""
+def call_fastapi_rag_query(query: str, messages: list, model: str, system_prompt: str, n_results: int = 3, use_multi_agent: bool = False, use_hybrid_search: bool = False):
+    """Call FastAPI RAG query endpoint with hybrid search support"""
     try:
         response = requests.post(
             f"{FASTAPI_URL}/api/rag/query",
@@ -60,11 +60,11 @@ def call_fastapi_rag_query(query: str, messages: list, model: str, system_prompt
                 "model": model,
                 "system_prompt": system_prompt,
                 "n_results": n_results,
-                "use_multi_agent": use_multi_agent
+                "use_multi_agent": use_multi_agent,
+                "use_hybrid_search": use_hybrid_search  # New parameter
             },
             timeout=120
         )
-        
         return response.text if response.status_code == 200 else None
     except Exception as e:
         st.error(f"RAG API Error: {str(e)}")
@@ -294,6 +294,23 @@ elif page == "📚 RAG":
                     st.session_state.config_saved = False
                     st.session_state.config_message = f"❌ Failed to save configuration: {message}"
         
+        # Hybrid Search Configuration (Under Save Configuration Button)
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🔍 Search Configuration")
+        
+        # NEW: Hybrid Search Option
+        use_hybrid_search = st.sidebar.checkbox(
+            "🔍 Enable Hybrid Search (BM25 + Vector)", 
+            value=False,
+            help="Combines keyword-based BM25 search with semantic vector search for better retrieval accuracy",
+            disabled=not st.session_state.config_saved
+        )
+        
+        if use_hybrid_search:
+            st.sidebar.info("💡 Hybrid search combines exact keyword matching with semantic similarity for improved results")
+        elif not st.session_state.config_saved:
+            st.sidebar.warning("⚠️ Save configuration first to enable hybrid search")
+        
         # Clear RAG chat button
         if st.sidebar.button("🗑️ Clear RAG History", type="secondary"):
             st.session_state.rag_messages = []
@@ -342,6 +359,9 @@ elif page == "📚 RAG":
                 if upload_files_to_fastapi(uploaded_files, chunk_size):
                     st.success("✅ All files uploaded and indexed successfully!")
                     logger.info("Files uploaded successfully for RAG processing")
+                    # Clear any cached messages to reflect new knowledge
+                    if "rag_messages" in st.session_state:
+                        st.session_state.rag_messages.clear()
                 else:
                     st.error("❌ Upload failed! Check the error details above.")
         
@@ -363,31 +383,39 @@ elif page == "📚 RAG":
                 st.write(message["content"])
         
         # Chat input for RAG query
-        rag_input = st.chat_input("Ask a context constrained question...")
+        rag_input = st.chat_input("Ask a question about your documents...")
         
         if rag_input:
             # Add user message to history
             st.session_state.rag_messages.append({"role": "user", "content": rag_input})
             
-            # Prepare messages for backend (full history)
-            messages = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.rag_messages]
+            # Display user message immediately
+            with st.chat_message("user"):
+                st.write(rag_input)
             
-            with st.spinner("Thinking..."):
-                response = call_fastapi_rag_query(
-                    query=rag_input,
-                    messages=messages,
-                    model=selected_model_rag,
-                    system_prompt=system_prompt,
-                    n_results=n_results,
-                    use_multi_agent=use_multi_agent
-                )
-                
-                if response:
-                    # Add assistant response to history
-                    st.session_state.rag_messages.append({"role": "assistant", "content": response})
-                    st.rerun()
-                else:
-                    st.error("❌ No response received. Please check your query and try again.")
+            # Prepare messages for backend (excluding the current message)
+            messages = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.rag_messages[:-1]]
+            
+            with st.chat_message("assistant"):
+                with st.spinner("Searching knowledge base..."):
+                    response = call_fastapi_rag_query(
+                        query=rag_input,
+                        messages=messages,
+                        model=selected_model_rag,
+                        system_prompt=system_prompt,
+                        n_results=n_results,
+                        use_multi_agent=use_multi_agent,
+                        use_hybrid_search=use_hybrid_search  # Pass hybrid search parameter
+                    )
+                    
+                    if response:
+                        st.write(response)
+                        # Add assistant response to history
+                        st.session_state.rag_messages.append({"role": "assistant", "content": response})
+                    else:
+                        error_msg = "❌ No response received. Please check your query and try again."
+                        st.error(error_msg)
+                        st.session_state.rag_messages.append({"role": "assistant", "content": error_msg})
     
     else:
         st.info("📡 RAG functionality requires FastAPI backend. Please start the backend server.")
