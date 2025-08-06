@@ -21,3 +21,4 @@ streamlit           # ← new: the Streamlit framework
 nest_asyncio        # ← new: lets Streamlit run async coroutines safely
 watchdog
 ollama
+rank-bm25
