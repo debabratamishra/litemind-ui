@@ -22,6 +22,11 @@ from tqdm import tqdm
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction, SentenceTransformerEmbeddingFunction
 from sentence_transformers import SentenceTransformer
 import logging
+import asyncio
+import signal
+import sys
+import uvicorn
+import threading
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -353,11 +358,56 @@ async def upload_documents(files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 # ================== MAIN ==================
-if __name__ == "__main__":
-    uvicorn.run(
+def run():
+    config = uvicorn.Config(
         "main:app",
         host="localhost",
         port=8000,
         reload=True,
         log_level="info"
     )
+    server = uvicorn.Server(config)
+    loop = asyncio.get_event_loop()
+    stop_event = asyncio.Event()
+
+    def handle_exit(*args):
+        print("\n⏹️ Received exit signal.")
+        stop_event.set()
+
+    # Attempt native signal handling (works on Unix, partial on Windows)
+    signals = [signal.SIGINT]
+    if hasattr(signal, 'SIGTERM'):
+        signals.append(signal.SIGTERM)
+    for sig in signals:
+        try:
+            loop.add_signal_handler(sig, handle_exit)
+        except (NotImplementedError, RuntimeError):
+            # Fallback for Windows or when not running in main thread
+            signal.signal(sig, lambda s, f: stop_event.set())
+
+    # Extra fallback for Windows: listen for KeyboardInterrupt in thread
+    def keyboard_watcher():
+        try:
+            while not stop_event.is_set():
+                pass
+        except KeyboardInterrupt:
+            stop_event.set()
+    if sys.platform.startswith("win"):
+        threading.Thread(target=keyboard_watcher, daemon=True).start()
+
+    async def main():
+        server_task = loop.create_task(server.serve())
+        await stop_event.wait()
+        server.should_exit = True
+        await server_task
+
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("\n❌ KeyboardInterrupt caught. Shutting down gracefully...")
+    finally:
+        print("✅ App closed.")
+
+if __name__ == "__main__":
+    run()
+
