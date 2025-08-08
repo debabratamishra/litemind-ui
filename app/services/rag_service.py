@@ -1,11 +1,10 @@
 import chromadb
 from chromadb.utils import embedding_functions
-import pypdf
+import pypdf  # retained for legacy compatibility
 from .ollama import stream_ollama
 import os
 from config import Config
 from crewai import Agent, LLM
-import os
 import httpx
 import shutil
 import logging
@@ -15,14 +14,24 @@ import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 import string
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 import numpy as np
+from pathlib import Path
+from PIL import Image
+import io
+import base64
+
+from .file_ingest import ingest_file
+
+# Configuration flags
+ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"
+MAX_IMAGES_PER_DOC = int(os.getenv("MAX_IMAGES_PER_DOC", "10"))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Download required NLTK data
+# Download NLTK data if needed
 try:
     nltk.data.find('tokenizers/punkt')
     nltk.data.find('corpora/stopwords')
@@ -32,246 +41,301 @@ except LookupError:
 
 class RAGService:
     def __init__(self):
-        # Wipe entire Chroma DB directory for a true reset
+        # Wipe Chroma DB on startup for true reset
         if os.path.exists(Config.CHROMA_DB_PATH):
             shutil.rmtree(Config.CHROMA_DB_PATH)
-        
+
         self.client = chromadb.PersistentClient(path=Config.CHROMA_DB_PATH)
-        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+
+        # Text embedding function (CPU-friendly)
+        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L6-v2"
+        )
+
         self.default_chunk_size = 500
-        
-        collection_name = "documents"
-        self.collection = self.client.create_collection(
-            name=collection_name,
+
+        # Single TEXT collection for all content
+        self.text_collection = self.client.create_collection(
+            name="documents_text",
             embedding_function=self.embedding_function
         )
-        
+
+        # Storage for uploaded file paths
         self.file_paths = []
-        
-        # BM25 related attributes
-        self.bm25_corpus = []  # Store tokenized documents for BM25
+
+        # BM25 attributes for text chunks
+        self.bm25_corpus = []
         self.bm25_model = None
-        self.document_chunks = []  # Store original chunks for retrieval
-        self.chunk_ids = []  # Store chunk IDs for mapping
+        self.document_chunks = []  # original text chunks
+        self.chunk_ids = []
+
         self.stop_words = set(stopwords.words('english'))
 
+        # Directory to persist extracted images
+        self.image_cache_dir = Path("./uploads/imgcache")
+        self.image_cache_dir.mkdir(parents=True, exist_ok=True)
+
     def preprocess_text(self, text: str) -> List[str]:
-        """Preprocess text for BM25: tokenize, lowercase, remove stopwords and punctuation"""
-        # Tokenize and convert to lowercase
+        """Preprocess text for BM25 indexing."""
         tokens = word_tokenize(text.lower())
-        
-        # Remove punctuation and stopwords
-        tokens = [token for token in tokens 
-                 if token not in self.stop_words and token not in string.punctuation]
-        
+        tokens = [t for t in tokens if t not in self.stop_words and t not in string.punctuation]
         return tokens
 
     def chunk_text(self, text, chunk_size=500):
-        return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        """Split text into chunks with slight overlap."""
+        overlap = min(50, chunk_size // 10)
+        chunks = []
+        for i in range(0, len(text), chunk_size - overlap):
+            chunk = text[i:i + chunk_size]
+            if chunk.strip():
+                chunks.append(chunk)
+        return chunks
+
+    def _create_simple_image_references(self, images: List[dict], doc_id: str) -> List[str]:
+        """Create simple, clean image references for indexing."""
+        if not (ENABLE_SIMPLE_IMAGE_INDEXING and images):
+            return []
+        
+        references = []
+        for i, rec in enumerate(images[:MAX_IMAGES_PER_DOC]):
+            try:
+                meta = rec.get('metadata', {})
+                filename = meta.get('filename', 'unknown')
+                
+                # Create clean reference without noisy captions
+                if 'page_number' in meta:
+                    ref = f"[IMAGE REFERENCE] Document: {filename}, Page: {meta['page_number']}, Image: {i+1}"
+                elif 'slide_number' in meta:
+                    ref = f"[IMAGE REFERENCE] Presentation: {filename}, Slide: {meta['slide_number']}, Image: {i+1}"
+                else:
+                    ref = f"[IMAGE REFERENCE] File: {filename}, Image: {i+1}"
+                
+                references.append(ref)
+                
+            except Exception as e:
+                logger.warning(f"Failed to create image reference {i}: {e}")
+                continue
+        
+        logger.info(f"Created {len(references)} image references")
+        return references
 
     async def add_document(self, file_path, doc_id, chunk_size=None):
-        """Add document with specified chunk size and build BM25 index"""
+        """
+        Add document of any supported format with clean image handling.
+        """
         if chunk_size is None:
             chunk_size = self.default_chunk_size
 
         try:
-            with open(file_path, 'rb') as file:
-                reader = pypdf.PdfReader(file)
-                text = ""
-                for page in reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-
-            if not text.strip():
-                logger.warning(f"No text extracted from {doc_id}. Skipping indexing.")
+            path = Path(file_path)
+            if not path.exists():
+                logger.warning(f"File not found: {file_path}")
                 return
 
-            chunks = self.chunk_text(text, chunk_size)
-            chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+            logger.info(f"Processing document: {doc_id}")
 
-            if not chunks:
-                logger.warning(f"Empty chunks for {doc_id}. Skipping.")
-                return
+            # Parse using unified ingest pipeline
+            text_chunks, image_records, table_texts = ingest_file(path)
 
-            # Add to ChromaDB for vector search
-            self.collection.add(documents=chunks, ids=chunk_ids)
+            # Merge tables into text stream
+            for t in table_texts:
+                if t["content"] and t["content"].strip():
+                    text_chunks.append({
+                        "content": t["content"],
+                        "metadata": {**t.get("metadata", {}), "is_table": True}
+                    })
 
-            # Add to BM25 corpus
-            for i, chunk in enumerate(chunks):
-                processed_tokens = self.preprocess_text(chunk)
-                self.bm25_corpus.append(processed_tokens)
-                self.document_chunks.append(chunk)
-                self.chunk_ids.append(chunk_ids[i])
+            # Chunk long text into manageable pieces
+            flat_texts = []
+            for blk in text_chunks:
+                content = blk["content"]
+                meta = blk.get("metadata", {})
+                if not content or not content.strip():
+                    continue
+                
+                # Skip very short or very long chunks that might be noise
+                content = content.strip()
+                if len(content) < 20 or len(content) > 10000:
+                    continue
+                
+                for ch in self.chunk_text(content, chunk_size):
+                    flat_texts.append({"content": ch, "metadata": meta})
 
-            # Rebuild BM25 model
-            if self.bm25_corpus:
-                self.bm25_model = BM25Okapi(self.bm25_corpus)
+            # Add simple image references (clean, no AI captioning)
+            img_references = self._create_simple_image_references(image_records, doc_id)
+            for ref in img_references:
+                flat_texts.append({
+                    "content": ref,
+                    "metadata": {"is_image_reference": True, "filename": path.name}
+                })
+
+            # Add to Chroma TEXT collection and BM25
+            if flat_texts:
+                ids = [f"{doc_id}_text_{i}" for i in range(len(flat_texts))]
+                docs = [x["content"] for x in flat_texts]
+                metadatas = [x["metadata"] for x in flat_texts]
+                
+                self.text_collection.add(documents=docs, ids=ids, metadatas=metadatas)
+
+                # Update BM25 index
+                for i, d in enumerate(docs):
+                    tokens = self.preprocess_text(d)
+                    self.bm25_corpus.append(tokens)
+                    self.document_chunks.append(d)
+                    self.chunk_ids.append(ids[i])
+                
+                if self.bm25_corpus:
+                    self.bm25_model = BM25Okapi(self.bm25_corpus)
+
+            # Save images to disk for potential future VLM usage
+            saved_images = 0
+            if image_records:
+                for i, rec in enumerate(image_records):
+                    try:
+                        img_bytes = rec["image_bytes"]
+                        img_name = f"{doc_id}_img_{i}.png"
+                        out_path = self.image_cache_dir / img_name
+                        
+                        with open(out_path, "wb") as f:
+                            f.write(img_bytes)
+                        saved_images += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to save image {i}: {e}")
+                        continue
 
             if file_path not in self.file_paths:
                 self.file_paths.append(file_path)
 
-            logger.info(f"Successfully indexed {doc_id} with {len(chunks)} chunks (chunk_size: {chunk_size}).")
+            logger.info(f"Successfully indexed {doc_id}: {len(flat_texts)} text chunks, {saved_images} images saved")
 
         except Exception as e:
             logger.error(f"Error indexing {doc_id}: {str(e)}")
             raise
 
     async def recreate_collection(self):
-        """Recreate collection with current embedding_function and re-add documents"""
+        """Recreate text collection and rebuild indexes."""
         try:
-            self.client.delete_collection(name="documents")
-        except:
+            self.client.delete_collection(name="documents_text")
+        except Exception:
             pass
 
-        self.collection = self.client.create_collection(
-            name="documents",
+        self.text_collection = self.client.create_collection(
+            name="documents_text",
             embedding_function=self.embedding_function
         )
 
-        # Reset BM25 components
+        # Reset BM25
         self.bm25_corpus = []
         self.bm25_model = None
         self.document_chunks = []
         self.chunk_ids = []
 
-        # Re-index existing files with current chunk size
+        # Re-index all files
         for file_path in self.file_paths:
             doc_id = os.path.basename(file_path)
-            await self.add_document(file_path, doc_id, self.default_chunk_size)  # Use await instead of asyncio.run()
-
+            await self.add_document(file_path, doc_id, self.default_chunk_size)
 
     def bm25_search(self, query: str, n_results: int = 3) -> List[Tuple[str, str, float]]:
-        """Perform BM25 search and return results with scores"""
+        """Perform BM25 keyword search."""
         if not self.bm25_model or not self.document_chunks:
             return []
-
-        # Preprocess query
-        query_tokens = self.preprocess_text(query)
         
-        if not query_tokens:
+        q_tokens = self.preprocess_text(query)
+        if not q_tokens:
             return []
-
-        # Get BM25 scores
-        scores = self.bm25_model.get_scores(query_tokens)
         
-        # Get top results
+        scores = self.bm25_model.get_scores(q_tokens)
         top_indices = np.argsort(scores)[::-1][:n_results]
         
         results = []
         for idx in top_indices:
-            if scores[idx] > 0:  # Only include results with positive scores
-                results.append((
-                    self.chunk_ids[idx],
-                    self.document_chunks[idx],
-                    float(scores[idx])
-                ))
+            if scores[idx] > 0:
+                results.append((self.chunk_ids[idx], self.document_chunks[idx], float(scores[idx])))
         
         return results
 
-    def vector_search(self, query: str, n_results: int = 3) -> List[Tuple[str, str, float]]:
-        """Perform vector search and return results with scores"""
+    def vector_search_text(self, query: str, n_results: int = 3) -> List[Tuple[str, str, float]]:
+        """Perform semantic vector search over text chunks."""
         try:
-            results = self.collection.query(query_texts=[query], n_results=n_results)
-            
+            results = self.text_collection.query(query_texts=[query], n_results=n_results)
             if not results['documents'] or not results['documents'][0]:
                 return []
             
-            vector_results = []
-            for i, (doc_id, document, distance) in enumerate(zip(
-                results['ids'][0],
+            out = []
+            for doc_id, document, distance in zip(
+                results['ids'][0], 
                 results['documents'][0], 
                 results['distances'][0]
-            )):
-                # Convert distance to similarity score (assuming cosine distance)
+            ):
                 similarity = 1 - distance
-                vector_results.append((doc_id, document, similarity))
+                out.append((doc_id, document, similarity))
             
-            return vector_results
+            return out
         except Exception as e:
-            logger.error(f"Vector search error: {str(e)}")
+            logger.error(f"Vector text search error: {str(e)}")
             return []
 
     def reciprocal_rank_fusion(self, bm25_results: List[Tuple], vector_results: List[Tuple], k: int = 60) -> List[str]:
-        """Combine BM25 and vector search results using Reciprocal Rank Fusion"""
+        """Combine BM25 and vector search results using Reciprocal Rank Fusion."""
+        bm25_scores = {doc_id: 1 / (k + rank + 1) for rank, (doc_id, *_rest) in enumerate(bm25_results)}
+        vector_scores = {doc_id: 1 / (k + rank + 1) for rank, (doc_id, *_rest) in enumerate(vector_results)}
         
-        # Create score dictionaries
-        bm25_scores = {doc_id: 1 / (k + rank + 1) for rank, (doc_id, _, _) in enumerate(bm25_results)}
-        vector_scores = {doc_id: 1 / (k + rank + 1) for rank, (doc_id, _, _) in enumerate(vector_results)}
-        
-        # Combine scores
         all_doc_ids = set(bm25_scores.keys()) | set(vector_scores.keys())
         combined_scores = {}
         
         for doc_id in all_doc_ids:
             combined_scores[doc_id] = bm25_scores.get(doc_id, 0) + vector_scores.get(doc_id, 0)
         
-        # Sort by combined score
         sorted_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
-        
         return [doc_id for doc_id, _ in sorted_results]
 
     def hybrid_search(self, query: str, n_results: int = 3) -> List[str]:
-        """Perform hybrid search combining BM25 and vector search"""
-        
-        # Perform both searches
-        bm25_results = self.bm25_search(query, n_results * 2)  # Get more candidates
-        vector_results = self.vector_search(query, n_results * 2)
-        
-        if not bm25_results and not vector_results:
+        """Perform hybrid search combining BM25 and vector search."""
+        bm25_results = self.bm25_search(query, n_results * 2)
+        vec_text_results = self.vector_search_text(query, n_results * 2)
+
+        if not (bm25_results or vec_text_results):
             return []
-        
-        # Use RRF to combine results
-        fused_doc_ids = self.reciprocal_rank_fusion(bm25_results, vector_results)
-        
-        # Get the actual document content for top results
-        top_doc_ids = fused_doc_ids[:n_results]
-        
-        # Create mapping from doc_id to content
+
+        fused_text_ids = self.reciprocal_rank_fusion(bm25_results, vec_text_results)
+        top_text_ids = fused_text_ids[:n_results]
+
         id_to_content = {}
-        for doc_id, content, _ in bm25_results + vector_results:
+        for doc_id, content, _ in bm25_results + vec_text_results:
             if doc_id not in id_to_content:
                 id_to_content[doc_id] = content
-        
-        # Return documents in fused order
-        result_documents = []
-        for doc_id in top_doc_ids:
-            if doc_id in id_to_content:
-                result_documents.append(id_to_content[doc_id])
-        
+
+        result_documents = [id_to_content[i] for i in top_text_ids if i in id_to_content]
         return result_documents
 
     async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False):
-        """Query using either hybrid search or traditional vector search"""
-        
-        # Build context from history
+        """Query with hybrid search or simple vector search."""
         history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
         full_query = f"{history_context}\nUser: {query_text}" if history_context else query_text
-        
-        # Choose search method
-        if use_hybrid_search and self.bm25_model:
-            logger.info("Using hybrid search")
-            documents = self.hybrid_search(full_query, n_results)
-            context = " ".join(documents)
-        else:
-            logger.info("Using vector search")
-            results = self.collection.query(query_texts=[full_query], n_results=n_results)
-            context = " ".join(results['documents'][0]) if results['documents'] else ""
 
-        # Generate response
+        if use_hybrid_search and self.bm25_model:
+            logger.info("Using hybrid search (BM25 + semantic)")
+            text_docs = self.hybrid_search(full_query, n_results)
+            context = " ".join(text_docs)
+        else:
+            logger.info("Using semantic vector search")
+            results = self.text_collection.query(query_texts=[full_query], n_results=n_results)
+            context = " ".join(results['documents'][0]) if results.get('documents') else ""
+
         llm_messages = messages + [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"}
         ]
-
+        
         async for chunk in stream_ollama(llm_messages):
             yield chunk
 
-# Update CrewAIRAGOrchestrator to support hybrid search
+
+# CrewAI Orchestrator (unchanged from previous version)
 class CrewAIRAGOrchestrator:
     def __init__(self, rag_service: RAGService, model_name="gemma3n:e2b"):
         self.rag_service = rag_service
-        
         if not model_name.startswith("ollama/"):
             model_name = f"ollama/{model_name}"
         
@@ -281,9 +345,8 @@ class CrewAIRAGOrchestrator:
             api_base=os.getenv("OLLAMA_API_BASE", "http://localhost:11434"),
             temperature=0.0
         )
-        
         self.model_name = model_name
-        self.context_length = 4096  # Default value, will be set properly when needed
+        self.context_length = 4096
         
         self.refiner = Agent(
             role="Query Refiner",
@@ -291,7 +354,6 @@ class CrewAIRAGOrchestrator:
             backstory="Understands intent of the prompt and rewrites prompts with more details.",
             llm=self.ollama_llm
         )
-        
         self.composer = Agent(
             role="Answer Composer",
             goal="Craft final answers with citations.",
@@ -299,14 +361,7 @@ class CrewAIRAGOrchestrator:
             llm=self.ollama_llm
         )
 
-    async def _initialize_context_length(self):
-        """Initialize context length asynchronously when needed"""
-        if self.context_length == 4096:  # Only if still default
-            self.context_length = await self._get_context_length(self.model_name)
-
-
     async def _get_context_length(self, model_name: str) -> int:
-        """Asynchronously fetch the model's context length from Ollama."""
         model = model_name.replace("ollama/", "") if "ollama/" in model_name else model_name
         
         try:
@@ -332,7 +387,6 @@ class CrewAIRAGOrchestrator:
             return 4096
 
     async def _generate_summary(self, text: str, system_prompt: str) -> str:
-        """Generate a summary using stream_ollama."""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text}
@@ -346,11 +400,9 @@ class CrewAIRAGOrchestrator:
         return response
 
     def chunk_text(self, text: str, chunk_size: int):
-        """Split text into chunks."""
         return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
     async def summarize_context(self, text: str, target_length: int) -> str:
-        """Recursively summarize text using map-reduce to fit target length."""
         if len(text) <= target_length:
             return text
         
@@ -367,9 +419,9 @@ class CrewAIRAGOrchestrator:
         return await self.summarize_context(combined, target_length)
 
     async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False):
-        """Multi-step RAG with optional hybrid search"""
+        if self.context_length == 4096:
+            self.context_length = await self._get_context_length(self.model_name)
         
-        # Incorporate history into refinement
         history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
         refine_prompt = (
             f"Previous conversation:\n{history_context}\n\n"
@@ -381,23 +433,20 @@ class CrewAIRAGOrchestrator:
         refined_query = refined.raw.strip()
         logger.info(f"Refined query: {refined_query}")
         
-        # Retrieve using chosen method
         if use_hybrid_search and self.rag_service.bm25_model:
             documents = self.rag_service.hybrid_search(refined_query, n_results)
             context = " ".join(documents)
         else:
-            res = self.rag_service.collection.query(query_texts=[refined_query], n_results=n_results)
+            res = self.rag_service.text_collection.query(query_texts=[refined_query], n_results=n_results)
             context = " ".join(res["documents"][0]) if res["documents"] else ""
         
-        # Summarize context if needed
         approx_tokens = len(context) // 4 + 1
         target_tokens = self.context_length * 0.6
         
         if approx_tokens > target_tokens:
-            target_chars = target_tokens * 4
+            target_chars = int(target_tokens * 4)
             context = await self.summarize_context(context, target_chars)
         
-        # Compose answer
         compose_prompt = (
             f"Previous conversation:\n{history_context}\n\n"
             f"Context:\n{context}\n\nOriginal question:\n{user_query}\n\n"
@@ -407,6 +456,5 @@ class CrewAIRAGOrchestrator:
         final = await self.composer.kickoff_async(compose_prompt)
         answer = final.raw
         
-        # Stream back
         for i in range(0, len(answer), 400):
             yield answer[i : i + 400]

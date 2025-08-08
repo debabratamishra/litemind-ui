@@ -1,6 +1,7 @@
 """
 Streamlit front-end for the LLM WebUI with FastAPI backend detection
 Converted to multi-page application with separate Chat and RAG pages
+Updated with comprehensive file format support for multimodal RAG
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ def call_fastapi_rag_query(query: str, messages: list, model: str, system_prompt
                 "system_prompt": system_prompt,
                 "n_results": n_results,
                 "use_multi_agent": use_multi_agent,
-                "use_hybrid_search": use_hybrid_search  # New parameter
+                "use_hybrid_search": use_hybrid_search
             },
             timeout=120
         )
@@ -115,6 +116,27 @@ def upload_files_to_fastapi(uploaded_files, chunk_size: int = 500):
     except Exception as e:
         st.error(f"Upload Error: {str(e)}")
         return False
+
+def get_file_type_info():
+    """Return information about supported file types"""
+    return {
+        "supported_extensions": [
+            # Documents
+            'pdf', 'doc', 'docx', 'ppt', 'pptx', 'rtf', 'odt', 'epub',
+            # Spreadsheets  
+            'xls', 'xlsx', 'csv', 'tsv',
+            # Text files
+            'txt', 'md', 'html', 'htm', 'org', 'rst',
+            # Images
+            'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp', 'gif', 'heic', 'svg'
+        ],
+        "categories": {
+            "📄 Documents": ["pdf", "doc", "docx", "ppt", "pptx", "rtf", "odt", "epub"],
+            "📊 Spreadsheets": ["xls", "xlsx", "csv", "tsv"], 
+            "📝 Text Files": ["txt", "md", "html", "htm", "org", "rst"],
+            "🖼️ Images": ["png", "jpg", "jpeg", "bmp", "tiff", "webp", "gif", "heic", "svg"]
+        }
+    }
 
 # Initialize Streamlit app
 st.set_page_config(
@@ -212,7 +234,7 @@ if page == "💬 Chat":
 
 # ============ RAG PAGE ============
 elif page == "📚 RAG":
-    st.title("📚 LLM RAG Interface")
+    st.title("📚 Multimodal RAG Interface")
     
     if backend_available:
         # RAG-specific sidebar configuration
@@ -294,11 +316,10 @@ elif page == "📚 RAG":
                     st.session_state.config_saved = False
                     st.session_state.config_message = f"❌ Failed to save configuration: {message}"
         
-        # Hybrid Search Configuration (Under Save Configuration Button)
+        # Hybrid Search Configuration
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Search Configuration")
         
-        # NEW: Hybrid Search Option
         use_hybrid_search = st.sidebar.checkbox(
             "🔍 Enable Hybrid Search (BM25 + Vector)", 
             value=False,
@@ -341,23 +362,92 @@ elif page == "📚 RAG":
         
         logger.info(f"Selected RAG model: {selected_model_rag}")
         
-        # File Upload Section
+        # File Upload Section with comprehensive format support
         st.subheader("📁 Document Upload")
+        
         if not st.session_state.config_saved:
             st.warning("⚠️ Please save your configuration first before uploading documents.")
         
+        # Get file type information
+        file_info = get_file_type_info()
+        
+        # Display supported file types in an expandable section
+        with st.expander("📋 Supported File Formats", expanded=False):
+            st.markdown("**Your RAG system now supports:**")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**📄 Documents:**")
+                st.markdown("• PDF, Word (DOC/DOCX)")
+                st.markdown("• PowerPoint (PPT/PPTX)")
+                st.markdown("• RTF, ODT, EPUB")
+                
+                st.markdown("**📊 Spreadsheets:**")
+                st.markdown("• Excel (XLS/XLSX)")
+                st.markdown("• CSV, TSV files")
+            
+            with col2:
+                st.markdown("**📝 Text Files:**")
+                st.markdown("• Plain text (TXT, MD)")
+                st.markdown("• HTML, RST, ORG")
+                
+                st.markdown("**🖼️ Images:**")
+                st.markdown("• PNG, JPG, GIF, TIFF")
+                st.markdown("• WebP, HEIC, SVG, BMP")
+            
+            st.info("💡 **Image handling**: Images are indexed with clean references and can be retrieved based on context. For PDF documents, images are extracted separately from text content.")
+        
+        # Updated file uploader with all supported formats
         uploaded_files = st.file_uploader(
-            "Upload Documents",
-            type=['pdf', 'txt', 'docx'],
+            "Upload Documents (Multiple formats supported)",
+            type=file_info["supported_extensions"],
             accept_multiple_files=True,
-            help="Upload PDF, TXT, or DOCX files for RAG processing",
+            help="Upload documents, spreadsheets, images, or text files for multimodal RAG processing",
             disabled=not st.session_state.config_saved
         )
         
+        # Display file information if files are uploaded
+        if uploaded_files:
+            st.markdown("**📄 Selected Files:**")
+            for file in uploaded_files:
+                file_ext = file.name.split('.')[-1].lower()
+                
+                # Determine file category
+                category = "❓ Other"
+                for cat, exts in file_info["categories"].items():
+                    if file_ext in exts:
+                        category = cat
+                        break
+                
+                file_size = len(file.getvalue()) / 1024  # Size in KB
+                if file_size > 1024:
+                    size_str = f"{file_size/1024:.1f} MB"
+                else:
+                    size_str = f"{file_size:.1f} KB"
+                
+                st.markdown(f"• **{file.name}** ({category}) - {size_str}")
+        
+        # Upload button with enhanced messaging
         if uploaded_files and st.button("📤 Upload & Index Documents", type="primary", disabled=not st.session_state.config_saved):
-            with st.spinner("Uploading and indexing files..."):
+            with st.spinner(f"Uploading and indexing {len(uploaded_files)} files..."):
                 if upload_files_to_fastapi(uploaded_files, chunk_size):
                     st.success("✅ All files uploaded and indexed successfully!")
+                    
+                    # Show a summary of what was processed
+                    file_summary = {}
+                    for file in uploaded_files:
+                        file_ext = file.name.split('.')[-1].lower()
+                        for cat, exts in file_info["categories"].items():
+                            if file_ext in exts:
+                                if cat not in file_summary:
+                                    file_summary[cat] = 0
+                                file_summary[cat] += 1
+                                break
+                    
+                    summary_text = "**Processed:** " + ", ".join([f"{count} {cat.split(' ')[1].lower()}" for cat, count in file_summary.items()])
+                    st.info(summary_text)
+                    
                     logger.info("Files uploaded successfully for RAG processing")
                     # Clear any cached messages to reflect new knowledge
                     if "rag_messages" in st.session_state:
@@ -369,13 +459,13 @@ elif page == "📚 RAG":
         st.subheader("⚙️ System Configuration")
         system_prompt = st.text_area(
             "System Prompt:",
-            value="You are a helpful assistant. Answer based on the document context only. If the answer is not in the context, say you don't know.",
+            value="You are a helpful assistant with access to multimodal document knowledge. Answer based on the document context, including text and image references. If the answer is not in the context, say you don't know.",
             height=100,
-            help="Define how the AI should behave when answering questions"
+            help="Define how the AI should behave when answering questions about your documents"
         )
         
         # Query Section
-        st.subheader("🔍 Query Documents")
+        st.subheader("🔍 Query Your Knowledge Base")
         
         # Display RAG chat history
         for message in st.session_state.rag_messages:
@@ -383,7 +473,7 @@ elif page == "📚 RAG":
                 st.write(message["content"])
         
         # Chat input for RAG query
-        rag_input = st.chat_input("Ask a question about your documents...")
+        rag_input = st.chat_input("Ask questions about your documents, spreadsheets, or images...")
         
         if rag_input:
             # Add user message to history
@@ -397,7 +487,7 @@ elif page == "📚 RAG":
             messages = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.rag_messages[:-1]]
             
             with st.chat_message("assistant"):
-                with st.spinner("Searching knowledge base..."):
+                with st.spinner("Searching multimodal knowledge base..."):
                     response = call_fastapi_rag_query(
                         query=rag_input,
                         messages=messages,
@@ -405,7 +495,7 @@ elif page == "📚 RAG":
                         system_prompt=system_prompt,
                         n_results=n_results,
                         use_multi_agent=use_multi_agent,
-                        use_hybrid_search=use_hybrid_search  # Pass hybrid search parameter
+                        use_hybrid_search=use_hybrid_search
                     )
                     
                     if response:
@@ -418,7 +508,7 @@ elif page == "📚 RAG":
                         st.session_state.rag_messages.append({"role": "assistant", "content": error_msg})
     
     else:
-        st.info("📡 RAG functionality requires FastAPI backend. Please start the backend server.")
+        st.info("📡 Multimodal RAG functionality requires FastAPI backend. Please start the backend server.")
         st.sidebar.markdown("---")
         st.sidebar.info("RAG configuration unavailable without FastAPI backend")
 

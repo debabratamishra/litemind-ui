@@ -17,8 +17,16 @@ python-multipart
 itsdangerous
 crewai
 crewai-tools
-streamlit           # ← new: the Streamlit framework
-nest_asyncio        # ← new: lets Streamlit run async coroutines safely
+streamlit
+nest_asyncio
 watchdog
 ollama
 rank-bm25
+PyMuPDF
+unstructured[pdf]
+python-magic
+pymupdf
+pillow
+pandas
+openpyxl
+python-pptx

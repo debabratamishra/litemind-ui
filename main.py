@@ -28,6 +28,10 @@ import sys
 import uvicorn
 import threading
 
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Form
+from typing import List
+from pathlib import Path
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -341,34 +345,27 @@ async def set_embedding(request: dict):
 
     return StreamingResponse(progress_generator(), media_type="text/plain")
 
-# In the upload endpoint, ensure files are saved and added to RAG
 @app.post("/api/rag/upload")
-async def upload_documents(files: List[UploadFile] = File(...)):
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided")
-    failed_files = []
+async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form(500)):
+    """
+    Upload multiple files of mixed types (PDF, DOCX, PPTX, EPUB, TXT, CSV, images).
+    """
     try:
-        for file in files:
-            if not file.filename.lower().endswith(('.pdf', '.txt', '.docx')):
-                failed_files.append(f"{file.filename}: Unsupported file type")
-                continue
-            file_path = UPLOAD_FOLDER / file.filename
-            with open(file_path, "wb") as f:
-                f.write(await file.read())
-            try:
-                await rag_service.add_document(str(file_path), file.filename)
-                logger.info(f"Uploaded and indexed: {file.filename}")
-            except Exception as e:
-                failed_files.append(f"{file.filename}: {str(e)}")
-                logger.error(f"Failed to index {file.filename}: {str(e)}")
-                # Optionally remove the saved file if indexing fails: os.remove(file_path)
-        
-        if failed_files:
-            return {"message": "Partial success - some files failed", "failed": failed_files}, 207  # 207 Multi-Status
-        return {"message": "All files uploaded and indexed successfully"}
+        saved_paths = []
+        for up in files:
+            dest = UPLOAD_FOLDER / up.filename
+            with open(dest, "wb") as f:
+                f.write(await up.read())
+            saved_paths.append(dest)
+
+        # Index files
+        for p in saved_paths:
+            doc_id = p.name
+            await rag_service.add_document(str(p), doc_id, chunk_size=int(chunk_size))
+
+        return {"status": "ok", "files_indexed": [p.name for p in saved_paths]}
     except Exception as e:
-        logger.error(f"Unexpected upload error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload/index error: {str(e)}")
 
 # ================== MAIN ==================
 def run():
