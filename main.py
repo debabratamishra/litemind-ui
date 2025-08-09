@@ -1,18 +1,15 @@
 """ Complete FastAPI backend with lifespan events and proper uvicorn configuration """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends
-from fastapi.responses import RedirectResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
 from typing import Optional, List
 import uvicorn
 from pathlib import Path
-import os
 import httpx
-# Import your services
+
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
 from fastapi.responses import StreamingResponse
@@ -27,6 +24,7 @@ import signal
 import sys
 import uvicorn
 import threading
+from fastapi.responses import JSONResponse
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Form
 from typing import List
@@ -66,10 +64,6 @@ async def lifespan(app: FastAPI):
 
     # Shutdown logic
     print("👋 LLM WebUI API shutting down...")
-    # Cleanup resources here if needed
-    if rag_service:
-        # Add any cleanup logic for RAG service
-        pass
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(
@@ -78,7 +72,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan  # Use lifespan instead of on_event
+    lifespan=lifespan
 )
 
 # CORS middleware for Streamlit integration
@@ -113,7 +107,7 @@ class RAGQueryRequest(BaseModel):
     system_prompt: Optional[str] = "You are a helpful assistant."
     n_results: Optional[int] = 3
     use_multi_agent: Optional[bool] = False
-    use_hybrid_search: Optional[bool] = False  # New parameter
+    use_hybrid_search: Optional[bool] = False
 
 class RAGConfigRequest(BaseModel):
     provider: str
@@ -167,17 +161,6 @@ async def chat_page(request: Request):
     if templates:
         return templates.TemplateResponse("chat.html", {"request": request})
     return HTMLResponse("<h1>Templates not configured</h1>")
-
-@app.post('/api/chat/stream')
-async def chat_stream(request: Request):
-    """Streaming chat endpoint"""
-    data = await request.json()
-    prompt = data.get('prompt', '')
-    messages = [{"role": "user", "content": prompt}]
-    async def generate():
-        async for chunk in stream_ollama(messages):
-            yield chunk + "\n"
-    return StreamingResponse(generate(), media_type="text/plain")
 
 # ================== RAG ROUTES ==================
 @app.get("/rag", response_class=HTMLResponse)
@@ -278,15 +261,20 @@ async def process_llm_request(message: str, model: str, temperature: float) -> s
 # ================== ERROR HANDLERS ==================
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
-    return {"error": "Endpoint not found", "path": str(request.url.path)}
+    return JSONResponse(
+        status_code=404,
+        content={"error": "Endpoint not found", "path": str(request.url.path)},
+    )
 
 @app.exception_handler(500)
 async def internal_error_handler(request: Request, exc):
-    return {"error": "Internal server error", "detail": str(exc)}
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": str(exc)},
+    )
 
 
 # ===== EMBEDDING FUNCTIONS =====
-# New endpoint for setting embedding
 @app.post("/api/rag/set_embedding")
 async def set_embedding(request: dict):
     provider = request.get("provider")
@@ -294,41 +282,44 @@ async def set_embedding(request: dict):
     if not provider or not model_name:
         raise HTTPException(status_code=400, detail="Provider and model_name are required")
 
-    def progress_generator():
+    async def progress_generator():
         try:
             if provider.lower() == "ollama":
-                # Check if model exists
                 yield "Checking for Ollama model...\n"
-                resp = httpx.get("http://localhost:11434/api/tags")
-                models = [m["name"] for m in resp.json().get("models", [])]
-                if model_name not in models:
-                    yield f"Model not found. Pulling '{model_name}' from Ollama...\n"
-                    pull_url = "http://localhost:11434/api/pull"
-                    pull_payload = {"name": model_name, "stream": True}
-                    with httpx.stream("POST", pull_url, json=pull_payload) as pull_resp:
-                        for chunk in pull_resp.aiter_text():
-                            try:
-                                data = json.loads(chunk)
-                                if "status" in data:
-                                    yield f"{data['status']} ({data.get('completed', 0)}/{data.get('total', 0)})\n"
-                            except:
-                                pass
-                    yield "Ollama model pulled successfully.\n"
-                else:
-                    yield "Ollama model already available.\n"
-                
+                async with httpx.AsyncClient() as client:
+                    tags = await client.get("http://localhost:11434/api/tags")
+                    tags.raise_for_status()
+                    models = [m["name"] for m in tags.json().get("models", [])]
+
+                    if model_name not in models:
+                        yield f"Model not found. Pulling '{model_name}' from Ollama...\n"
+                        pull_url = "http://localhost:11434/api/pull"
+                        async with client.stream("POST", pull_url, json={"name": model_name, "stream": True}) as resp:
+                            async for line in resp.aiter_lines():
+                                if not line:
+                                    continue
+                                try:
+                                    data = json.loads(line)
+                                    if "status" in data:
+                                        yield f"{data['status']} ({data.get('completed', 0)}/{data.get('total', 0)})\n"
+                                except Exception:
+                                    pass
+                        yield "Ollama model pulled successfully.\n"
+                    else:
+                        yield "Ollama model already available.\n"
+
+                # set embedding fn
                 rag_service.embedding_function = OllamaEmbeddingFunction(
-                    url="http://localhost:11434/api/embeddings",  # Explicit URL for reliability
+                    url="http://localhost:11434/api/embeddings",
                     model_name=model_name
                 )
                 yield "Ollama embedding function set.\n"
 
             elif provider.lower() == "huggingface":
                 yield f"Downloading HuggingFace model: {model_name}\n"
-                # Use snapshot_download with tqdm for progress
+                # This block is CPU/IO bound, keep it sync but it's okay inside async gen
                 for path in tqdm(snapshot_download(repo_id=model_name, ignore_patterns=["*.msgpack", "*.h5"]), desc="Downloading files"):
                     yield f"Downloaded: {path}\n"
-                # Load to ensure it's ready
                 SentenceTransformer(model_name)
                 rag_service.embedding_function = SentenceTransformerEmbeddingFunction(model_name=model_name)
                 yield "HuggingFace embedding function set.\n"
@@ -336,9 +327,8 @@ async def set_embedding(request: dict):
             else:
                 raise ValueError("Invalid provider")
 
-            # Recreate collection and re-index
             yield "Recreating collection and re-indexing documents...\n"
-            rag_service.recreate_collection()
+            await rag_service.recreate_collection()
             yield "Embedding model updated successfully.\n"
         except Exception as e:
             yield f"Error: {str(e)}\n"
@@ -347,25 +337,49 @@ async def set_embedding(request: dict):
 
 @app.post("/api/rag/upload")
 async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form(500)):
-    """
-    Upload multiple files of mixed types (PDF, DOCX, PPTX, EPUB, TXT, CSV, images).
-    """
-    try:
-        saved_paths = []
-        for up in files:
-            dest = UPLOAD_FOLDER / up.filename
-            with open(dest, "wb") as f:
-                f.write(await up.read())
-            saved_paths.append(dest)
+    saved_paths = []
+    for up in files:
+        dest = UPLOAD_FOLDER / up.filename
+        with open(dest, "wb") as f:
+            f.write(await up.read())
+        saved_paths.append(dest)
 
-        # Index files
+    # Kick off background indexing so the loop isn’t blocked
+    async def _index():
         for p in saved_paths:
-            doc_id = p.name
-            await rag_service.add_document(str(p), doc_id, chunk_size=int(chunk_size))
+            await rag_service.add_document(str(p), p.name, chunk_size=int(chunk_size))
+    asyncio.create_task(_index())
 
-        return {"status": "ok", "files_indexed": [p.name for p in saved_paths]}
+    return {"status": "queued", "files": [p.name for p in saved_paths]}
+
+# main.py
+@app.get("/api/processing/capabilities")
+async def processing_capabilities():
+    if not rag_service:
+        # Service still starting up
+        return {
+            "status": "initializing",
+            "message": "RAG service is starting up",
+            "capabilities": {
+                "enhanced_csv": False,
+                "ocr_available": False,
+                "memory_optimized": True
+            }
+        }
+    try:
+        return rag_service.get_capabilities()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload/index error: {str(e)}")
+        logger.exception("Failed to get processing capabilities")
+        return {
+            "status": "degraded",
+            "message": f"Could not determine capabilities: {str(e)}",
+            "capabilities": {
+                "enhanced_csv": False,
+                "ocr_available": False,
+                "memory_optimized": True
+            }
+        }
+
 
 # ================== MAIN ==================
 def run():

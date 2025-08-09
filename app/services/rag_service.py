@@ -1,6 +1,6 @@
 import chromadb
 from chromadb.utils import embedding_functions
-import pypdf  # retained for legacy compatibility
+from chromadb.config import Settings
 from .ollama import stream_ollama
 import os
 from config import Config
@@ -14,14 +14,18 @@ import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 import string
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 import numpy as np
 from pathlib import Path
 from PIL import Image
-import io
-import base64
+import gc
+import json
+import importlib.util
 
+# Import enhanced extractors
+from .enhanced_extractors import extract_csv_enhanced, process_images_enhanced, get_image_processor, get_csv_processor
 from .file_ingest import ingest_file
+from .enhanced_document_processor import get_document_processor, extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced
 
 # Configuration flags
 ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"
@@ -39,20 +43,42 @@ except LookupError:
     nltk.download('punkt')
     nltk.download('stopwords')
 
+# --- Add this helper in rag_service.py ---
+def _flatten_metadata(meta, prefix=""):
+    out = {}
+    if not isinstance(meta, dict):
+        return out
+    for k, v in meta.items():
+        key = f"{prefix}{k}" if not prefix else f"{prefix}_{k}"
+        if isinstance(v, (str, int, float, bool)) or v is None:
+            out[key] = v
+        elif isinstance(v, dict):
+            out.update(_flatten_metadata(v, key))
+        elif isinstance(v, (list, tuple, set)):
+            # safest + reversible
+            try:
+                out[key] = json.dumps(v, ensure_ascii=False)
+            except Exception:
+                out[key] = str(v)
+        else:
+            out[key] = str(v)
+    return out
+
+
 class RAGService:
     def __init__(self):
         # Wipe Chroma DB on startup for true reset
         if os.path.exists(Config.CHROMA_DB_PATH):
             shutil.rmtree(Config.CHROMA_DB_PATH)
 
-        self.client = chromadb.PersistentClient(path=Config.CHROMA_DB_PATH)
+        self.client = chromadb.PersistentClient(path=Config.CHROMA_DB_PATH, settings=Settings(anonymized_telemetry=False))
 
         # Text embedding function (CPU-friendly)
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
 
-        self.default_chunk_size = 500
+        self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
 
         # Single TEXT collection for all content
         self.text_collection = self.client.create_collection(
@@ -74,6 +100,33 @@ class RAGService:
         # Directory to persist extracted images
         self.image_cache_dir = Path("./uploads/imgcache")
         self.image_cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    def get_capabilities(self) -> dict:
+        # Detect OCR availability: either pytesseract or easyocr being importable is enough
+        ocr_available = any(
+            importlib.util.find_spec(name) is not None
+            for name in ("pytesseract", "easyocr")
+        )
+
+        memory_optimized = True
+        enhanced_csv = True
+
+        return {
+            "status": "ready",
+            "message": "Enhanced processing available",
+            "capabilities": {
+                "enhanced_csv": enhanced_csv,
+                "ocr_available": ocr_available,
+                "memory_optimized": memory_optimized
+            },
+            "supported_extensions": [
+                "pdf","doc","docx","ppt","pptx","rtf","odt","epub",
+                "xls","xlsx","csv","tsv",
+                "txt","md","html","htm","org","rst",
+                "png","jpg","jpeg","bmp","tiff","webp","gif","heic","svg"
+            ]
+        }
+
 
     def preprocess_text(self, text: str) -> List[str]:
         """Preprocess text for BM25 indexing."""
@@ -119,10 +172,143 @@ class RAGService:
         logger.info(f"Created {len(references)} image references")
         return references
 
+    def _index_chunk_batch(self, chunk_batch: List[dict], doc_id: str):
+        """Index a batch of chunks efficiently using ChromaDB."""
+        try:
+            if not chunk_batch:
+                return
+                
+            texts = [c["content"] for c in chunk_batch if c.get("content", "").strip()]
+            raw_metas = [c.get("metadata", {}) for c in chunk_batch if c.get("content", "").strip()]
+            metadatas = [_flatten_metadata(m) for m in raw_metas]
+            
+            if not texts:
+                logger.warning("No valid texts in chunk batch")
+                return
+            
+            # Generate unique IDs for this batch
+            base_id = f"{doc_id}_batch_{len(self.chunk_ids)}"
+            ids = [f"{base_id}_{i}" for i in range(len(texts))]
+            
+            # Add to ChromaDB collection
+            self.text_collection.add(
+                documents=texts,
+                metadatas=metadatas,
+                ids=ids,
+            )
+            
+            # Update BM25 index
+            for i, text in enumerate(texts):
+                tokens = self.preprocess_text(text)
+                self.bm25_corpus.append(tokens)
+                self.document_chunks.append(text)
+                self.chunk_ids.append(ids[i])
+            
+            # Rebuild BM25 model if we have corpus
+            if self.bm25_corpus:
+                self.bm25_model = BM25Okapi(self.bm25_corpus)
+            
+            logger.info(f"Indexed batch of {len(texts)} chunks")
+            
+        except Exception as e:
+            logger.error(f"Error indexing batch: {e}")
+            raise
+
+    async def _index_single_chunk(self, chunk_data: dict):
+        """Index a single chunk - helper method for compatibility."""
+        try:
+            if not chunk_data.get("content", "").strip():
+                return
+                
+            content = chunk_data["content"]
+            metadata = _flatten_metadata(chunk_data.get("metadata", {}))
+            
+            # Generate unique ID
+            chunk_id = f"single_{len(self.chunk_ids)}_{hash(content) % 1000000}"
+            
+            # Add to ChromaDB
+            self.text_collection.add(
+                documents=[content],
+                metadatas=[metadata],
+                ids=[chunk_id],
+            )
+            
+            # Update BM25 index
+            tokens = self.preprocess_text(content)
+            self.bm25_corpus.append(tokens)
+            self.document_chunks.append(content)
+            self.chunk_ids.append(chunk_id)
+            
+            # Rebuild BM25 model
+            if self.bm25_corpus:
+                self.bm25_model = BM25Okapi(self.bm25_corpus)
+                
+        except Exception as e:
+            logger.error(f"Error indexing single chunk: {e}")
+            raise
+
+    # def _ingest_file_with_enhancement(self, path: Path):
+    #     """Ingest file with enhanced image processing."""
+    #     # Use your existing ingest_file function but enhance image processing
+    #     text_chunks, image_records, table_texts = ingest_file(path)  # Your existing function
+        
+    #     # Enhanced image processing
+    #     if image_records:
+    #         logger.info(f"Processing {len(image_records)} images with enhanced extraction")
+    #         enhanced_image_content = process_images_enhanced(image_records)
+            
+    #         # Add enhanced image content to text chunks
+    #         text_chunks.extend(enhanced_image_content)
+            
+    #         # Clear original image records to save memory
+    #         image_records.clear()
+    #         gc.collect()
+        
+    #     return text_chunks, [], table_texts  # Return empty image_records since we processed them
+
+    # Add to imports in rag_service.py
+
+    # Update the _ingest_file_with_enhancement method in RAGService class
+    def _ingest_file_with_enhancement(self, path: Path):
+        """Ingest file with enhanced document processing."""
+        # Use enhanced extraction for supported document types
+        ext = path.suffix.lower()
+        
+        if ext == '.pdf':
+            logger.info(f"Using enhanced PDF processing for {path.name}")
+            text_chunks = extract_pdf_enhanced(path)
+            image_records = []
+            table_texts = []
+        elif ext in ['.docx', '.doc']:
+            logger.info(f"Using enhanced DOCX processing for {path.name}")
+            text_chunks = extract_docx_enhanced(path)
+            image_records = []
+            table_texts = []
+        elif ext == '.epub':
+            logger.info(f"Using enhanced EPUB processing for {path.name}")
+            text_chunks = extract_epub_enhanced(path)
+            image_records = []
+            table_texts = []
+        else:
+            # Use existing extraction for other formats
+            text_chunks, image_records, table_texts = ingest_file(path)
+            
+            # Enhanced image processing for extracted images
+            if image_records:
+                logger.info(f"Processing {len(image_records)} images with enhanced extraction")
+                enhanced_image_content = process_images_enhanced(image_records)
+                # Add enhanced image content to text chunks
+                text_chunks.extend(enhanced_image_content)
+                # Clear original image records to save memory
+                image_records.clear()
+                gc.collect()
+
+        return text_chunks, image_records, table_texts
+
+
+
     async def add_document(self, file_path, doc_id, chunk_size=None):
-        """
-        Add document of any supported format with clean image handling.
-        """
+        """Enhanced document processing with improved extractors."""
         if chunk_size is None:
             chunk_size = self.default_chunk_size
 
@@ -132,83 +318,89 @@ class RAGService:
                 logger.warning(f"File not found: {file_path}")
                 return
 
-            logger.info(f"Processing document: {doc_id}")
-
-            # Parse using unified ingest pipeline
-            text_chunks, image_records, table_texts = ingest_file(path)
-
-            # Merge tables into text stream
-            for t in table_texts:
-                if t["content"] and t["content"].strip():
-                    text_chunks.append({
-                        "content": t["content"],
-                        "metadata": {**t.get("metadata", {}), "is_table": True}
-                    })
-
-            # Chunk long text into manageable pieces
-            flat_texts = []
-            for blk in text_chunks:
-                content = blk["content"]
-                meta = blk.get("metadata", {})
-                if not content or not content.strip():
-                    continue
+            logger.info(f"Processing document with enhanced extraction: {doc_id}")
+            
+            # Use enhanced extraction based on file type
+            ext = path.suffix.lower()
+            
+            if ext in {'.csv', '.tsv'}:
+                # Use enhanced CSV processing
+                logger.info(f"Using enhanced CSV processing for {path.name}")
+                chunks = await asyncio.to_thread(extract_csv_enhanced, path)
+                text_chunks, image_records, table_texts = chunks, [], []
                 
-                # Skip very short or very long chunks that might be noise
-                content = content.strip()
-                if len(content) < 20 or len(content) > 10000:
-                    continue
+                # Force garbage collection after processing
+                gc.collect()
                 
-                for ch in self.chunk_text(content, chunk_size):
-                    flat_texts.append({"content": ch, "metadata": meta})
-
-            # Add simple image references (clean, no AI captioning)
-            img_references = self._create_simple_image_references(image_records, doc_id)
-            for ref in img_references:
-                flat_texts.append({
-                    "content": ref,
-                    "metadata": {"is_image_reference": True, "filename": path.name}
+            else:
+                # Use existing extraction for other formats
+                # text_chunks, image_records, table_texts = self._ingest_file_with_enhancement(path)
+                text_chunks, image_records, table_texts = await asyncio.to_thread(
+                    self._ingest_file_with_enhancement, path
+                )
+            
+            # Process and index all content
+            all_chunks = []
+            
+            # Add enhanced text chunks
+            for chunk in text_chunks:
+                if isinstance(chunk, dict):
+                    # New enhanced format
+                    chunk_data = {
+                        "content": chunk["content"],
+                        "metadata": {
+                            **chunk.get("metadata", {}),
+                            "doc_id": doc_id,
+                            "file_path": str(file_path)
+                        }
+                    }
+                else:
+                    # Legacy format compatibility
+                    chunk_data = {
+                        "content": str(chunk),
+                        "metadata": {
+                            "doc_id": doc_id,
+                            "file_path": str(file_path),
+                            "content_type": "legacy_text"
+                        }
+                    }
+                all_chunks.append(chunk_data)
+            
+            # Add table content
+            for table in table_texts:
+                if isinstance(table, dict):
+                    table_content = table.get("content", str(table))
+                else:
+                    table_content = str(table)
+                    
+                all_chunks.append({
+                    "content": table_content,
+                    "metadata": {
+                        "doc_id": doc_id,
+                        "file_path": str(file_path),
+                        "content_type": "table"
+                    }
                 })
-
-            # Add to Chroma TEXT collection and BM25
-            if flat_texts:
-                ids = [f"{doc_id}_text_{i}" for i in range(len(flat_texts))]
-                docs = [x["content"] for x in flat_texts]
-                metadatas = [x["metadata"] for x in flat_texts]
+            
+            logger.info(f"Total chunks to index: {len(all_chunks)}")
+            
+            # Index chunks in batches for memory efficiency
+            # batch_size = 50
+            batch_size = int(os.getenv("INDEX_BATCH_SIZE", "128"))
+            for i in range(0, len(all_chunks), batch_size):
+                batch = all_chunks[i:i+batch_size]
+                self._index_chunk_batch(batch, doc_id)
                 
-                self.text_collection.add(documents=docs, ids=ids, metadatas=metadatas)
-
-                # Update BM25 index
-                for i, d in enumerate(docs):
-                    tokens = self.preprocess_text(d)
-                    self.bm25_corpus.append(tokens)
-                    self.document_chunks.append(d)
-                    self.chunk_ids.append(ids[i])
-                
-                if self.bm25_corpus:
-                    self.bm25_model = BM25Okapi(self.bm25_corpus)
-
-            # Save images to disk for potential future VLM usage
-            saved_images = 0
-            if image_records:
-                for i, rec in enumerate(image_records):
-                    try:
-                        img_bytes = rec["image_bytes"]
-                        img_name = f"{doc_id}_img_{i}.png"
-                        out_path = self.image_cache_dir / img_name
-                        
-                        with open(out_path, "wb") as f:
-                            f.write(img_bytes)
-                        saved_images += 1
-                        
-                    except Exception as e:
-                        logger.warning(f"Failed to save image {i}: {e}")
-                        continue
-
-            if file_path not in self.file_paths:
-                self.file_paths.append(file_path)
-
-            logger.info(f"Successfully indexed {doc_id}: {len(flat_texts)} text chunks, {saved_images} images saved")
-
+                # Memory management
+                if i % 200 == 0:  # Every 200 chunks
+                    gc.collect()
+            
+            # Add file path to tracking
+            if str(file_path) not in self.file_paths:
+                self.file_paths.append(str(file_path))
+            
+            logger.info(f"Successfully indexed {len(all_chunks)} chunks for {doc_id}")
+            
         except Exception as e:
             logger.error(f"Error indexing {doc_id}: {str(e)}")
             raise
@@ -331,7 +523,6 @@ class RAGService:
         async for chunk in stream_ollama(llm_messages):
             yield chunk
 
-
 # CrewAI Orchestrator (unchanged from previous version)
 class CrewAIRAGOrchestrator:
     def __init__(self, rag_service: RAGService, model_name="gemma3n:e2b"):
@@ -365,7 +556,7 @@ class CrewAIRAGOrchestrator:
         model = model_name.replace("ollama/", "") if "ollama/" in model_name else model_name
         
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
                     f"{os.getenv('OLLAMA_API_BASE', 'http://localhost:11434')}/api/show",
                     json={"name": model}

@@ -1,12 +1,11 @@
-# app/services/file_ingest.py
-import os
 import io
 import mimetypes
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 import logging
+from .enhanced_document_processor import extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced
 
-# Unstructured for multi-format parsing
+
 try:
     from unstructured.partition.auto import partition
     from unstructured.documents.elements import Table, NarrativeText, Title, Header, Footer, FigureCaption
@@ -14,19 +13,16 @@ try:
 except ImportError:
     UNSTRUCTURED_AVAILABLE = False
 
-# PDF and image processing
 import fitz
 from PIL import Image
 import csv
 
-# Excel support
 try:
     import pandas as pd
     PANDAS_AVAILABLE = True
 except ImportError:
     PANDAS_AVAILABLE = False
 
-# PowerPoint support
 try:
     from pptx import Presentation
     PPTX_AVAILABLE = True
@@ -92,7 +88,7 @@ def extract_with_unstructured(path: Path) -> Tuple[List[dict], List[dict], List[
             
             # Skip figure captions to avoid noisy text
             elif isinstance(el, FigureCaption):
-                continue  # Skip to avoid noise
+                continue
             
             # General text content
             elif isinstance(el, (NarrativeText, Title, Header, Footer)) or hasattr(el, "text"):
@@ -377,48 +373,67 @@ def extract_standalone_image(path: Path) -> Tuple[List[dict], List[dict], List[d
         logger.error(f"Image file processing failed for {path}: {e}")
         return [], [], []
 
+# Replace the PDF processing section in ingest_file function
 def ingest_file(path: Path) -> Tuple[List[dict], List[dict], List[dict]]:
     """
-    Main file ingestion function.
+    Main file ingestion function with enhanced document processing.
     Returns: (text_chunks, image_records, table_texts)
     """
     ext = path.suffix.lower()
-    
     logger.info(f"Processing file: {path} (extension: {ext})")
-    
+
     # Excel files
     if ext in {".xls", ".xlsx"}:
         return extract_excel(path), [], []
-    
+
     # CSV files
     if ext in {".csv", ".tsv"}:
         return extract_csv(path), [], []
-    
+
     # Plain text files
     if ext in {".txt", ".md"}:
         return extract_txt(path), [], []
-    
+
     # Standalone image files
     if ext in SUPPORTED_IMAGE_EXT:
         return extract_standalone_image(path)
-    
-    # PDF files - use clean PyMuPDF approach
+
+    # Enhanced PDF processing
     if ext == ".pdf":
-        logger.info("Using PyMuPDF for clean PDF extraction")
-        text_chunks, image_records = extract_pdf_with_pymupdf(path)
-        return text_chunks, image_records, []
-    
-    # Other document formats - try Unstructured first
+        logger.info("Using enhanced PDF extraction")
+        enhanced_content = extract_pdf_enhanced(path)
+        return enhanced_content, [], []  # Images are processed within the enhanced content
+
+    # Enhanced Word document processing
+    if ext in {".docx", ".doc"}:
+        logger.info("Using enhanced DOCX extraction")
+        enhanced_content = extract_docx_enhanced(path)
+        return enhanced_content, [], []
+
+    # Enhanced EPUB processing
+    if ext == ".epub":
+        logger.info("Using enhanced EPUB extraction")
+        enhanced_content = extract_epub_enhanced(path)
+        return enhanced_content, [], []
+
+    # Other document formats - use enhanced processing if possible, otherwise fall back to Unstructured
     if ext in SUPPORTED_TEXT_EXT:
-        text_chunks, image_records, table_texts = extract_with_unstructured(path)
-        
-        # For presentations, supplement with image extraction
-        if ext in {".ppt", ".pptx"} and not image_records:
-            presentation_images = extract_presentation_images(path)
-            image_records.extend(presentation_images)
-        
-        return text_chunks, image_records, table_texts
-    
+        # Try enhanced processing first for known formats
+        if ext in {".pptx", ".ppt"}:
+            # For presentations, we can add enhanced processing later
+            text_chunks, image_records, table_texts = extract_with_unstructured(path)
+            
+            # Supplement with image extraction for presentations
+            if not image_records:
+                presentation_images = extract_presentation_images(path)
+                image_records.extend(presentation_images)
+            
+            return text_chunks, image_records, table_texts
+        else:
+            # Use existing unstructured processing for other formats
+            text_chunks, image_records, table_texts = extract_with_unstructured(path)
+            return text_chunks, image_records, table_texts
+
     # Unsupported format
     logger.warning(f"Unsupported file format: {ext}")
     return [], [], []
