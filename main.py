@@ -18,10 +18,15 @@ from huggingface_hub import snapshot_download
 from tqdm import tqdm
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction, SentenceTransformerEmbeddingFunction
 from sentence_transformers import SentenceTransformer
+try:
+    import torch
+except Exception:
+    torch = None
 import logging
 import asyncio
 import signal
 import sys
+import os
 import uvicorn
 import threading
 from fastapi.responses import JSONResponse
@@ -29,6 +34,7 @@ from fastapi.responses import JSONResponse
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Form
 from typing import List
 from pathlib import Path
+from fastapi.responses import StreamingResponse
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +64,23 @@ async def lifespan(app: FastAPI):
     global rag_service
     rag_service = RAGService()
     print("📚 RAG service ready")
+    # ===== Performance tuning: thread counts for CPU-bound ops =====
+    try:
+        cpu_threads = max(1, (os.cpu_count() or 4) - 1)
+        os.environ.setdefault("OMP_NUM_THREADS", str(cpu_threads))
+        os.environ.setdefault("MKL_NUM_THREADS", str(cpu_threads))
+        os.environ.setdefault("NUMEXPR_NUM_THREADS", str(cpu_threads))
+        if torch is not None:
+            try:
+                torch.set_num_threads(cpu_threads)
+                if hasattr(torch, "set_num_interop_threads"):
+                    torch.set_num_interop_threads(max(1, cpu_threads // 2))
+                logger.info(f"Torch threads set: intra={cpu_threads}")
+            except Exception as e:
+                logger.warning(f"Could not set Torch threads: {e}")
+        logger.info(f"OMP/MKL threads set to {cpu_threads}")
+    except Exception as e:
+        logger.warning(f"Thread tuning skipped: {e}")
     print("💬 Chat service ready")
 
     yield  # App is running
@@ -171,39 +194,27 @@ async def rag_page(request: Request):
     return HTMLResponse("<h1>Templates not configured</h1>")
 
 # Update the RAG query endpoint
+
 @app.post("/api/rag/query")
 async def rag_query_endpoint(request: RAGQueryRequest):
-    """Process RAG queries with optional hybrid search"""
-    try:
-        if not rag_service:
-            raise HTTPException(status_code=503, detail="RAG service not initialized")
-        
-        response_text = ""
-        
-        if request.use_multi_agent:
-            orchestrator = CrewAIRAGOrchestrator(rag_service, request.model)
-            async for chunk in orchestrator.query(
-                request.query,
-                request.system_prompt,
-                request.messages,
-                request.n_results,
-                request.use_hybrid_search  # Pass hybrid search parameter
-            ):
-                response_text += chunk
-        else:
-            async for chunk in rag_service.query(
-                request.query,
-                request.system_prompt,
-                request.messages,
-                request.n_results,
-                request.use_hybrid_search  # Pass hybrid search parameter
-            ):
-                response_text += chunk
-        
-        return response_text
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG query failed: {str(e)}")
+    async def gen():
+        try:
+            if request.use_multi_agent:
+                orchestrator = CrewAIRAGOrchestrator(rag_service, request.model)
+                async for chunk in orchestrator.query(
+                    request.query, request.system_prompt, request.messages,
+                    request.n_results, request.use_hybrid_search
+                ):
+                    yield chunk
+            else:
+                async for chunk in rag_service.query(
+                    request.query, request.system_prompt, request.messages,
+                    request.n_results, request.use_hybrid_search
+                ):
+                    yield chunk
+        except Exception as e:
+            yield f"\n[ERROR] {e}\n"
+    return StreamingResponse(gen(), media_type="text/plain")
 
 @app.get('/api/rag/documents')
 async def get_uploaded_documents():
@@ -232,9 +243,9 @@ async def save_rag_config(request: RAGConfigRequest):
                 url="http://localhost:11434/api/embeddings"
             )
         elif request.provider.lower() == "huggingface":
-            from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-            rag_service.embedding_function = SentenceTransformerEmbeddingFunction(
-                model_name=request.embedding_model
+            rag_service.embedding_function = LocalHFEmbeddingFunction(
+                model_name=request.embedding_model,
+                batch_size=64,
             )
         
         # Update chunk size
@@ -273,6 +284,31 @@ async def internal_error_handler(request: Request, exc):
         content={"error": "Internal server error", "detail": str(exc)},
     )
 
+
+class LocalHFEmbeddingFunction:
+    """Fast local embedding function with batching and device selection.
+    Compatible with Chroma's embedding_function interface.
+    """
+    def __init__(self, model_name: str, device: str | None = None, batch_size: int = 64):
+        # Auto-select device if not provided
+        if device is None:
+            if torch is not None and hasattr(torch, 'cuda') and torch.cuda.is_available():
+                device = 'cuda'
+            else:
+                device = 'cpu'
+        self.model = SentenceTransformer(model_name, device=device)
+        self.batch_size = batch_size
+
+    def __call__(self, texts: list[str]):
+        # SentenceTransformer returns numpy; convert to list of lists
+        embs = self.model.encode(
+            texts,
+            batch_size=self.batch_size,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return embs.tolist()
 
 # ===== EMBEDDING FUNCTIONS =====
 @app.post("/api/rag/set_embedding")
@@ -316,13 +352,16 @@ async def set_embedding(request: dict):
                 yield "Ollama embedding function set.\n"
 
             elif provider.lower() == "huggingface":
-                yield f"Downloading HuggingFace model: {model_name}\n"
-                # This block is CPU/IO bound, keep it sync but it's okay inside async gen
-                for path in tqdm(snapshot_download(repo_id=model_name, ignore_patterns=["*.msgpack", "*.h5"]), desc="Downloading files"):
-                    yield f"Downloaded: {path}\n"
-                SentenceTransformer(model_name)
-                rag_service.embedding_function = SentenceTransformerEmbeddingFunction(model_name=model_name)
-                yield "HuggingFace embedding function set.\n"
+                yield f"Loading HuggingFace model: {model_name}\n"
+                # Loading the model will download it on first run and cache it
+                _tmp = SentenceTransformer(model_name)
+                device = 'cuda' if (torch is not None and hasattr(torch, 'cuda') and torch.cuda.is_available()) else 'cpu'
+                rag_service.embedding_function = LocalHFEmbeddingFunction(
+                    model_name=model_name,
+                    device=device,
+                    batch_size=64,
+                )
+                yield f"HuggingFace embedding function set on {device}.\n"
 
             else:
                 raise ValueError("Invalid provider")
@@ -346,8 +385,13 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
 
     # Kick off background indexing so the loop isn’t blocked
     async def _index():
-        for p in saved_paths:
-            await rag_service.add_document(str(p), p.name, chunk_size=int(chunk_size))
+        sem = asyncio.Semaphore(2)
+
+        async def index_one(p):
+            async with sem:
+                await rag_service.add_document(str(p), p.name, chunk_size=int(chunk_size))
+
+        await asyncio.gather(*(index_one(p) for p in saved_paths))
     asyncio.create_task(_index())
 
     return {"status": "queued", "files": [p.name for p in saved_paths]}
@@ -387,7 +431,7 @@ def run():
         "main:app",
         host="localhost",
         port=8000,
-        reload=True,
+        reload=bool(int(os.getenv("RELOAD", "0"))),
         log_level="info"
     )
     server = uvicorn.Server(config)
