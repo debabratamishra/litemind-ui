@@ -44,7 +44,6 @@ logger = logging.getLogger(__name__)
 UPLOAD_FOLDER = Path('./uploads')
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 
-# Global variables for services (to be initialized in lifespan)
 rag_service = None
 
 @asynccontextmanager

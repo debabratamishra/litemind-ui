@@ -9,6 +9,19 @@ import requests
 from pathlib import Path
 import nest_asyncio
 import streamlit as st
+from app.services.ollama import stream_ollama
+from streamlit.components.v1 import html
+import time
+import logging
+import io
+import requests
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Configure FastAPI backend
+FASTAPI_URL = "http://localhost:8000"
+FASTAPI_TIMEOUT = 60  # seconds
 
 # === Rendering helpers ===
 import re, json
@@ -56,20 +69,6 @@ def render_llm_text(s: str):
     if tail.strip() or not rendered_any:
         # Use markdown so headings, lists, tables render properly
         st.markdown(tail)
-
-from app.services.ollama import stream_ollama
-from streamlit.components.v1 import html
-import time
-import logging
-import io
-import requests
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Configure FastAPI backend
-FASTAPI_URL = "http://localhost:8000"
-FASTAPI_TIMEOUT = 60  # seconds
 
 def check_fastapi_backend():
     """Check if FastAPI backend is available"""
@@ -129,6 +128,71 @@ def call_fastapi_rag_query(query: str, messages: list, model: str, system_prompt
         st.error(f"RAG API Error: {str(e)}")
         return None
 
+def _animate_tokens(placeholder, base_text: str, addition: str, delay: float = 0.02, show_cursor: bool = True) -> str:
+    """
+    Smoothly animate text appearing token-by-token (word-by-word) in Streamlit.
+    Splits on whitespace boundaries so words/punctuation appear naturally.
+    Returns the new accumulated text.
+    """
+    tokens = re.findall(r"\s+|[^\s]+", addition)  # preserve spaces as tokens
+    visible = base_text
+    for tok in tokens:
+        visible += tok
+        if placeholder is not None:
+            placeholder.markdown(_unescape_text(visible) + ("▌" if show_cursor else ""))
+            time.sleep(delay)  # 5–30 ms feels good; tweak to taste
+    return visible
+
+def stream_fastapi_chat(
+    message: str,
+    model: str = "default",
+    temperature: float = 0.7,
+    placeholder=None,
+):
+    """Stream Chat response from FastAPI and update the UI incrementally."""
+    payload = {"message": message, "model": model, "temperature": temperature}
+
+    try:
+        with requests.post(
+            f"{FASTAPI_URL}/api/chat/stream",
+            json=payload,
+            stream=True,
+            timeout=(5, 600),  # (connect, read)
+        ) as r:
+            r.raise_for_status()
+
+            buf = ""
+            for line in r.iter_lines(decode_unicode=True, chunk_size=1):
+                if line is None or not line:
+                    continue
+
+                if line.startswith("data:"):
+                    line = line[5:].lstrip()
+
+                new_text = line + "\n"
+                if placeholder is not None:
+                    buf = _animate_tokens(placeholder, buf, new_text)
+                else:
+                    buf += new_text
+
+            return buf
+
+    except requests.exceptions.Timeout:
+        st.error("Chat API timed out while streaming.")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Chat API Error: {e}")
+
+    return None
+
+def stream_local_ollama_chat(message: str, model: str, temperature: float, placeholder=None):
+    async def _inner():
+        acc = ""
+        async for chunk in stream_ollama([{"role": "user", "content": message}], model=model, temperature=temperature):
+            acc += chunk
+            if placeholder is not None:
+                placeholder.markdown(_unescape_text(acc))
+        return acc
+    return asyncio.run(_inner())
 
 # Streaming helper for RAG queries
 def stream_fastapi_rag_query(
@@ -163,23 +227,20 @@ def stream_fastapi_rag_query(
             r.raise_for_status()
 
             buf = ""
-            # Stream line-by-line; works for chunked text/plain and SSE-like lines
-            for line in r.iter_lines(decode_unicode=True):
+            for line in r.iter_lines(decode_unicode=True, chunk_size=1):
                 if line is None:
                     continue
                 if not line:
-                    # keep-alive / empty line
                     continue
 
-                # Optional: strip SSE "data:" prefix if backend uses it
                 if line.startswith("data:"):
                     line = line[5:].lstrip()
 
-                buf += line + "\n"
-
-                # Update UI incrementally
+                new_text = line + "\n"
                 if placeholder is not None:
-                    placeholder.markdown(_unescape_text(buf))
+                    buf = _animate_tokens(placeholder, buf, new_text)
+                else:
+                    buf += new_text
 
             return buf
 
@@ -408,18 +469,44 @@ if page == "💬 Chat":
 
     # Input bar
     user_input = st.chat_input("Ask Anything")
+
     if user_input:
+        # record user message
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
-        with st.spinner("Thinking..."):
-            if backend_available:
-                reply = call_fastapi_chat(user_input, selected_model, temperature)
-            else:
-                reply = asyncio.run(
-                    call_local_ollama([{"role": "user", "content": user_input}], selected_model, temperature)
-                )
+
+        # immediately echo the user's message before starting the stream
+        with st.chat_message("user"):
+            render_llm_text(user_input)
+
+        # assistant area with live updates
+        with st.chat_message("assistant"):
+            out = st.empty()
+            with st.spinner("Thinking..."):
+                if backend_available:
+                    reply = stream_fastapi_chat(
+                        message=user_input,
+                        model=selected_model,
+                        temperature=temperature,
+                        placeholder=out,
+                    )
+                else:
+                    # optional: streaming local fallback
+                    reply = stream_local_ollama_chat(
+                        message=user_input,
+                        model=selected_model,
+                        temperature=temperature,
+                        placeholder=out,
+                    )
+
+        # persist assistant message only after stream completes
         if reply:
+            out.markdown(_unescape_text(reply))      # final render without cursor
             st.session_state.chat_messages.append({"role": "assistant", "content": reply})
-        st.rerun()
+        else:
+            st.error("❌ No response received.")
+            st.session_state.chat_messages.append({"role": "assistant", "content": "No response."})
+
+        st.rerun() 
 
 # ============ RAG PAGE ============
 elif page == "📚 RAG":
