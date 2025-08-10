@@ -23,9 +23,9 @@ import json
 import importlib.util
 
 # Import enhanced extractors
-from .enhanced_extractors import extract_csv_enhanced, process_images_enhanced, get_image_processor, get_csv_processor
-from .file_ingest import ingest_file
-from .enhanced_document_processor import get_document_processor, extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced
+from app.ingestion.enhanced_extractors import extract_csv_enhanced, process_images_enhanced, get_image_processor, get_csv_processor
+from app.ingestion.file_ingest import ingest_file
+from app.ingestion.enhanced_document_processor import get_document_processor, extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced
 
 # Configuration flags
 ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"

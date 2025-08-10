@@ -3,7 +3,7 @@ import mimetypes
 from pathlib import Path
 from typing import Dict, List, Tuple
 import logging
-from .enhanced_document_processor import extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced
+from app.ingestion.enhanced_document_processor import extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced
 
 
 try:
