@@ -1,83 +1,103 @@
-""" Complete FastAPI backend with lifespan events and proper uvicorn configuration """
+
+"""Complete FastAPI backend for LLM WebUI with chat and RAG capabilities."""
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends
-from fastapi.responses import RedirectResponse, HTMLResponse, StreamingResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import asyncio
-from typing import Optional, List
-import uvicorn
-from pathlib import Path
-import os
-import httpx
-# Import your services
-from app.services.ollama import stream_ollama
-from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
-from fastapi.responses import StreamingResponse
 import json
-from huggingface_hub import snapshot_download
-from tqdm import tqdm
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction, SentenceTransformerEmbeddingFunction
-from sentence_transformers import SentenceTransformer
 import logging
-import asyncio
+import os
 import signal
 import sys
-import uvicorn
 import threading
+from pathlib import Path
+from typing import Optional, List
 
-# Setup logging
+import httpx
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
+from app.services.ollama import stream_ollama
+from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
+from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+from sentence_transformers import SentenceTransformer
+
+try:
+    import torch
+except Exception:
+    torch = None
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Upload folder setup
-UPLOAD_FOLDER = Path('./uploads')
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+UPLOAD_FOLDER = Path("./uploads")
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 
-# Global variables for services (to be initialized in lifespan)
 rag_service = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """ Lifespan event handler - replaces @app.on_event decorators """
-    # Startup logic
-    print("🚀 LLM WebUI API starting up...")
-    print(f"📁 Upload folder: {UPLOAD_FOLDER}")
+    """Application lifespan manager to handle startup and shutdown."""
+    logger.info("LLM WebUI API starting up…")
+    logger.info("Upload folder: %s", UPLOAD_FOLDER)
 
     # Clear uploads folder for fresh start
     for file in UPLOAD_FOLDER.iterdir():
         if file.is_file():
             file.unlink()
-    print("🗑️ Uploads folder cleared")
+    logger.info("Uploads folder cleared")
 
-    # Initialize services here
+    # Initialize services
     global rag_service
     rag_service = RAGService()
-    print("📚 RAG service ready")
-    print("💬 Chat service ready")
+    logger.info("RAG service ready")
 
-    yield  # App is running
+    # Performance tuning: thread counts for CPU-bound ops
+    try:
+        cpu_threads = max(1, (os.cpu_count() or 4) - 1)
+        os.environ.setdefault("OMP_NUM_THREADS", str(cpu_threads))
+        os.environ.setdefault("MKL_NUM_THREADS", str(cpu_threads))
+        os.environ.setdefault("NUMEXPR_NUM_THREADS", str(cpu_threads))
+        if torch is not None:
+            try:
+                torch.set_num_threads(cpu_threads)
+                if hasattr(torch, "set_num_interop_threads"):
+                    torch.set_num_interop_threads(max(1, cpu_threads // 2))
+                logger.info("Torch threads set: intra=%s", cpu_threads)
+            except Exception as e:
+                logger.warning("Could not set Torch threads: %s", e)
+        logger.info("OMP/MKL threads set to %s", cpu_threads)
+    except Exception as e:
+        logger.warning("Thread tuning skipped: %s", e)
 
-    # Shutdown logic
-    print("👋 LLM WebUI API shutting down...")
-    # Cleanup resources here if needed
-    if rag_service:
-        # Add any cleanup logic for RAG service
-        pass
+    logger.info("Chat service ready")
 
-# Initialize FastAPI app with lifespan
+    yield
+
+    logger.info("LLM WebUI API shutting down…")
+
+
+# ---------------------------------------------------------------------------
+# FastAPI app
+# ---------------------------------------------------------------------------
 app = FastAPI(
     title="LLM WebUI API",
     description="Complete API for LLM WebUI application with Chat and RAG capabilities",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan  # Use lifespan instead of on_event
+    lifespan=lifespan,
 )
 
-# CORS middleware for Streamlit integration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8501", "http://127.0.0.1:8501"],
@@ -89,18 +109,23 @@ app.add_middleware(
 # Templates setup
 try:
     templates = Jinja2Templates(directory="app/templates")
-except:
-    templates = None  # Handle case where templates directory doesn't exist
+except Exception:
+    templates = None
 
-# Pydantic models
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
 class ChatRequest(BaseModel):
     message: str
     model: Optional[str] = "default"
     temperature: Optional[float] = 0.7
 
+
 class ChatResponse(BaseModel):
     response: str
     model: str
+
 
 class RAGQueryRequest(BaseModel):
     query: str
@@ -109,118 +134,116 @@ class RAGQueryRequest(BaseModel):
     system_prompt: Optional[str] = "You are a helpful assistant."
     n_results: Optional[int] = 3
     use_multi_agent: Optional[bool] = False
-    use_hybrid_search: Optional[bool] = False  # New parameter
+    use_hybrid_search: Optional[bool] = False
+
 
 class RAGConfigRequest(BaseModel):
     provider: str
     embedding_model: str
     chunk_size: int
 
-# Health check endpoint
+
+# ---------------------------------------------------------------------------
+# Health & models
+# ---------------------------------------------------------------------------
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for backend detection"""
+    """Lightweight health check endpoint."""
     return {"status": "healthy", "service": "LLM WebUI API"}
 
-# Models endpoint
+
 @app.get("/models")
 async def get_available_models():
-    """Fetch available models from Ollama backend."""
+    """Return available Ollama model names from the local backend."""
     try:
         async with httpx.AsyncClient() as client:
-            # Ollama's default REST API endpoint for listing models
             resp = await client.get("http://localhost:11434/api/tags")
             resp.raise_for_status()
             data = resp.json()
-            # Ollama returns models under "models", each has a "name"
             model_names = [model["name"] for model in data.get("models", [])]
             return {"models": model_names}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not fetch models from Ollama: {str(e)}")
 
-# ================== CHAT ROUTES ==================
+
+# ---------------------------------------------------------------------------
+# Chat routes
+# ---------------------------------------------------------------------------
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
-    """Process chat messages asynchronously"""
+    """Process a single chat message with the selected model."""
     try:
         response = await process_llm_request(request.message, request.model, request.temperature)
         return ChatResponse(response=response, model=request.model)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# New streaming chat endpoint
+
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
+    """Stream chat responses chunk-by-chunk for real-time updates."""
+
     async def event_generator():
         messages = [{"role": "user", "content": request.message}]
         async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature):
-            yield chunk + "\n"  # Add newline for clean chunk separation
+            yield chunk + "\n"
+
     return StreamingResponse(event_generator(), media_type="text/plain")
+
 
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_page(request: Request):
-    """Serve chat HTML page (if using templates)"""
+    """Serve the chat HTML page if templates are configured."""
     if templates:
         return templates.TemplateResponse("chat.html", {"request": request})
     return HTMLResponse("<h1>Templates not configured</h1>")
 
-@app.post('/api/chat/stream')
-async def chat_stream(request: Request):
-    """Streaming chat endpoint"""
-    data = await request.json()
-    prompt = data.get('prompt', '')
-    messages = [{"role": "user", "content": prompt}]
-    async def generate():
-        async for chunk in stream_ollama(messages):
-            yield chunk + "\n"
-    return StreamingResponse(generate(), media_type="text/plain")
 
-# ================== RAG ROUTES ==================
+# ---------------------------------------------------------------------------
+# RAG routes
+# ---------------------------------------------------------------------------
 @app.get("/rag", response_class=HTMLResponse)
 async def rag_page(request: Request):
-    """Serve RAG HTML page"""
+    """Serve the RAG HTML page if templates are configured."""
     if templates:
         return templates.TemplateResponse("rag.html", {"request": request})
     return HTMLResponse("<h1>Templates not configured</h1>")
 
-# Update the RAG query endpoint
+
 @app.post("/api/rag/query")
 async def rag_query_endpoint(request: RAGQueryRequest):
-    """Process RAG queries with optional hybrid search"""
-    try:
-        if not rag_service:
-            raise HTTPException(status_code=503, detail="RAG service not initialized")
-        
-        response_text = ""
-        
-        if request.use_multi_agent:
-            orchestrator = CrewAIRAGOrchestrator(rag_service, request.model)
-            async for chunk in orchestrator.query(
-                request.query,
-                request.system_prompt,
-                request.messages,
-                request.n_results,
-                request.use_hybrid_search  # Pass hybrid search parameter
-            ):
-                response_text += chunk
-        else:
-            async for chunk in rag_service.query(
-                request.query,
-                request.system_prompt,
-                request.messages,
-                request.n_results,
-                request.use_hybrid_search  # Pass hybrid search parameter
-            ):
-                response_text += chunk
-        
-        return response_text
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG query failed: {str(e)}")
+    """Execute a RAG query, optionally via a multi‑agent orchestrator, and stream results."""
 
-@app.get('/api/rag/documents')
+    async def gen():
+        try:
+            if request.use_multi_agent:
+                orchestrator = CrewAIRAGOrchestrator(rag_service, request.model)
+                async for chunk in orchestrator.query(
+                    request.query,
+                    request.system_prompt,
+                    request.messages,
+                    request.n_results,
+                    request.use_hybrid_search,
+                ):
+                    yield chunk
+            else:
+                async for chunk in rag_service.query(
+                    request.query,
+                    request.system_prompt,
+                    request.messages,
+                    request.n_results,
+                    request.use_hybrid_search,
+                ):
+                    yield chunk
+        except Exception as e:
+            yield f"\n[ERROR] {e}\n"
+
+    return StreamingResponse(gen(), media_type="text/plain")
+
+
+@app.get("/api/rag/documents")
 async def get_uploaded_documents():
-    """Get list of uploaded documents"""
+    """List filenames of uploaded and indexed documents."""
     try:
         documents = [f.name for f in UPLOAD_FOLDER.iterdir() if f.is_file()]
         return {"documents": documents}
@@ -228,198 +251,252 @@ async def get_uploaded_documents():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# NEW: Save RAG configuration endpoint
 @app.post("/api/rag/save_config")
 async def save_rag_config(request: RAGConfigRequest):
-    """Save RAG configuration and recreate collection if needed"""
+    """Persist RAG configuration (embedding provider/model and chunk size) and recreate the collection."""
     try:
         global rag_service
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
-        
-        # Update embedding function based on provider
+
         if request.provider.lower() == "ollama":
-            from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
             rag_service.embedding_function = OllamaEmbeddingFunction(
                 model_name=request.embedding_model,
-                url="http://localhost:11434/api/embeddings"
+                url="http://localhost:11434/api/embeddings",
             )
         elif request.provider.lower() == "huggingface":
-            from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-            rag_service.embedding_function = SentenceTransformerEmbeddingFunction(
-                model_name=request.embedding_model
+            rag_service.embedding_function = LocalHFEmbeddingFunction(
+                model_name=request.embedding_model,
+                batch_size=64,
             )
-        
-        # Update chunk size
+        else:
+            raise HTTPException(status_code=400, detail="Invalid provider")
+
         rag_service.default_chunk_size = request.chunk_size
-        
-        # Recreate collection with new settings (now properly async)
         await rag_service.recreate_collection()
-        
         return {"message": "RAG configuration saved successfully", "status": "success"}
-        
+
     except Exception as e:
-        logger.error(f"Error saving RAG config: {str(e)}")
+        logger.error("Error saving RAG config: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to save RAG configuration: {str(e)}")
 
-# ================== UTILITY FUNCTIONS ==================
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
 async def process_llm_request(message: str, model: str, temperature: float) -> str:
-    """Process LLM request using your existing services"""
+    """Send a single LLM request and concatenate the streamed response chunks."""
     messages = [{"role": "user", "content": message}]
     response = ""
-    async for chunk in stream_ollama(messages, model=model, temperature=temperature):  # Pass temperature
+    async for chunk in stream_ollama(messages, model=model, temperature=temperature):
         response += chunk
     return response
 
-# ================== ERROR HANDLERS ==================
+
+# ---------------------------------------------------------------------------
+# Error handlers
+# ---------------------------------------------------------------------------
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
-    return {"error": "Endpoint not found", "path": str(request.url.path)}
+    """Return a JSON 404 payload for unknown endpoints."""
+    return JSONResponse(status_code=404, content={"error": "Endpoint not found", "path": str(request.url.path)})
+
 
 @app.exception_handler(500)
 async def internal_error_handler(request: Request, exc):
-    return {"error": "Internal server error", "detail": str(exc)}
+    """Return a JSON 500 payload for unhandled exceptions."""
+    return JSONResponse(status_code=500, content={"error": "Internal server error", "detail": str(exc)})
 
 
-# ===== EMBEDDING FUNCTIONS =====
-# New endpoint for setting embedding
+# ---------------------------------------------------------------------------
+# Local embedding function
+# ---------------------------------------------------------------------------
+class LocalHFEmbeddingFunction:
+    """Fast local embedding function with batching and device selection.
+
+    Compatible with Chroma's embedding_function interface.
+    """
+
+    def __init__(self, model_name: str, device: str | None = None, batch_size: int = 64):
+        if device is None:
+            if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
+        self.model = SentenceTransformer(model_name, device=device)
+        self.batch_size = batch_size
+
+    def __call__(self, texts: list[str]):
+        """Encode a list of texts to normalized embeddings."""
+        embs = self.model.encode(
+            texts,
+            batch_size=self.batch_size,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return embs.tolist()
+
+
+# ---------------------------------------------------------------------------
+# Embedding configuration endpoint
+# ---------------------------------------------------------------------------
 @app.post("/api/rag/set_embedding")
 async def set_embedding(request: dict):
+    """Configure the embedding provider/model and rebuild the collection, streaming progress."""
     provider = request.get("provider")
     model_name = request.get("model_name")
     if not provider or not model_name:
         raise HTTPException(status_code=400, detail="Provider and model_name are required")
 
-    def progress_generator():
+    async def progress_generator():
         try:
             if provider.lower() == "ollama":
-                # Check if model exists
                 yield "Checking for Ollama model...\n"
-                resp = httpx.get("http://localhost:11434/api/tags")
-                models = [m["name"] for m in resp.json().get("models", [])]
-                if model_name not in models:
-                    yield f"Model not found. Pulling '{model_name}' from Ollama...\n"
-                    pull_url = "http://localhost:11434/api/pull"
-                    pull_payload = {"name": model_name, "stream": True}
-                    with httpx.stream("POST", pull_url, json=pull_payload) as pull_resp:
-                        for chunk in pull_resp.aiter_text():
-                            try:
-                                data = json.loads(chunk)
-                                if "status" in data:
-                                    yield f"{data['status']} ({data.get('completed', 0)}/{data.get('total', 0)})\n"
-                            except:
-                                pass
-                    yield "Ollama model pulled successfully.\n"
-                else:
-                    yield "Ollama model already available.\n"
-                
+                async with httpx.AsyncClient() as client:
+                    tags = await client.get("http://localhost:11434/api/tags")
+                    tags.raise_for_status()
+                    models = [m["name"] for m in tags.json().get("models", [])]
+
+                    if model_name not in models:
+                        yield f"Model not found. Pulling '{model_name}' from Ollama...\n"
+                        pull_url = "http://localhost:11434/api/pull"
+                        async with client.stream("POST", pull_url, json={"name": model_name, "stream": True}) as resp:
+                            async for line in resp.aiter_lines():
+                                if not line:
+                                    continue
+                                try:
+                                    data = json.loads(line)
+                                    if "status" in data:
+                                        yield f"{data['status']} ({data.get('completed', 0)}/{data.get('total', 0)})\n"
+                                except Exception:
+                                    pass
+                        yield "Ollama model pulled successfully.\n"
+                    else:
+                        yield "Ollama model already available.\n"
+
                 rag_service.embedding_function = OllamaEmbeddingFunction(
-                    url="http://localhost:11434/api/embeddings",  # Explicit URL for reliability
-                    model_name=model_name
+                    url="http://localhost:11434/api/embeddings",
+                    model_name=model_name,
                 )
                 yield "Ollama embedding function set.\n"
 
             elif provider.lower() == "huggingface":
-                yield f"Downloading HuggingFace model: {model_name}\n"
-                # Use snapshot_download with tqdm for progress
-                for path in tqdm(snapshot_download(repo_id=model_name, ignore_patterns=["*.msgpack", "*.h5"]), desc="Downloading files"):
-                    yield f"Downloaded: {path}\n"
-                # Load to ensure it's ready
-                SentenceTransformer(model_name)
-                rag_service.embedding_function = SentenceTransformerEmbeddingFunction(model_name=model_name)
-                yield "HuggingFace embedding function set.\n"
+                yield f"Loading HuggingFace model: {model_name}\n"
+                _tmp = SentenceTransformer(model_name)
+                device = "cuda" if (torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available()) else "cpu"
+                rag_service.embedding_function = LocalHFEmbeddingFunction(
+                    model_name=model_name,
+                    device=device,
+                    batch_size=64,
+                )
+                yield f"HuggingFace embedding function set on {device}.\n"
 
             else:
                 raise ValueError("Invalid provider")
 
-            # Recreate collection and re-index
             yield "Recreating collection and re-indexing documents...\n"
-            rag_service.recreate_collection()
+            await rag_service.recreate_collection()
             yield "Embedding model updated successfully.\n"
         except Exception as e:
             yield f"Error: {str(e)}\n"
 
     return StreamingResponse(progress_generator(), media_type="text/plain")
 
-# In the upload endpoint, ensure files are saved and added to RAG
-@app.post("/api/rag/upload")
-async def upload_documents(files: List[UploadFile] = File(...)):
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided")
-    failed_files = []
-    try:
-        for file in files:
-            if not file.filename.lower().endswith(('.pdf', '.txt', '.docx')):
-                failed_files.append(f"{file.filename}: Unsupported file type")
-                continue
-            file_path = UPLOAD_FOLDER / file.filename
-            with open(file_path, "wb") as f:
-                f.write(await file.read())
-            try:
-                await rag_service.add_document(str(file_path), file.filename)
-                logger.info(f"Uploaded and indexed: {file.filename}")
-            except Exception as e:
-                failed_files.append(f"{file.filename}: {str(e)}")
-                logger.error(f"Failed to index {file.filename}: {str(e)}")
-                # Optionally remove the saved file if indexing fails: os.remove(file_path)
-        
-        if failed_files:
-            return {"message": "Partial success - some files failed", "failed": failed_files}, 207  # 207 Multi-Status
-        return {"message": "All files uploaded and indexed successfully"}
-    except Exception as e:
-        logger.error(f"Unexpected upload error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-# ================== MAIN ==================
+@app.post("/api/rag/upload")
+async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form(500)):
+    """Upload one or more files and queue background indexing into the RAG store."""
+    saved_paths = []
+    for up in files:
+        dest = UPLOAD_FOLDER / up.filename
+        with open(dest, "wb") as f:
+            f.write(await up.read())
+        saved_paths.append(dest)
+
+    async def _index():
+        sem = asyncio.Semaphore(2)
+
+        async def index_one(p: Path):
+            async with sem:
+                await rag_service.add_document(str(p), p.name, chunk_size=int(chunk_size))
+
+        await asyncio.gather(*(index_one(p) for p in saved_paths))
+
+    asyncio.create_task(_index())
+
+    return {"status": "queued", "files": [p.name for p in saved_paths]}
+
+
+@app.get("/api/processing/capabilities")
+async def processing_capabilities():
+    """Report backend processing capabilities and status."""
+    if not rag_service:
+        return {
+            "status": "initializing",
+            "message": "RAG service is starting up",
+            "capabilities": {"enhanced_csv": False, "ocr_available": False, "memory_optimized": True},
+        }
+    try:
+        return rag_service.get_capabilities()
+    except Exception as e:
+        logger.exception("Failed to get processing capabilities")
+        return {
+            "status": "degraded",
+            "message": f"Could not determine capabilities: {str(e)}",
+            "capabilities": {"enhanced_csv": False, "ocr_available": False, "memory_optimized": True},
+        }
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
 def run():
+    """Run the Uvicorn server with graceful shutdown handling."""
     config = uvicorn.Config(
-        "main:app",
-        host="localhost",
-        port=8000,
-        reload=True,
-        log_level="info"
+        "main:app", host="localhost", port=8000, reload=bool(int(os.getenv("RELOAD", "0"))), log_level="info"
     )
     server = uvicorn.Server(config)
     loop = asyncio.get_event_loop()
     stop_event = asyncio.Event()
 
-    def handle_exit(*args):
-        print("\n⏹️ Received exit signal.")
+    def handle_exit(*_args):
+        logger.info("Received exit signal.")
         stop_event.set()
 
-    # Attempt native signal handling (works on Unix, partial on Windows)
     signals = [signal.SIGINT]
-    if hasattr(signal, 'SIGTERM'):
+    if hasattr(signal, "SIGTERM"):
         signals.append(signal.SIGTERM)
     for sig in signals:
         try:
             loop.add_signal_handler(sig, handle_exit)
         except (NotImplementedError, RuntimeError):
-            # Fallback for Windows or when not running in main thread
             signal.signal(sig, lambda s, f: stop_event.set())
 
-    # Extra fallback for Windows: listen for KeyboardInterrupt in thread
     def keyboard_watcher():
         try:
             while not stop_event.is_set():
                 pass
         except KeyboardInterrupt:
             stop_event.set()
+
     if sys.platform.startswith("win"):
         threading.Thread(target=keyboard_watcher, daemon=True).start()
 
-    async def main():
+    async def _main():
         server_task = loop.create_task(server.serve())
         await stop_event.wait()
         server.should_exit = True
         await server_task
 
     try:
-        loop.run_until_complete(main())
+        loop.run_until_complete(_main())
     except KeyboardInterrupt:
-        print("\n❌ KeyboardInterrupt caught. Shutting down gracefully...")
+        logger.info("KeyboardInterrupt caught. Shutting down gracefully…")
     finally:
-        print("✅ App closed.")
+        logger.info("App closed.")
+
 
 if __name__ == "__main__":
     run()
