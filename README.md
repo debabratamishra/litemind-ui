@@ -2,6 +2,8 @@
 
 A robust, production-ready web interface for Large Language Models (LLMs) featuring a hybrid architecture with FastAPI backend and Streamlit frontend. Built for developers, researchers, and AI enthusiasts who need a comprehensive platform for LLM interaction, document processing, and API integration.
 
+![LLMWebUI Demo](llmwebui_demo.gif)
+
 ## 🚀 Architecture
 
 **Hybrid Design** - Combines the best of both worlds:
@@ -82,15 +84,18 @@ python main.py
 **Expected Output:**
 
 ```bash
-INFO:     Uvicorn running on http://localhost:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [^3687] using WatchFiles
-INFO:     Started server process [^3707]
+INFO:     Started server process [90666]
 INFO:     Waiting for application startup.
-🚀 LLM WebUI API starting up...
-📁 Upload folder: uploads
-📚 RAG service ready
-💬 Chat service ready
+INFO:main:LLM WebUI API starting up…
+INFO:main:Upload folder: uploads
+INFO:main:Uploads folder cleared
+INFO:sentence_transformers.SentenceTransformer:Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+INFO:main:RAG service ready
+INFO:main:Torch threads set: intra=7
+INFO:main:OMP/MKL threads set to 7
+INFO:main:Chat service ready
 INFO:     Application startup complete.
+INFO:     Uvicorn running on http://localhost:8000 (Press CTRL+C to quit)
 ```
 
 ### 2. Launch the Streamlit Frontend
@@ -142,16 +147,40 @@ streamlit run streamlit_app.py --server.address localhost --server.port 8501
 3. Query your documents with natural language
 4. Get contextually relevant answers
 
-### API Integration
+### 🌐 API Integration
+
+Easily interact with the LLM WebUI backend from your applications.
+
+#### Python Example
 
 ```python
 import requests
 
-# Chat with the API
-response = requests.post("http://localhost:8000/api/chat", 
-    json={"message": "Hello, world!", "model": "llama3.1"})
+response = requests.post(
+  "http://localhost:8000/api/chat",
+  json={"message": "Hello, world!", "model": "llama3.1"}
+)
 print(response.json()["response"])
 ```
+
+#### JavaScript Example (Node.js)
+
+```javascript
+const fetch = require('node-fetch');
+
+fetch('http://localhost:8000/api/chat', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ message: 'Hello, world!', model: 'llama3.1' })
+})
+  .then(res => res.json())
+  .then(data => console.log(data.response))
+  .catch(err => console.error(err));
+```
+
+For a complete list of endpoints and request/response formats, visit the [Swagger UI](http://localhost:8000/docs):
+
+![Swagger UI](Swagger.png)
 
 ## 🔧 Configuration
 
@@ -178,7 +207,6 @@ export UPLOAD_FOLDER="./uploads"
 - **Dynamic Models:** Real-time model list fetching from Ollama backend
 - **Streaming Responses:** Real-time token streaming for better UX
 - **Document Processing:** Multi-format document ingestion and vectorization performed at ingestion for faster retrieval
-- **Enhanced Extraction:** Enhanced text extraction for PDFs/DOCX via `enhanced_extractors.py`
 - **Error Handling:** Comprehensive error handling with user-friendly messages
 
 ## 🤝 Contributing
