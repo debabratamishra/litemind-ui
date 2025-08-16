@@ -545,6 +545,144 @@ def call_fastapi_rag_query(
         return None
 
 
+
+# ---------------------------------------------------------------------------
+# Streaming UI: segregate reasoning during streaming
+# ---------------------------------------------------------------------------
+
+class _StreamingSegregator:
+    """
+    Incrementally separates <think>...</think> (and variants) from the answer
+    during streaming and renders both live in the UI.
+    - Shows a collapsible "Model Reasoning Process" expander (unless hidden).
+    - Streams the answer without the reasoning content.
+    This avoids waiting until the end to format the output.
+    """
+    _OPEN_TAG_RE = re.compile(r"<\s*(think|thinking|reasoning|thought)\s*>", re.IGNORECASE)
+    _CLOSE_TAG_RE = re.compile(r"<\s*/\s*(think|thinking|reasoning|thought)\s*>", re.IGNORECASE)
+    _ANY_TAG_RE = re.compile(r"(?is)<\s*/?\s*(think|thinking|reasoning|thought)\s*>")
+
+    def __init__(self, placeholder: Optional[Any]):
+        self.placeholder = placeholder
+        self.in_think = False
+        self.pending = ""
+        self.thinking_text = ""
+        self.answer_text = ""
+        self.reasoning_hidden = st.session_state.get("hide_reasoning", False)
+        self.reasoning_expanded_default = st.session_state.get("show_reasoning_expanded", False)
+
+        # Pre-allocate layout areas so reasoning (if it appears) stays above the answer.
+        if self.placeholder is not None:
+            self.root = self.placeholder.container()
+            self._thinking_outer = self.root.empty()   # where the expander will appear
+            self._separator = self.root.empty()        # horizontal rule between sections
+            self._answer_box = self.root.empty()       # main answer stream
+        else:
+            self.root = None
+            self._thinking_outer = None
+            self._separator = None
+            self._answer_box = None
+
+        self._expander_created = False
+        self._reasoning_box = None
+
+    def _ensure_reasoning_ui(self) -> None:
+        if self.reasoning_hidden or self._expander_created or self._thinking_outer is None:
+            return
+        # Build the expander once, at the top of this message block.
+        with self._thinking_outer:
+            with st.expander("🧠 Model Reasoning Process", expanded=self.reasoning_expanded_default):
+                st.markdown("*This section shows the model's internal reasoning and thought process:*")
+                st.markdown("---")
+                self._reasoning_box = st.empty()
+        # Add a separator between reasoning and the streamed answer
+        if self._separator is not None:
+            self._separator.markdown("---")
+        self._expander_created = True
+
+    def _render_reasoning(self) -> None:
+        if self.reasoning_hidden or self._reasoning_box is None:
+            return
+        cleaned = _clean_text_formatting(self.thinking_text)
+        cleaned = _clean_markdown_text(cleaned)
+        cleaned = sanitize_links(_unescape_text(cleaned))
+        self._reasoning_box.markdown(
+            f"""
+            <div style="
+                background: linear-gradient(135deg, rgba(63, 81, 181, 0.1), rgba(33, 150, 243, 0.05));
+                padding: 1.2rem;
+                border-radius: 0.75rem;
+                border-left: 4px solid #3f51b5;
+                margin: 0.5rem 0;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, sans-serif;
+            ">
+                {cleaned}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    def _render_answer(self) -> None:
+        if self._answer_box is None:
+            return
+        cleaned = _clean_text_formatting(self.answer_text)
+        cleaned = _clean_markdown_text(cleaned)
+        cleaned = sanitize_links(_unescape_text(cleaned))
+        self._answer_box.markdown(cleaned)
+
+    def _append_text(self, text: str) -> None:
+        if not text:
+            return
+        if self.in_think:
+            # Lazily create the reasoning UI when we first see thinking content
+            self._ensure_reasoning_ui()
+            self.thinking_text += text
+            self._render_reasoning()
+        else:
+            self.answer_text += text
+            self._render_answer()
+
+    def feed(self, chunk: str) -> None:
+        """
+        Feed a new chunk of text from the stream. This method incrementally
+        parses <think>...</think> tags and updates the UI accordingly.
+        """
+        self.pending += chunk
+
+        # Process complete tags found in the buffer
+        while True:
+            m = self._ANY_TAG_RE.search(self.pending)
+            if not m:
+                break
+
+            before = self.pending[:m.start()]
+            self._append_text(before)
+
+            tag_text = m.group(0)
+            is_open = bool(self._OPEN_TAG_RE.fullmatch(tag_text))
+            is_close = bool(self._CLOSE_TAG_RE.fullmatch(tag_text))
+
+            if is_open:
+                self.in_think = True
+                # Ensure UI is ready for reasoning section as soon as we enter it
+                self._ensure_reasoning_ui()
+            elif is_close:
+                self.in_think = False
+
+            # Consume the tag
+            self.pending = self.pending[m.end():]
+
+        # Handle any trailing partial tag: keep from last '<' if no closing '>' yet
+        last_lt = self.pending.rfind("<")
+        if last_lt != -1 and ">" not in self.pending[last_lt:]:
+            # Emit everything before the potential tag start
+            self._append_text(self.pending[:last_lt])
+            self.pending = self.pending[last_lt:]
+        else:
+            # No partial tag at end; emit all
+            self._append_text(self.pending)
+            self.pending = ""
+
 # ---------------------------------------------------------------------------
 # Backend calls (streaming)
 # ---------------------------------------------------------------------------
@@ -568,13 +706,19 @@ def stream_fastapi_chat(
             r.raise_for_status()
 
             buf = ""
+            segregator = _StreamingSegregator(placeholder) if placeholder is not None else None
+
             for line in r.iter_lines(decode_unicode=True, chunk_size=1):
                 if not line:
                     continue
                 if line.startswith("data:"):
                     line = line[5:].lstrip()
 
-                buf = _animate_tokens(placeholder, buf, line + "\n") if placeholder else (buf + line + "\n")
+                chunk = line + "\n"
+                buf += chunk
+                if segregator is not None:
+                    segregator.feed(chunk)
+
             return buf
 
     except requests.Timeout:
@@ -594,12 +738,13 @@ def stream_local_ollama_chat(
     """Stream a chat completion from a local Ollama service into the UI."""
     async def _inner() -> str:
         acc = ""
+        segregator = _StreamingSegregator(placeholder) if placeholder is not None else None
         async for chunk in stream_ollama(
             [{"role": "user", "content": message}], model=model, temperature=temperature
         ):
             acc += chunk
-            if placeholder is not None:
-                placeholder.markdown(_unescape_text(acc))
+            if segregator is not None:
+                segregator.feed(chunk)
         return acc
 
     return asyncio.run(_inner())
@@ -636,13 +781,18 @@ def stream_fastapi_rag_query(
             r.raise_for_status()
 
             buf = ""
+            segregator = _StreamingSegregator(placeholder) if placeholder is not None else None
+
             for line in r.iter_lines(decode_unicode=True, chunk_size=1):
                 if not line:
                     continue
                 if line.startswith("data:"):
                     line = line[5:].lstrip()
 
-                buf = _animate_tokens(placeholder, buf, line + "\n") if placeholder else (buf + line + "\n")
+                chunk = line + "\n"
+                buf += chunk
+                if segregator is not None:
+                    segregator.feed(chunk)
             return buf
 
     except requests.Timeout:
@@ -883,7 +1033,7 @@ if page == "💬 Chat":
                     )
 
         if reply:
-            out.markdown(sanitize_links(_unescape_text(reply)))
+            # UI already rendered incrementally by the streaming function.
             st.session_state.chat_messages.append({"role": "assistant", "content": reply})
         else:
             st.error("❌ No response received.")
@@ -1190,7 +1340,7 @@ elif page == "📚 RAG":
                     )
 
                 if response_text:
-                    out.markdown(sanitize_links(_unescape_text(response_text)))
+                    # UI already rendered incrementally by the streaming function.
                     st.session_state.rag_messages.append({"role": "assistant", "content": response_text})
                 else:
                     err = "❌ No response received. Please check your query and try again."
