@@ -7,6 +7,7 @@ from chromadb.utils import embedding_functions
 from chromadb.config import Settings
 from .ollama import stream_ollama
 import os
+import re
 from config import Config
 from crewai import Agent, LLM
 import httpx
@@ -25,6 +26,7 @@ from PIL import Image
 import gc
 import json
 import importlib.util
+from typing import Optional
 
 # Import enhanced extractors
 from app.ingestion.enhanced_extractors import extract_csv_enhanced, process_images_enhanced, get_image_processor, get_csv_processor
@@ -98,12 +100,144 @@ class RAGService:
         self.bm25_model = None
         self.document_chunks = []  # original text chunks
         self.chunk_ids = []
+        
+        # Track processed files to prevent duplicates
+        self.processed_files = {}  # filename -> {hash, chunk_count, timestamp}
+        self.file_hashes = {}  # hash -> filename (for duplicate detection)
 
         self.stop_words = set(stopwords.words('english'))
 
         self.image_cache_dir = Path("./uploads/imgcache")
         self.image_cache_dir.mkdir(parents=True, exist_ok=True)
     
+    def _calculate_file_hash(self, file_path: str) -> str:
+        """Calculate SHA-256 hash of a file for duplicate detection."""
+        import hashlib
+        
+        hash_sha256 = hashlib.sha256()
+        try:
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_sha256.update(chunk)
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            logger.error(f"Error calculating hash for {file_path}: {e}")
+            return None
+    
+    def _is_file_already_processed(self, file_path: str, filename: str) -> tuple[bool, str]:
+        """Check if file is already processed. Returns (is_duplicate, reason)."""
+        # Check by filename first
+        if filename in self.processed_files:
+            file_info = self.processed_files[filename]
+            return True, f"File '{filename}' already processed ({file_info['chunk_count']} chunks)"
+        
+        # Check by content hash to detect renamed duplicates
+        file_hash = self._calculate_file_hash(file_path)
+        if file_hash and file_hash in self.file_hashes:
+            original_name = self.file_hashes[file_hash]
+            return True, f"File content already processed as '{original_name}' (duplicate content detected)"
+        
+        return False, ""
+    
+    def _register_processed_file(self, file_path: str, filename: str, chunk_count: int):
+        """Register a file as processed to prevent future duplicates."""
+        import time
+        
+        file_hash = self._calculate_file_hash(file_path)
+        
+        file_info = {
+            "hash": file_hash,
+            "chunk_count": chunk_count,
+            "timestamp": time.time(),
+            "file_path": file_path
+        }
+        
+        self.processed_files[filename] = file_info
+        if file_hash:
+            self.file_hashes[file_hash] = filename
+        
+        logger.info(f"Registered file: {filename} ({chunk_count} chunks)")
+    
+    def get_processed_files_info(self) -> dict:
+        """Get information about all processed files."""
+        import time
+        
+        files_info = []
+        for filename, info in self.processed_files.items():
+            files_info.append({
+                "filename": filename,
+                "chunk_count": info["chunk_count"],
+                "processed_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info["timestamp"])),
+                "file_path": info.get("file_path", "unknown")
+            })
+        
+        return {
+            "total_files": len(self.processed_files),
+            "total_chunks": sum(info["chunk_count"] for info in self.processed_files.values()),
+            "files": files_info
+        }
+    
+    def remove_processed_file(self, filename: str) -> bool:
+        """Remove a file from processed files tracking and from collections."""
+        if filename not in self.processed_files:
+            return False
+        
+        try:
+            # Remove from ChromaDB collection
+            # Get all chunks for this file
+            results = self.text_collection.get(
+                where={"filename": filename}
+            )
+            
+            if results and results['ids']:
+                self.text_collection.delete(ids=results['ids'])
+                logger.info(f"Removed {len(results['ids'])} chunks for file: {filename}")
+            
+            # Remove from tracking
+            file_info = self.processed_files[filename]
+            if file_info.get("hash") and file_info["hash"] in self.file_hashes:
+                del self.file_hashes[file_info["hash"]]
+            
+            del self.processed_files[filename]
+            
+            # Rebuild BM25 index
+            self._rebuild_bm25_index()
+            
+            logger.info(f"Successfully removed file: {filename}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error removing file {filename}: {e}")
+            return False
+    
+    def _rebuild_bm25_index(self):
+        """Rebuild the BM25 index from current collection."""
+        try:
+            # Get all documents from collection
+            all_docs = self.text_collection.get()
+            
+            if all_docs and all_docs['documents']:
+                self.document_chunks = all_docs['documents']
+                self.chunk_ids = all_docs['ids']
+                
+                # Rebuild BM25 corpus
+                self.bm25_corpus = [self.preprocess_text(doc) for doc in self.document_chunks]
+                
+                if self.bm25_corpus:
+                    from rank_bm25 import BM25Okapi
+                    self.bm25_model = BM25Okapi(self.bm25_corpus)
+                    logger.info(f"Rebuilt BM25 index with {len(self.bm25_corpus)} documents")
+                else:
+                    self.bm25_model = None
+            else:
+                self.document_chunks = []
+                self.chunk_ids = []
+                self.bm25_corpus = []
+                self.bm25_model = None
+                
+        except Exception as e:
+            logger.error(f"Error rebuilding BM25 index: {e}")
+
     def get_capabilities(self) -> dict:
         """Report processing capabilities and supported extensions detected at runtime."""
         ocr_available = any(
@@ -133,17 +267,81 @@ class RAGService:
 
     def preprocess_text(self, text: str) -> List[str]:
         """Tokenize, lowercase, and remove stop words/punctuation for BM25 indexing."""
+        if not text or not text.strip():
+            return []
+        
+        # Clean text before tokenization
+        text = self._clean_text_for_indexing(text)
+        
         tokens = word_tokenize(text.lower())
-        tokens = [t for t in tokens if t not in self.stop_words and t not in string.punctuation]
+        tokens = [t for t in tokens if t not in self.stop_words and t not in string.punctuation and len(t) > 1]
         return tokens
+    
+    def _clean_text_for_indexing(self, text: str) -> str:
+        """Clean text for better indexing and search."""
+        # Normalize whitespace
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Remove excessive formatting artifacts
+        text = re.sub(r'[^\w\s\.\!\?\,\;\:\-\(\)]', ' ', text)
+        
+        # Clean up common document artifacts
+        text = re.sub(r'PAGE\s+\d+\s+(?:HEADERS?|LISTS?|ANALYSIS):', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'(?:Document|Filename|Page):\s*[^\n]+', '', text, flags=re.IGNORECASE)
+        
+        return text.strip()
 
     def chunk_text(self, text, chunk_size=500):
-        """Split text into fixed-size chunks with a small overlap to preserve context."""
+        """Split text into intelligent chunks with overlap, preserving sentence boundaries."""
+        if not text or not text.strip():
+            return []
+        
+        # Clean the text first
+        text = self._clean_text_for_chunking(text)
+        
         overlap = min(50, chunk_size // 10)
         chunks = []
+        
+        # Try to split on sentence boundaries when possible
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        
+        current_chunk = ""
+        for sentence in sentences:
+            # If adding this sentence would exceed chunk size
+            if len(current_chunk) + len(sentence) > chunk_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                # Start new chunk with overlap from previous chunk
+                overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
+                current_chunk = overlap_text + " " + sentence
+            else:
+                current_chunk += (" " + sentence) if current_chunk else sentence
+        
+        # Add the last chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+        
+        # Fallback to character-based chunking if sentence-based didn't work well
+        if not chunks or (len(chunks) == 1 and len(chunks[0]) > chunk_size * 1.5):
+            return self._fallback_character_chunking(text, chunk_size, overlap)
+        
+        return chunks
+    
+    def _clean_text_for_chunking(self, text: str) -> str:
+        """Clean text before chunking to improve formatting."""
+        # Normalize whitespace
+        text = re.sub(r'\s+', ' ', text)
+        # Remove excessive newlines but preserve paragraph breaks
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Clean up common formatting issues
+        text = re.sub(r'([.!?])\s*\n\s*([A-Z])', r'\1 \2', text)  # Join broken sentences
+        return text.strip()
+    
+    def _fallback_character_chunking(self, text: str, chunk_size: int, overlap: int) -> List[str]:
+        """Fallback character-based chunking when sentence-based fails."""
+        chunks = []
         for i in range(0, len(text), chunk_size - overlap):
-            chunk = text[i:i + chunk_size]
-            if chunk.strip():
+            chunk = text[i:i + chunk_size].strip()
+            if chunk:
                 chunks.append(chunk)
         return chunks
 
@@ -281,7 +479,13 @@ class RAGService:
             path = Path(file_path)
             if not path.exists():
                 logger.warning(f"File not found: {file_path}")
-                return
+                return {"status": "error", "message": f"File not found: {file_path}"}
+
+            # Check for duplicates before processing
+            is_duplicate, reason = self._is_file_already_processed(str(path), doc_id)
+            if is_duplicate:
+                logger.warning(f"Duplicate file detected: {reason}")
+                return {"status": "duplicate", "message": reason, "filename": doc_id}
 
             logger.info(f"Processing document with enhanced extraction: {doc_id}")
             
@@ -346,7 +550,11 @@ class RAGService:
             if str(file_path) not in self.file_paths:
                 self.file_paths.append(str(file_path))
             
+            # Register the file as processed to prevent future duplicates
+            self._register_processed_file(str(file_path), doc_id, len(all_chunks))
+            
             logger.info(f"Successfully indexed {len(all_chunks)} chunks for {doc_id}")
+            return {"status": "success", "message": f"Successfully processed {doc_id}", "chunks_created": len(all_chunks)}
             
         except Exception as e:
             logger.error(f"Error indexing {doc_id}: {str(e)}")
@@ -372,6 +580,45 @@ class RAGService:
         for file_path in self.file_paths:
             doc_id = os.path.basename(file_path)
             await self.add_document(file_path, doc_id, self.default_chunk_size)
+
+    async def reset_system(self):
+        """Completely reset the RAG system by clearing all collections, indexes, and file references."""
+        try:
+            # Delete the collection
+            try:
+                self.client.delete_collection(name="documents_text")
+                logger.info("Deleted existing text collection")
+            except Exception as e:
+                logger.debug(f"Collection deletion failed (may not exist): {e}")
+
+            # Recreate empty collection
+            self.text_collection = self.client.create_collection(
+                name="documents_text",
+                embedding_function=self.embedding_function
+            )
+
+            # Clear all in-memory indexes and references
+            self.file_paths.clear()
+            self.bm25_corpus.clear()
+            self.bm25_model = None
+            self.document_chunks.clear()
+            
+            # Clear chunk_ids if it exists
+            if hasattr(self, 'chunk_ids'):
+                self.chunk_ids.clear()
+
+            # Clear file tracking to allow re-uploads after reset
+            self.processed_files.clear()
+            self.file_hashes.clear()
+
+            # Force garbage collection to free memory
+            gc.collect()
+            
+            logger.info("RAG system reset completed successfully")
+
+        except Exception as e:
+            logger.error(f"Error during RAG system reset: {e}")
+            raise
 
     def bm25_search(self, query: str, n_results: int = 3) -> List[Tuple[str, str, float]]:
         """Run a BM25 keyword search and return (chunk_id, text, score) tuples for top hits."""
@@ -446,8 +693,9 @@ class RAGService:
         result_documents = [id_to_content[i] for i in top_text_ids if i in id_to_content]
         return result_documents
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False):
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None):
         """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama."""
+        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3n:e2b")).replace("ollama/","")
         history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
         full_query = f"{history_context}\nUser: {query_text}" if history_context else query_text
 
@@ -465,7 +713,7 @@ class RAGService:
             {"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"}
         ]
         
-        async for chunk in stream_ollama(llm_messages):
+        async for chunk in stream_ollama(llm_messages, model=model_name):
             yield chunk
 
 class CrewAIRAGOrchestrator:
@@ -538,9 +786,18 @@ class CrewAIRAGOrchestrator:
         
         return response
 
-    def chunk_text(self, text: str, chunk_size: int):
-        """Chunk a string into fixed-size pieces without overlap."""
-        return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+    def simple_chunk_text(self, text: str, chunk_size: int):
+        """Simple character-based chunking without overlap (used for specific cases)."""
+        if not text or not text.strip():
+            return []
+        
+        text = text.strip()
+        chunks = []
+        for i in range(0, len(text), chunk_size):
+            chunk = text[i:i + chunk_size].strip()
+            if chunk:
+                chunks.append(chunk)
+        return chunks
 
     async def summarize_context(self, text: str, target_length: int) -> str:
         """Recursively summarize text until it fits within a target character budget."""
@@ -559,8 +816,9 @@ class CrewAIRAGOrchestrator:
         combined = " ".join(summaries)
         return await self.summarize_context(combined, target_length)
 
-    async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False):
+    async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False, model: Optional[str] = None):
         """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
+        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3n:e2b")).replace("ollama/","")
         if self.context_length == 4096:
             self.context_length = await self._get_context_length(self.model_name)
         

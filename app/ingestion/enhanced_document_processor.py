@@ -335,26 +335,47 @@ class EnhancedDocumentProcessor:
         text_parts = []
         
         for block in blocks:
-            block_text = ""
+            block_lines = []
             for line in block.get("lines", []):
-                line_text = ""
+                line_spans = []
                 for span in line.get("spans", []):
                     text = span.get("text", "").strip()
                     if text:
-                        line_text += text + " "
+                        line_spans.append(text)
                 
-                if line_text.strip():
-                    block_text += line_text.strip() + "\n"
+                if line_spans:
+                    # Join spans with single space, clean up multiple spaces
+                    line_text = " ".join(line_spans)
+                    line_text = re.sub(r'\s+', ' ', line_text).strip()
+                    block_lines.append(line_text)
             
-            if block_text.strip():
-                text_parts.append(block_text.strip())
+            if block_lines:
+                # Join lines appropriately based on content type
+                if group_type == "header":
+                    # Headers: preserve line breaks but clean spacing
+                    block_text = "\n".join(block_lines)
+                else:
+                    # Body text: join with spaces, preserve paragraph breaks
+                    block_text = " ".join(block_lines)
+                
+                text_parts.append(block_text)
         
+        if not text_parts:
+            return ""
+        
+        # Final combination based on group type
         if group_type == "header":
-            return "\n".join(text_parts)  # Preserve header structure
+            result = "\n".join(text_parts)
         elif group_type == "body":
-            return " ".join(text_parts)  # Combine body text
+            # Join body paragraphs with double newline
+            result = "\n\n".join(text_parts)
         else:
-            return "\n".join(text_parts)  # Default structure preservation
+            result = "\n".join(text_parts)
+        
+        # Clean up excessive whitespace
+        result = re.sub(r'\n{3,}', '\n\n', result)  # Max 2 consecutive newlines
+        result = re.sub(r'[ \t]+', ' ', result)     # Normalize spaces/tabs
+        return result.strip()
     
     def _extract_structured_text(self, text_dict: dict, page_num: int, filename: str) -> List[dict]:
         """Extract structured content like headers, lists, etc."""
