@@ -226,13 +226,14 @@ async def rag_query_endpoint(request: RAGQueryRequest):
                     request.use_hybrid_search,
                 ):
                     yield chunk
-            else:
+            else:                
                 async for chunk in rag_service.query(
                     request.query,
                     request.system_prompt,
                     request.messages,
                     request.n_results,
                     request.use_hybrid_search,
+                    request.model,
                 ):
                     yield chunk
         except Exception as e:

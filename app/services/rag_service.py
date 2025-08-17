@@ -26,6 +26,7 @@ from PIL import Image
 import gc
 import json
 import importlib.util
+from typing import Optional
 
 # Import enhanced extractors
 from app.ingestion.enhanced_extractors import extract_csv_enhanced, process_images_enhanced, get_image_processor, get_csv_processor
@@ -692,8 +693,9 @@ class RAGService:
         result_documents = [id_to_content[i] for i in top_text_ids if i in id_to_content]
         return result_documents
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False):
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None):
         """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama."""
+        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3n:e2b")).replace("ollama/","")
         history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
         full_query = f"{history_context}\nUser: {query_text}" if history_context else query_text
 
@@ -711,7 +713,7 @@ class RAGService:
             {"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"}
         ]
         
-        async for chunk in stream_ollama(llm_messages):
+        async for chunk in stream_ollama(llm_messages, model=model_name):
             yield chunk
 
 class CrewAIRAGOrchestrator:
@@ -814,8 +816,9 @@ class CrewAIRAGOrchestrator:
         combined = " ".join(summaries)
         return await self.summarize_context(combined, target_length)
 
-    async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False):
+    async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False, model: Optional[str] = None):
         """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
+        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3n:e2b")).replace("ollama/","")
         if self.context_length == 4096:
             self.context_length = await self._get_context_length(self.model_name)
         

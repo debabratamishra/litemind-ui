@@ -712,7 +712,10 @@ def stream_fastapi_chat(
                 if not line:
                     continue
                 if line.startswith("data:"):
-                    line = line[5:].lstrip()
+                    payload = line[5:].lstrip()
+                    if payload.strip() in ("[DONE]", ""):
+                        continue
+                    line = payload
 
                 chunk = line + "\n"
                 buf += chunk
@@ -787,7 +790,10 @@ def stream_fastapi_rag_query(
                 if not line:
                     continue
                 if line.startswith("data:"):
-                    line = line[5:].lstrip()
+                    payload = line[5:].lstrip()
+                    if payload.strip() in ("[DONE]", ""):
+                        continue
+                    line = payload
 
                 chunk = line + "\n"
                 buf += chunk
@@ -1306,7 +1312,7 @@ elif page == "📚 RAG":
 
         for message in st.session_state.rag_messages:
             with st.chat_message(message["role"]):
-                st.write(message["content"])
+                render_llm_text(message["content"])
 
         rag_input = st.chat_input("Ask about your documents, data analysis, image content, or any uploaded materials...")
 
@@ -1314,7 +1320,7 @@ elif page == "📚 RAG":
             st.session_state.rag_messages.append({"role": "user", "content": rag_input})
 
             with st.chat_message("user"):
-                st.write(rag_input)
+                render_llm_text(rag_input)
 
             history = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.rag_messages[:-1]]
 
