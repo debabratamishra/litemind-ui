@@ -26,7 +26,7 @@ from app.services.ollama import stream_ollama
 # ---------------------------------------------------------------------------
 
 FASTAPI_URL: str = "http://localhost:8000"
-FASTAPI_TIMEOUT: int = 60  # seconds
+FASTAPI_TIMEOUT: int = 120  # seconds
 CONNECT_TIMEOUT: int = 5   # seconds
 READ_TIMEOUT: int = 600    # seconds
 
@@ -493,7 +493,6 @@ def _animate_tokens(
             time.sleep(delay)
     return visible
 
-
 # ---------------------------------------------------------------------------
 # Backend calls (non-streaming)
 # ---------------------------------------------------------------------------
@@ -543,8 +542,6 @@ def call_fastapi_rag_query(
     except requests.RequestException as exc:
         st.error(f"RAG API Error: {exc}")
         return None
-
-
 
 # ---------------------------------------------------------------------------
 # Streaming UI: segregate reasoning during streaming
@@ -634,7 +631,6 @@ class _StreamingSegregator:
         if not text:
             return
         if self.in_think:
-            # Lazily create the reasoning UI when we first see thinking content
             self._ensure_reasoning_ui()
             self.thinking_text += text
             self._render_reasoning()
@@ -936,10 +932,350 @@ def get_file_type_info() -> Dict[str, Any]:
     }
 
 
+def get_backend_endpoint(backend: str) -> str:
+    """Get the appropriate API endpoint based on backend."""
+    if backend == "vllm":
+        return f"{FASTAPI_URL}/api/chat/stream"
+    else:
+        return f"{FASTAPI_URL}/api/chat/stream"
+
+def create_backend_payload(message: str, model: str, backend: str, temperature: float = 0.7, hf_token: str = None) -> dict:
+    """Create appropriate payload for the selected backend."""
+    payload = {
+        "message": message,
+        "model": model,
+        "temperature": temperature,
+        "backend": backend
+    }
+    
+    if backend == "vllm" and hf_token:
+        payload["hf_token"] = hf_token
+        
+    return payload
+
 # ---------------------------------------------------------------------------
 # App definition
 # ---------------------------------------------------------------------------
 
+# Add these new helper functions for vLLM integration
+def setup_vllm_backend():
+    """Setup vLLM backend configuration in sidebar.
+    Token entry is only prompted when selecting Popular/Custom models.
+    """
+    st.sidebar.subheader("🤗 vLLM Configuration")
+
+    # --- Fetch available models up front (no token required) ---
+    local_models: List[str] = []
+    popular_models: List[str] = []
+    try:
+        response = requests.get(f"{FASTAPI_URL}/api/vllm/models", timeout=10)
+        if response.status_code == 200:
+            models_data = response.json() or {}
+            local_models = models_data.get("local_models", []) or []
+            popular_models = models_data.get("popular_models", []) or []
+        else:
+            st.sidebar.error("❌ Could not fetch models")
+    except Exception as e:
+        st.sidebar.error(f"❌ Error fetching models: {e}")
+
+    # --- Model Selection (always visible) ---
+    st.sidebar.subheader("Model Selection")
+    model_source = st.sidebar.radio(
+        "Choose model source:",
+        ["Local Models", "Popular Models", "Custom Model"],
+        key="model_source",
+    )
+
+    selected_model: Optional[str] = None
+    hf_token: Optional[str] = None
+
+    # Local models do not require a token
+    if model_source == "Local Models":
+        if local_models:
+            selected_model = st.sidebar.selectbox(
+                "Select local model:",
+                local_models,
+                key="local_model_select",
+            )
+        else:
+            st.sidebar.info("No local models found. Choose 'Popular Models' or 'Custom Model' to download.")
+
+    # Popular models: show list, then show token input (optional but recommended)
+    elif model_source == "Popular Models":
+        selected_model = st.sidebar.selectbox(
+            "Select popular model:",
+            popular_models,
+            key="popular_model_select",
+        )
+        st.sidebar.markdown("---")
+        hf_token = st.sidebar.text_input(
+            "Huggingface Token",
+            type="password",
+            help="Enter your Huggingface access token if the selected model requires authentication (e.g. gated/private).",
+            key="hf_token",
+        )
+        if st.sidebar.button("Validate Token", key="validate_token"):
+            if hf_token:
+                try:
+                    resp = requests.post(
+                        f"{FASTAPI_URL}/api/vllm/set-token",
+                        json={"token": hf_token},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        st.sidebar.success("✅ Token validated successfully!")
+                        st.session_state.hf_token_valid = True
+                    else:
+                        st.sidebar.error("❌ Invalid token")
+                        st.session_state.hf_token_valid = False
+                except Exception as e:
+                    st.sidebar.error(f"❌ Error validating token: {e}")
+                    st.session_state.hf_token_valid = False
+            else:
+                st.sidebar.warning("Please enter a token")
+
+    # Custom model: free text + token input (optional but recommended)
+    elif model_source == "Custom Model":
+        selected_model = st.sidebar.text_input(
+            "Enter model repo or local path:",
+            placeholder="e.g., TinyLlama/TinyLlama-1.1B-Chat-v1.0 or /path/to/local/model",
+            key="custom_model_input",
+        )
+        st.sidebar.markdown("---")
+        hf_token = st.sidebar.text_input(
+            "Huggingface Token",
+            type="password",
+            help="Enter your Huggingface access token if the selected model requires authentication (e.g. gated/private).",
+            key="hf_token",
+        )
+        if st.sidebar.button("Validate Token", key="validate_token"):
+            if hf_token:
+                try:
+                    resp = requests.post(
+                        f"{FASTAPI_URL}/api/vllm/set-token",
+                        json={"token": hf_token},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        st.sidebar.success("✅ Token validated successfully!")
+                        st.session_state.hf_token_valid = True
+                    else:
+                        st.sidebar.error("❌ Invalid token")
+                        st.session_state.hf_token_valid = False
+                except Exception as e:
+                    st.sidebar.error(f"❌ Error validating token: {e}")
+                    st.session_state.hf_token_valid = False
+            else:
+                st.sidebar.warning("Please enter a token")
+
+    # --- Actions: Download / Start / Stop ---
+    if selected_model:
+        # Offer download when the choice isn't already in local cache.
+        if selected_model not in local_models and model_source in ("Popular Models", "Custom Model"):
+            if st.sidebar.button("Download Model", key="download_model"):
+                with st.sidebar:
+                    with st.spinner(f"Downloading {selected_model}..."):
+                        try:
+                            resp = requests.post(
+                                f"{FASTAPI_URL}/api/vllm/download-model",
+                                json={"model_name": selected_model},
+                                timeout=300,
+                            )
+                            if resp.status_code == 200:
+                                st.success(f"✅ Downloaded {selected_model}")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                # If download failed, hint about token if none provided
+                                if not hf_token:
+                                    st.error(
+                                        "❌ Download failed. If the repo is gated/private, validate your Hugging Face token above and try again."
+                                    )
+                                else:
+                                    st.error("❌ Download failed")
+                        except Exception as e:
+                            st.error(f"❌ Download error: {e}")
+
+        # Start/Stop server controls (starting may auto-download if allowed)
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            if st.button("Start Server", key="start_server"):
+                with st.spinner("Starting vLLM server..."):
+                    try:
+                        resp = requests.post(
+                            f"{FASTAPI_URL}/api/vllm/start-server",
+                            json={
+                                "model_name": selected_model,
+                                "dtype": "auto",  # safer default, backend may override
+                            },
+                            timeout=60,
+                        )
+                        if resp.status_code == 200:
+                            st.success("✅ Server started!")
+                            st.session_state.vllm_model = selected_model
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            if resp.status_code in (401, 403) and not hf_token:
+                                st.error(
+                                    "❌ Failed to start. If the model requires download/auth, validate your Hugging Face token above."
+                                )
+                            else:
+                                st.error("❌ Failed to start server")
+                    except Exception as e:
+                        st.error(f"❌ Server start error: {e}")
+        with col2:
+            if st.button("Stop Server", key="stop_server"):
+                try:
+                    resp = requests.post(f"{FASTAPI_URL}/api/vllm/stop-server", timeout=10)
+                    if resp.status_code == 200:
+                        st.success("✅ Server stopped!")
+                        if "vllm_model" in st.session_state:
+                            del st.session_state.vllm_model
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Stop error: {e}")
+
+    # --- Server status ---
+    try:
+        response = requests.get(f"{FASTAPI_URL}/api/vllm/server-status", timeout=5)
+        if response.status_code == 200:
+            status = response.json()
+            if status.get("running"):
+                st.sidebar.success(f"🟢 vLLM Server: {status.get('current_model')}")
+            else:
+                st.sidebar.info("🔴 vLLM Server: Stopped")
+    except Exception:
+        st.sidebar.info("🔴 vLLM Server: Unknown")
+
+    return st.session_state.get("hf_token_valid", False), hf_token
+
+def send_chat_message_enhanced(message: str, model: str, backend: str, temperature: float = 0.7, hf_token: str = None):
+    """Send chat message to either Ollama or vLLM backend."""
+    try:
+        if backend == "vllm":
+            payload = {
+                "message": message,
+                "model": model,
+                "backend": backend,
+                "temperature": temperature
+            }
+            if hf_token:
+                payload["hf_token"] = hf_token
+        else:
+            payload = {
+                "message": message,
+                "model": model,
+                "temperature": temperature
+            }
+            
+        endpoint = f"{FASTAPI_URL}/api/chat/stream"
+        response = requests.post(
+            endpoint,
+            json=payload,
+            stream=True,
+            timeout=(5, 600)
+        )
+        response.raise_for_status()
+        return response
+    except Exception as e:
+        logging.error(f"Error sending chat message: {e}")
+        return None
+
+def send_rag_query_enhanced(query: str, messages: list, model: str, system_prompt: str, 
+                          n_results: int, use_multi_agent: bool, use_hybrid_search: bool,
+                          backend: str = "ollama", hf_token: str = None):
+    """Send RAG query to either Ollama or vLLM backend."""
+    try:
+        payload = {
+            "query": query,
+            "messages": messages,
+            "model": model,
+            "system_prompt": system_prompt,
+            "n_results": n_results,
+            "use_multi_agent": use_multi_agent,
+            "use_hybrid_search": use_hybrid_search
+        }
+        
+        if backend == "vllm":
+            payload["backend"] = backend
+            if hf_token:
+                payload["hf_token"] = hf_token
+            
+        response = requests.post(
+            f"{FASTAPI_URL}/api/rag/query",
+            json=payload,
+            stream=True,
+            timeout=(5, 600)
+        )
+        response.raise_for_status()
+        return response
+    except Exception as e:
+        logging.error(f"Error sending RAG query: {e}")
+        return None
+
+# Update your streaming functions
+def stream_enhanced_chat(message: str, model: str, backend: str, temperature: float, hf_token: str, placeholder):
+    """Stream chat response from enhanced backend - FIXED VERSION."""
+    
+    try:
+        payload = {
+            "message": message,
+            "model": model,
+            "temperature": temperature,
+            "backend": backend
+        }
+        
+        if backend == "vllm" and hf_token:
+            payload["hf_token"] = hf_token
+        
+        logger.info(f"Sending request with backend: {backend}")
+        
+        response = requests.post(
+            f"{FASTAPI_URL}/api/chat/stream",
+            json=payload,
+            stream=True,
+            timeout=(5, 600)
+        )
+        response.raise_for_status()
+        
+        full_response = ""
+        for chunk in response.iter_lines(decode_unicode=True):
+            if chunk:
+                full_response += chunk
+                placeholder.markdown(full_response + "▌")
+        
+        placeholder.markdown(full_response)
+        return full_response
+        
+    except Exception as e:
+        error_msg = f"❌ Error: {str(e)}"
+        placeholder.markdown(error_msg)
+        return error_msg
+
+def stream_enhanced_rag_query(query: str, messages: list, model: str, system_prompt: str,
+                            n_results: int, use_multi_agent: bool, use_hybrid_search: bool,
+                            backend: str, hf_token: str, placeholder):
+    """Stream RAG response from enhanced backend."""
+    response = send_rag_query_enhanced(
+        query, messages, model, system_prompt, n_results, 
+        use_multi_agent, use_hybrid_search, backend, hf_token
+    )
+    if not response:
+        placeholder.markdown("❌ Connection failed")
+        return "❌ Connection failed"
+    
+    full_response = ""
+    for chunk in response.iter_lines(decode_unicode=True):
+        if chunk:
+            full_response += chunk
+            placeholder.markdown(full_response + "▌")
+
+    placeholder.markdown(full_response)
+    return full_response
+
+# Main application code with enhanced backend support
 st.set_page_config(page_title="LLM WebUI", layout="wide", initial_sidebar_state="expanded")
 
 if "backend_available" not in st.session_state:
@@ -955,14 +1291,52 @@ backend_mode = "FastAPI" if backend_available else "Local"
 st.sidebar.title("🤖 LLM WebUI")
 st.sidebar.markdown("---")
 
+# Backend Provider Selection (NEW)
+st.sidebar.subheader("⚙️ Backend Provider")
+if backend_available:
+    backend_provider = st.sidebar.radio(
+        "Select LLM Backend:",
+        ["ollama", "vllm"],
+        format_func=lambda x: "🦙 Ollama" if x == "ollama" else "⚡ vLLM",
+        key="backend_provider",
+        help="Choose between Ollama (local) or vLLM (Huggingface) backend"
+    )
+    
+    # Initialize session state for backend
+    if "current_backend" not in st.session_state:
+        st.session_state.current_backend = backend_provider
+    elif st.session_state.current_backend != backend_provider:
+        st.session_state.current_backend = backend_provider
+        # Clear model-specific session state when switching backends
+        if "vllm_model" in st.session_state:
+            del st.session_state.vllm_model
+        st.rerun()
+else:
+    backend_provider = "ollama"  # Default to ollama for local backend
+    st.sidebar.info("🔴 FastAPI backend required for vLLM support")
+
+st.sidebar.markdown("---")
+
 page = st.sidebar.selectbox("Navigate to:", ["💬 Chat", "📚 RAG"], index=0)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔧 System Status")
 if backend_available:
     st.sidebar.success("✅ FastAPI Backend Connected")
+    if backend_provider == "vllm":
+        st.sidebar.info("⚡ vLLM Mode Active")
+    else:
+        st.sidebar.info("🦙 Ollama Mode Active")
 else:
     st.sidebar.warning("⚠️ Using Local Backend")
+
+# Backend-specific configuration
+hf_token_valid = False
+hf_token = None
+
+if backend_available and backend_provider == "vllm":
+    st.sidebar.markdown("---")
+    hf_token_valid, hf_token = setup_vllm_backend()
 
 # ---------------------------- Chat Page ------------------------------------
 
@@ -973,12 +1347,25 @@ if page == "💬 Chat":
 
     st.session_state.setdefault("chat_messages", [])
 
-    available_models = get_available_models() if backend_available else ["gemma3n:e2b"]
+    # Model selection based on backend
+    if backend_provider == "vllm" and backend_available:
+        # vLLM model selection
+        vllm_model = st.session_state.get("vllm_model")
+        if vllm_model:
+            st.sidebar.success(f"🎯 Active Model: {vllm_model}")
+            selected_model = vllm_model
+        else:
+            st.sidebar.warning("⚠️ No vLLM model loaded")
+            st.sidebar.info("👆 Configure vLLM above to load a model")
+            selected_model = "no-model"
+    else:
+        # Ollama model selection (existing functionality)
+        available_models = get_available_models() if backend_available else ["gemma3n:e2b"]
+        selected_model = st.sidebar.selectbox("Select Model:", available_models)
 
-    selected_model = st.sidebar.selectbox("Select Model:", available_models)
     temperature = st.sidebar.slider("Temperature:", 0.0, 1.0, 0.7, 0.1)
     
-    # Reasoning display settings
+    # Reasoning display settings (preserved)
     st.sidebar.markdown("---")
     st.sidebar.subheader("🧠 Reasoning Display")
     st.session_state.show_reasoning_expanded = st.sidebar.checkbox(
@@ -998,6 +1385,7 @@ if page == "💬 Chat":
         st.session_state.chat_messages.clear()
         st.rerun()
 
+    # Display chat messages
     if st.session_state.chat_messages:
         for msg in st.session_state.chat_messages:
             with st.chat_message(msg["role"]):
@@ -1015,6 +1403,12 @@ if page == "💬 Chat":
     user_input = st.chat_input("Ask Anything")
 
     if user_input:
+        
+        # Validate vLLM setup
+        if backend_provider == "vllm" and selected_model == "no-model":
+            st.error("❌ Please configure and load a vLLM model first")
+            st.stop()
+
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
 
         with st.chat_message("user"):
@@ -1022,8 +1416,21 @@ if page == "💬 Chat":
 
         with st.chat_message("assistant"):
             out = st.empty()
-            with st.spinner("Thinking..."):
-                if backend_available:
+            status_text = "Thinking..."
+            if backend_provider == "vllm":
+                status_text = f"Thinking (vLLM - {selected_model})..."
+            
+            with st.spinner(status_text):
+                if backend_available and backend_provider == "vllm":
+                    reply = stream_enhanced_chat(
+                        message=user_input,
+                        model=selected_model,
+                        backend=backend_provider,
+                        temperature=temperature,
+                        hf_token=hf_token,
+                        placeholder=out
+                    )
+                elif backend_available:
                     reply = stream_fastapi_chat(
                         message=user_input,
                         model=selected_model,
@@ -1039,7 +1446,6 @@ if page == "💬 Chat":
                     )
 
         if reply:
-            # UI already rendered incrementally by the streaming function.
             st.session_state.chat_messages.append({"role": "assistant", "content": reply})
         else:
             st.error("❌ No response received.")
@@ -1123,7 +1529,7 @@ elif page == "📚 RAG":
         if st.session_state.config_message:
             (st.success if st.session_state.config_saved else st.error)(st.session_state.config_message)
 
-        # RAG System Status and Reset
+        # RAG System Status and Reset (preserved functionality)
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔄 System Management")
         
@@ -1139,7 +1545,7 @@ elif page == "📚 RAG":
         else:
             st.sidebar.error("❌ Cannot connect to backend")
 
-        # Reset button with confirmation
+        # Reset button with confirmation (preserved)
         st.session_state.setdefault("show_reset_confirm", False)
         
         if st.sidebar.button("🗑️ Reset System", 
@@ -1148,7 +1554,7 @@ elif page == "📚 RAG":
                            disabled=not st.session_state.config_saved):
             st.session_state.show_reset_confirm = True
 
-        # Reset confirmation dialog
+        # Reset confirmation dialog (preserved)
         if st.session_state.show_reset_confirm:
             st.sidebar.markdown("---")
             st.sidebar.warning("⚠️ **Confirm Reset**")
@@ -1164,7 +1570,6 @@ elif page == "📚 RAG":
                         success, message = reset_rag_system()
                         if success:
                             st.success(f"✅ {message}")
-                            # Clear chat history
                             st.session_state.rag_messages.clear()
                             st.session_state.show_reset_confirm = False
                             st.rerun()
@@ -1177,13 +1582,25 @@ elif page == "📚 RAG":
                     st.session_state.show_reset_confirm = False
                     st.rerun()
 
-        selected_model_rag = st.selectbox(
-            "Select Base Model:",
-            get_available_models(),
-            help="Language model used for generating responses",
-        )
+        # Model selection for RAG based on backend
+        if backend_provider == "vllm":
+            # vLLM model selection for RAG
+            vllm_model = st.session_state.get("vllm_model")
+            if vllm_model:
+                st.sidebar.success(f"🎯 Active Model: {vllm_model}")
+                selected_model_rag = vllm_model
+            else:
+                st.sidebar.warning("⚠️ No vLLM model loaded")
+                st.sidebar.info("👆 Configure vLLM above to load a model")
+                selected_model_rag = "no-model"
+        else:
+            # Ollama model selection for RAG
+            selected_model_rag = st.selectbox(
+                "Select Base Model:",
+                get_available_models(),
+                help="Language model used for generating responses",
+            )
         
-        # Reasoning display settings for RAG
         st.sidebar.markdown("---")
         st.sidebar.subheader("🧠 Reasoning Display")
         st.session_state.show_reasoning_expanded = st.sidebar.checkbox(
@@ -1201,6 +1618,7 @@ elif page == "📚 RAG":
         )
         st.session_state.hide_reasoning = hide_reasoning
 
+        # All existing RAG functionality preserved...
         st.subheader("📁 Upload Documents")
 
         # Show current knowledge base status
@@ -1217,55 +1635,52 @@ elif page == "📚 RAG":
         file_info = get_file_type_info()
 
         uploaded_files = st.file_uploader(
-            "Upload Documents for Enhanced Processing",
+            label="Upload Documents",
+            label_visibility="collapsed",
             type=file_info["supported_extensions"],
             accept_multiple_files=True,
-            help="Optionally upload CSVs, images, or other documents for enhanced processing",
+            help="Upload CSVs, images, or other documents for enhanced processing",
             disabled=not st.session_state.config_saved,
         )
 
-        # Add duplicate check button
+        # Automatic duplicate check during upload (no separate button)
         if uploaded_files:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("🔍 Check for Duplicates", disabled=not st.session_state.config_saved):
-                    with st.spinner("Checking for duplicate files..."):
-                        duplicate_results = check_file_duplicates(uploaded_files)
-                        if duplicate_results:
-                            st.subheader("📋 Duplicate Check Results")
-                            
-                            duplicates = [r for r in duplicate_results["results"] if r["is_duplicate"]]
-                            new_files = [r for r in duplicate_results["results"] if not r["is_duplicate"]]
-                            
-                            if duplicates:
-                                st.warning(f"⚠️ Found {len(duplicates)} duplicate files:")
-                                for dup in duplicates:
-                                    st.write(f"• **{dup['filename']}**: {dup['reason']}")
-                            
-                            if new_files:
-                                st.success(f"✅ {len(new_files)} new files ready for processing:")
-                                for new_file in new_files:
-                                    st.write(f"• **{new_file['filename']}**: {new_file['reason']}")
-                        else:
-                            st.error("❌ Failed to check for duplicates")
-            
-            with col2:
-                if st.button("📤 Upload & Process", type="primary", disabled=not st.session_state.config_saved):
-                    with st.spinner(f"Processing {len(uploaded_files)} files..."):
-                        success, results = upload_files_to_fastapi_enhanced(uploaded_files, chunk_size)
+            if st.button("📤 Upload & Process", type="primary", disabled=not st.session_state.config_saved):
+                # 1) Check duplicates first
+                with st.spinner("Checking for duplicate files..."):
+                    duplicate_results = check_file_duplicates(uploaded_files)
+
+                if not duplicate_results or "results" not in duplicate_results:
+                    st.error("❌ Failed to check for duplicates. Please try again.")
+                else:
+                    # Build lookup of duplicates by filename
+                    dup_flags = {r.get("filename"): r.get("is_duplicate") for r in duplicate_results.get("results", [])}
+                    duplicates = [uf for uf in uploaded_files if dup_flags.get(uf.name)]
+                    new_files = [uf for uf in uploaded_files if not dup_flags.get(uf.name)]
+
+                    # 2) If all are duplicates, abort upload with a helpful message
+                    if not new_files:
+                        st.warning("⚠️ All selected files are duplicates. Nothing to upload.")
+                        if duplicates:
+                            st.info("Skipped duplicates:\n- " + "\n- ".join(d.name for d in duplicates))
+                    else:
+                        # 3) Upload only non-duplicate files
+                        with st.spinner(f"Processing {len(new_files)} new file(s)..."):
+                            success, results = upload_files_to_fastapi_enhanced(new_files, chunk_size)
                         if success and results:
                             st.success("✅ Enhanced processing completed!")
                             display_upload_results(results)
                             st.session_state.rag_messages.clear()
                             st.info("💡 Chat history cleared to reflect new knowledge base")
                             logger.info("Enhanced file processing completed successfully")
-                            # Refresh the page to show updated status
+                            # Summarize any skipped duplicates
+                            if duplicates:
+                                st.info("Skipped duplicates:\n- " + "\n- ".join(d.name for d in duplicates))
                             st.rerun()
                         else:
                             st.error("❌ Enhanced processing failed. See details above.")
 
-        # File Management Section
+        # File Management Section (preserved)
         st.subheader("📂 File Management")
         
         processed_files_info = get_processed_files()
@@ -1308,7 +1723,7 @@ elif page == "📚 RAG":
             help="System prompt optimized for enhanced multimodal processing",
         )
 
-        st.subheader("🔍 Query Your Enhanced Knowledge Base")
+        st.subheader("🔍 Query Your Knowledge Base")
 
         for message in st.session_state.rag_messages:
             with st.chat_message(message["role"]):
@@ -1317,6 +1732,11 @@ elif page == "📚 RAG":
         rag_input = st.chat_input("Ask about your documents, data analysis, image content, or any uploaded materials...")
 
         if rag_input:
+            # Validate vLLM setup for RAG
+            if backend_provider == "vllm" and selected_model_rag == "no-model":
+                st.error("❌ Please configure and load a vLLM model first")
+                st.stop()
+
             st.session_state.rag_messages.append({"role": "user", "content": rag_input})
 
             with st.chat_message("user"):
@@ -1330,23 +1750,40 @@ elif page == "📚 RAG":
                     status += " (hybrid search enabled)"
                 if use_multi_agent:
                     status += " with multi-agent orchestration"
+                if backend_provider == "vllm":
+                    status += f" (vLLM - {selected_model_rag})"
                 status += "..."
 
                 out = st.empty()
                 with st.spinner(status):
-                    response_text = stream_fastapi_rag_query(
-                        query=rag_input,
-                        messages=history,
-                        model=selected_model_rag,
-                        system_prompt=system_prompt,
-                        n_results=n_results,
-                        use_multi_agent=use_multi_agent,
-                        use_hybrid_search=use_hybrid_search,
-                        placeholder=out,
-                    )
+                    if backend_provider == "vllm":
+                        # Use enhanced vLLM RAG streaming
+                        response_text = stream_enhanced_rag_query(
+                            query=rag_input,
+                            messages=history,
+                            model=selected_model_rag,
+                            system_prompt=system_prompt,
+                            n_results=n_results,
+                            use_multi_agent=use_multi_agent,
+                            use_hybrid_search=use_hybrid_search,
+                            backend=backend_provider,
+                            hf_token=hf_token,
+                            placeholder=out
+                        )
+                    else:
+                        # Use existing Ollama RAG streaming
+                        response_text = stream_fastapi_rag_query(
+                            query=rag_input,
+                            messages=history,
+                            model=selected_model_rag,
+                            system_prompt=system_prompt,
+                            n_results=n_results,
+                            use_multi_agent=use_multi_agent,
+                            use_hybrid_search=use_hybrid_search,
+                            placeholder=out,
+                        )
 
                 if response_text:
-                    # UI already rendered incrementally by the streaming function.
                     st.session_state.rag_messages.append({"role": "assistant", "content": response_text})
                 else:
                     err = "❌ No response received. Please check your query and try again."
@@ -1356,12 +1793,16 @@ elif page == "📚 RAG":
     else:
         st.info("📡 Enhanced RAG functionality requires the FastAPI backend. Please start the backend server.")
 
-# ------------------------------ Footer -------------------------------------
+# ------------------------------ Footer (preserved) -------------------------------------
 
 st.sidebar.markdown("---")
 if backend_available:
     if capabilities and capabilities.get("status") == "ready":
         st.sidebar.write("🟢 Enhanced processing ready")
+        if backend_provider == "vllm":
+            st.sidebar.write("⚡ vLLM backend active")
+        else:
+            st.sidebar.write("🦙 Ollama backend active")
     else:
         st.sidebar.write("🟡 Basic functionality available")
 else:

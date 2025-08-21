@@ -5,3 +5,4 @@ chroma_db/
 __pycache__/
 .DS_Store
 .chroma/
+storage/

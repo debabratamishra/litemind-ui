@@ -6,10 +6,12 @@ import json
 import logging
 import os
 import signal
+import shutil
 import sys
 import threading
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
+import hashlib
 
 import httpx
 import uvicorn
@@ -23,6 +25,7 @@ from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from sentence_transformers import SentenceTransformer
+from app.services.vllm_service import vllm_service
 
 try:
     import torch
@@ -41,6 +44,30 @@ logger = logging.getLogger(__name__)
 UPLOAD_FOLDER = Path("./uploads")
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 
+# ---- Persistent RAG config & collection helpers ----
+CONFIG_PATH = Path("./storage/rag_config.json")
+CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+DEFAULT_RAG_CONFIG: Dict[str, object] = {
+    "provider": "huggingface",
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "chunk_size": 500,
+}
+
+def load_rag_config() -> Dict[str, object]:
+    try:
+        if CONFIG_PATH.exists():
+            return json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        pass
+    return dict(DEFAULT_RAG_CONFIG)
+
+def save_rag_config_local(cfg: Dict[str, object]) -> None:
+    try:
+        CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        logger.warning(f"Failed to persist RAG config: {e}")
+
 rag_service = None
 
 
@@ -50,16 +77,41 @@ async def lifespan(app: FastAPI):
     logger.info("LLM WebUI API starting up…")
     logger.info("Upload folder: %s", UPLOAD_FOLDER)
 
-    # Clear uploads folder for fresh start
-    for file in UPLOAD_FOLDER.iterdir():
-        if file.is_file():
-            file.unlink()
-    logger.info("Uploads folder cleared")
+    # Purge uploads at startup (fresh state on every restart)
+    try:
+        if UPLOAD_FOLDER.exists():
+            shutil.rmtree(UPLOAD_FOLDER, ignore_errors=True)
+        UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+        logger.info("Uploads folder cleared at startup")
+    except Exception as e:
+        logger.warning("Failed to clear uploads at startup: %s", e)
 
     # Initialize services
     global rag_service
     rag_service = RAGService()
     logger.info("RAG service ready")
+
+    # Restore RAG config (do not re-index; we start fresh each time)
+    try:
+        cfg = load_rag_config()
+        provider = str(cfg.get("provider", "huggingface")).lower()
+        model_name = str(cfg.get("embedding_model", DEFAULT_RAG_CONFIG["embedding_model"]))
+        chunk_size_cfg = int(cfg.get("chunk_size", DEFAULT_RAG_CONFIG["chunk_size"]))
+
+        if provider == "ollama":
+            rag_service.embedding_function = OllamaEmbeddingFunction(
+                model_name=model_name,
+                url="http://localhost:11434/api/embeddings",
+            )
+        else:
+            rag_service.embedding_function = LocalHFEmbeddingFunction(
+                model_name=model_name,
+                batch_size=64,
+            )
+        rag_service.default_chunk_size = chunk_size_cfg
+        logger.info("RAG config restored (fresh store): provider=%s model=%s chunk_size=%s", provider, model_name, chunk_size_cfg)
+    except Exception as e:
+        logger.warning("Failed to restore RAG config on startup: %s", e)
 
     # Performance tuning: thread counts for CPU-bound ops
     try:
@@ -82,6 +134,20 @@ async def lifespan(app: FastAPI):
     logger.info("Chat service ready")
 
     yield
+
+    try:
+        if 'rag_service' in globals() and rag_service:
+            await rag_service.reset_system()
+            logger.info("Cleared vector storage on shutdown")
+    except Exception as e:
+        logger.warning("Failed clearing vector storage on shutdown: %s", e)
+
+    try:
+        if UPLOAD_FOLDER.exists():
+            shutil.rmtree(UPLOAD_FOLDER, ignore_errors=True)
+            logger.info("Uploads folder cleared on shutdown")
+    except Exception as e:
+        logger.warning("Failed to clear uploads on shutdown: %s", e)
 
     logger.info("LLM WebUI API shutting down…")
 
@@ -116,18 +182,25 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
-class ChatRequest(BaseModel):
+
+# Add these new models
+class VLLMTokenRequest(BaseModel):
+    token: str
+
+class VLLMModelRequest(BaseModel):
+    model_name: str
+    dtype: Optional[str] = "auto"
+    max_model_len: Optional[int] = None
+    gpu_memory_utilization: Optional[float] = 0.9
+
+class ChatRequestEnhanced(BaseModel):
     message: str
     model: Optional[str] = "default"
     temperature: Optional[float] = 0.7
+    backend: Optional[str] = "ollama"  # "ollama" or "vllm"
+    hf_token: Optional[str] = None
 
-
-class ChatResponse(BaseModel):
-    response: str
-    model: str
-
-
-class RAGQueryRequest(BaseModel):
+class RAGQueryRequestEnhanced(BaseModel):
     query: str
     messages: Optional[List[dict]] = []
     model: Optional[str] = "default"
@@ -135,7 +208,18 @@ class RAGQueryRequest(BaseModel):
     n_results: Optional[int] = 3
     use_multi_agent: Optional[bool] = False
     use_hybrid_search: Optional[bool] = False
+    backend: Optional[str] = "ollama"  # "ollama" or "vllm"
+    hf_token: Optional[str] = None
 
+# class ChatRequest(BaseModel):
+#     message: str
+#     model: Optional[str] = "default"
+#     temperature: Optional[float] = 0.7
+
+
+class ChatResponse(BaseModel):
+    response: str
+    model: str
 
 class RAGConfigRequest(BaseModel):
     provider: str
@@ -169,27 +253,6 @@ async def get_available_models():
 # ---------------------------------------------------------------------------
 # Chat routes
 # ---------------------------------------------------------------------------
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
-    """Process a single chat message with the selected model."""
-    try:
-        response = await process_llm_request(request.message, request.model, request.temperature)
-        return ChatResponse(response=response, model=request.model)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
-    """Stream chat responses chunk-by-chunk for real-time updates."""
-
-    async def event_generator():
-        messages = [{"role": "user", "content": request.message}]
-        async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature):
-            yield chunk + "\n"
-
-    return StreamingResponse(event_generator(), media_type="text/plain")
-
 
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_page(request: Request):
@@ -209,39 +272,6 @@ async def rag_page(request: Request):
         return templates.TemplateResponse("rag.html", {"request": request})
     return HTMLResponse("<h1>Templates not configured</h1>")
 
-
-@app.post("/api/rag/query")
-async def rag_query_endpoint(request: RAGQueryRequest):
-    """Execute a RAG query, optionally via a multi‑agent orchestrator, and stream results."""
-
-    async def gen():
-        try:
-            if request.use_multi_agent:
-                orchestrator = CrewAIRAGOrchestrator(rag_service, request.model)
-                async for chunk in orchestrator.query(
-                    request.query,
-                    request.system_prompt,
-                    request.messages,
-                    request.n_results,
-                    request.use_hybrid_search,
-                ):
-                    yield chunk
-            else:                
-                async for chunk in rag_service.query(
-                    request.query,
-                    request.system_prompt,
-                    request.messages,
-                    request.n_results,
-                    request.use_hybrid_search,
-                    request.model,
-                ):
-                    yield chunk
-        except Exception as e:
-            yield f"\n[ERROR] {e}\n"
-
-    return StreamingResponse(gen(), media_type="text/plain")
-
-
 @app.get("/api/rag/documents")
 async def get_uploaded_documents():
     """List filenames of uploaded and indexed documents."""
@@ -254,12 +284,20 @@ async def get_uploaded_documents():
 
 @app.post("/api/rag/save_config")
 async def save_rag_config(request: RAGConfigRequest):
-    """Persist RAG configuration (embedding provider/model and chunk size) and recreate the collection."""
+    """Persist RAG configuration (embedding provider/model and chunk size) and update the embedding function without wiping vectors."""
     try:
         global rag_service
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
 
+        # Persist new config
+        cfg = load_rag_config()
+        cfg["provider"] = request.provider
+        cfg["embedding_model"] = request.embedding_model
+        cfg["chunk_size"] = int(request.chunk_size)
+        save_rag_config_local(cfg)
+
+        # Apply embedding function without wiping existing vectors
         if request.provider.lower() == "ollama":
             rag_service.embedding_function = OllamaEmbeddingFunction(
                 model_name=request.embedding_model,
@@ -273,8 +311,9 @@ async def save_rag_config(request: RAGConfigRequest):
         else:
             raise HTTPException(status_code=400, detail="Invalid provider")
 
-        rag_service.default_chunk_size = request.chunk_size
-        await rag_service.recreate_collection()
+        rag_service.default_chunk_size = int(request.chunk_size)
+
+        # Do NOT call recreate_collection here; keep existing KB intact.
         return {"message": "RAG configuration saved successfully", "status": "success"}
 
     except Exception as e:
@@ -327,8 +366,18 @@ class LocalHFEmbeddingFunction:
         self.model = SentenceTransformer(model_name, device=device)
         self.batch_size = batch_size
 
-    def __call__(self, texts: list[str]):
-        """Encode a list of texts to normalized embeddings."""
+    def __call__(self, input):
+        """Encode documents to normalized embeddings.
+        Chroma 0.4.16+ calls EmbeddingFunction with signature __call__(input=Documents).
+        This method accepts either a list of strings or a small mapping containing
+        one of: 'input', 'texts', or 'documents'.
+        """
+        texts = input
+        if isinstance(input, dict):
+            texts = input.get("input") or input.get("texts") or input.get("documents") or []
+        if not isinstance(texts, list):
+            texts = [str(texts)]
+
         embs = self.model.encode(
             texts,
             batch_size=self.batch_size,
@@ -396,9 +445,8 @@ async def set_embedding(request: dict):
             else:
                 raise ValueError("Invalid provider")
 
-            yield "Recreating collection and re-indexing documents...\n"
-            await rag_service.recreate_collection()
-            yield "Embedding model updated successfully.\n"
+            # Keep existing collection; if you really want to rebuild, expose a separate reset endpoint.
+            yield "Embedding model set. Existing vectors preserved.\n"
         except Exception as e:
             yield f"Error: {str(e)}\n"
 
@@ -527,13 +575,18 @@ async def get_rag_status():
 
         # Count uploaded files
         uploaded_files = len([f for f in UPLOAD_FOLDER.iterdir() if f.is_file()])
-        
+
         # Get collection stats
-        collection_count = rag_service.text_collection.count() if rag_service.text_collection else 0
-        
+        collection_count = 0
+        try:
+            if getattr(rag_service, "text_collection", None) is not None:
+                collection_count = rag_service.text_collection.count()
+        except Exception:
+            collection_count = 0
+
         # Get processed files info
         processed_info = rag_service.get_processed_files_info()
-        
+
         return {
             "status": "ready",
             "uploaded_files": uploaded_files,
@@ -651,6 +704,260 @@ async def processing_capabilities():
             "message": f"Could not determine capabilities: {str(e)}",
             "capabilities": {"enhanced_csv": False, "ocr_available": False, "memory_optimized": True},
         }
+    
+
+# --------------------------------------------------------------------------- 
+# vLLM routes
+# ---------------------------------------------------------------------------
+
+@app.post("/api/vllm/set-token")
+async def set_vllm_token(request: VLLMTokenRequest):
+    """Set Huggingface token for vLLM."""
+    result = vllm_service.set_hf_token(request.token)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+@app.get("/api/vllm/models")
+async def get_vllm_models():
+    """Get available vLLM models."""
+    return vllm_service.get_available_models()
+
+@app.post("/api/vllm/download-model")
+async def download_vllm_model(request: VLLMModelRequest):
+    """Download a model from Huggingface."""
+    result = await vllm_service.download_model(request.model_name)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+@app.post("/api/vllm/start-server")
+async def start_vllm_server(request: VLLMModelRequest):
+    """Start vLLM server with specified model."""
+    kwargs = {}
+    if request.dtype:
+        kwargs["dtype"] = request.dtype
+    if request.max_model_len:
+        kwargs["max_model_len"] = request.max_model_len
+    if request.gpu_memory_utilization:
+        kwargs["gpu_memory_utilization"] = request.gpu_memory_utilization
+    
+    result = await vllm_service.start_vllm_server(request.model_name, **kwargs)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+@app.post("/api/vllm/stop-server")
+async def stop_vllm_server():
+    """Stop vLLM server."""
+    return await vllm_service.stop_vllm_server()
+
+@app.get("/api/vllm/server-status")
+async def vllm_server_status():
+    """Check vLLM server status."""
+    is_running = await vllm_service.is_server_running()
+    return {
+        "running": is_running,
+        "current_model": vllm_service.current_model
+    }
+
+
+# Also update your single chat endpoint:
+@app.post("/api/chat", response_model=ChatResponse) 
+async def chat_endpoint_enhanced(request: ChatRequestEnhanced):
+    """Process a single chat message with selected backend - FIXED VERSION."""
+    
+    logger.info(f"Single chat request - Backend: {request.backend}, Model: {request.model}")
+    
+    try:
+        if request.backend == "vllm":
+            # Set token if provided
+            if request.hf_token:
+                token_result = vllm_service.set_hf_token(request.hf_token)
+                if token_result["status"] == "error":
+                    raise HTTPException(status_code=400, detail=token_result["message"])
+            
+            # Check if vLLM server is running
+            if not await vllm_service.is_server_running():
+                raise HTTPException(status_code=400, detail="vLLM server is not running")
+            
+            # Use vLLM for non-streaming response
+            messages = [{"role": "user", "content": request.message}]
+            response_text = ""
+            async for chunk in vllm_service.stream_vllm_chat(
+                messages=messages, 
+                model=request.model,
+                temperature=request.temperature
+            ):
+                response_text += chunk
+            
+            return ChatResponse(response=response_text, model=request.model)
+        else:
+            # Use existing Ollama logic
+            response = await process_llm_request(request.message, request.model, request.temperature)
+            return ChatResponse(response=response, model=request.model)
+            
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chat/stream")
+async def chat_stream_enhanced(request: ChatRequestEnhanced):
+    """Stream chat responses from selected backend - FIXED VERSION."""
+    
+    logger.info(f"Chat request received - Backend: {request.backend}, Model: {request.model}")
+    
+    async def event_generator():
+        try:
+            if request.backend == "vllm":
+                logger.info("Routing to vLLM backend")
+                
+                # Set token if provided
+                if request.hf_token:
+                    token_result = vllm_service.set_hf_token(request.hf_token)
+                    if token_result["status"] == "error":
+                        yield f"Error: {token_result['message']}\n"
+                        return
+                
+                # Check if vLLM server is running
+                if not await vllm_service.is_server_running():
+                    yield "Error: vLLM server is not running. Please start the server first.\n"
+                    return
+                
+                # Create messages in OpenAI format
+                messages = [{"role": "user", "content": request.message}]
+                
+                # Stream from vLLM
+                logger.info(f"Streaming from vLLM with model: {request.model}")
+                async for chunk in vllm_service.stream_vllm_chat(
+                    messages=messages,
+                    model=request.model,
+                    temperature=request.temperature
+                ):
+                    yield chunk + "\n"
+                    
+            else:
+                logger.info("Routing to Ollama backend")
+                
+                # Use existing Ollama streaming
+                messages = [{"role": "user", "content": request.message}]
+                async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature):
+                    yield chunk + "\n"
+                    
+        except Exception as e:
+            logger.error(f"Error in chat streaming: {e}")
+            yield f"Error: {str(e)}\n"
+
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+# Update RAG endpoint to support both backends  
+# @app.post("/api/rag/query")
+# async def rag_query_enhanced(request: RAGQueryRequestEnhanced):
+#     """Query RAG system with selected backend."""
+#     try:
+#         if request.backend == "vllm":
+#             if request.hf_token:
+#                 vllm_service.set_hf_token(request.hf_token)
+            
+#             # Get context from RAG service
+#             if request.use_hybrid_search and rag_service.bm25_model:
+#                 documents = rag_service.hybrid_search(request.query, request.n_results)
+#                 context = " ".join(documents)
+#             else:
+#                 results = rag_service.text_collection.query(query_texts=[request.query], n_results=request.n_results)
+#                 context = " ".join(results['documents'][0]) if results.get('documents') else ""
+            
+#             # Create messages for vLLM
+#             messages = request.messages + [
+#                 {"role": "system", "content": request.system_prompt},
+#                 {"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"}
+#             ]
+            
+#             # Stream response
+#             async def event_generator():
+#                 async for chunk in vllm_service.stream_vllm_chat(
+#                     messages,
+#                     model=request.model
+#                 ):
+#                     yield chunk + "\n"
+            
+#             return StreamingResponse(event_generator(), media_type="text/plain")
+#         else:
+#             # Use existing Ollama RAG logic
+#             async def event_generator():
+#                 async for chunk in rag_service.query(
+#                     request.query,
+#                     request.system_prompt,
+#                     request.messages,
+#                     request.n_results,
+#                     request.use_hybrid_search,
+#                     request.model
+#                 ):
+#                     yield chunk + "\n"
+            
+#             return StreamingResponse(event_generator(), media_type="text/plain")
+            
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+# Update RAG endpoint to support vLLM
+@app.post("/api/rag/query")
+async def rag_query_enhanced(request: RAGQueryRequestEnhanced):
+    """Query RAG system with selected backend."""
+    try:
+        if request.backend == "vllm":
+            # Set token if provided
+            if request.hf_token:
+                vllm_service.set_hf_token(request.hf_token)
+
+            # Get context from RAG service (robust to missing text_collection)
+            context = ""
+            try:
+                if request.use_hybrid_search and getattr(rag_service, "bm25_model", None):
+                    documents = rag_service.hybrid_search(request.query, request.n_results)
+                    context = " ".join(documents)
+                else:
+                    tc = getattr(rag_service, "text_collection", None)
+                    if tc is not None:
+                        results = tc.query(query_texts=[request.query], n_results=request.n_results)
+                        if results and results.get('documents'):
+                            context = " ".join(results['documents'][0])
+            except Exception as e:
+                logger.warning("Vector query failed; proceeding with empty context: %s", e)
+
+            # Create messages for vLLM
+            messages = request.messages + [
+                {"role": "system", "content": request.system_prompt},
+                {"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"}
+            ]
+
+            # Stream response from vLLM
+            async def event_generator():
+                async for chunk in vllm_service.stream_vllm_chat(
+                    messages=messages,
+                    model=request.model
+                ):
+                    yield chunk + "\n"
+
+            return StreamingResponse(event_generator(), media_type="text/plain")
+        else:
+            # Use existing Ollama RAG logic
+            async def event_generator():
+                async for chunk in rag_service.query(
+                    request.query,
+                    request.system_prompt,
+                    request.messages,
+                    request.n_results,
+                    request.use_hybrid_search,
+                    request.model
+                ):
+                    yield chunk + "\n"
+
+            return StreamingResponse(event_generator(), media_type="text/plain")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
