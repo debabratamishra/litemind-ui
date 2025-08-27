@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: llmwebui-backend-prod
+    network_mode: host
+    volumes:
+      # OS-independent cache directories using environment variables (read-only for security)
+      - ${HOST_HF_CACHE:-${HOME}/.cache/huggingface}:${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - ${HOST_OLLAMA_CACHE:-${HOME}/.ollama}:${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      # Application data persistence
+      - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
+      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}:ro
+      # Production logs directory
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
+    environment:
+      - OLLAMA_API_URL=http://localhost:11434
+      - VLLM_API_URL=http://localhost:8001
+      - CHROMA_DB_PATH=${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - UPLOAD_FOLDER=${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - STORAGE_PATH=${CONTAINER_STORAGE_DIR:-/app/storage}
+      - HF_HOME=${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - OLLAMA_MODELS=${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      # Production settings
+      - DEBUG=0
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=production
+      # Production optimizations - use more threads for better performance
+      - OMP_NUM_THREADS=${PROD_OMP_THREADS:-8}
+      - MKL_NUM_THREADS=${PROD_MKL_THREADS:-8}
+      - NUMEXPR_NUM_THREADS=${PROD_NUMEXPR_THREADS:-8}
+      - WORKERS=${PROD_WORKERS:-4}
+      # Security settings
+      - PYTHONHASHSEED=random
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    restart: always
+    # Production security settings
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Need write access for uploads and cache
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    # Resource limits for production stability
+    deploy:
+      resources:
+        limits:
+          memory: ${BACKEND_MEMORY_LIMIT:-4G}
+          cpus: ${BACKEND_CPU_LIMIT:-2.0}
+        reservations:
+          memory: ${BACKEND_MEMORY_RESERVATION:-1G}
+          cpus: ${BACKEND_CPU_RESERVATION:-0.5}
+    # Production health check - more robust
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    # Production logging - structured and rotated
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        labels: "environment=production,service=backend,version=${APP_VERSION:-latest}"
+        tag: "{{.ImageName}}/{{.Name}}/{{.ID}}"
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${PROD_WORKERS:-4}", "--log-level", "info", "--no-access-log"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: llmwebui-frontend-prod
+    network_mode: host
+    volumes:
+      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}:ro
+      # Production logs directory
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
+    environment:
+      - FASTAPI_URL=http://localhost:8000
+      - ENVIRONMENT=production
+      - STREAMLIT_LOGGER_LEVEL=INFO
+      # Security settings
+      - STREAMLIT_SERVER_ENABLE_CORS=false
+      - STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    restart: always
+    # Production security settings
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Streamlit needs some write access
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    # Resource limits for frontend
+    deploy:
+      resources:
+        limits:
+          memory: ${FRONTEND_MEMORY_LIMIT:-1G}
+          cpus: ${FRONTEND_CPU_LIMIT:-1.0}
+        reservations:
+          memory: ${FRONTEND_MEMORY_RESERVATION:-256M}
+          cpus: ${FRONTEND_CPU_RESERVATION:-0.25}
+    # Production health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 45s
+    depends_on:
+      - backend
+    # Production logging - structured and rotated
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        labels: "environment=production,service=frontend,version=${APP_VERSION:-latest}"
+        tag: "{{.ImageName}}/{{.Name}}/{{.ID}}"

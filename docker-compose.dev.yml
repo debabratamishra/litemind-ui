@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: base
+    container_name: llmwebui-backend-dev
+    network_mode: host
+    volumes:
+      # OS-independent cache directories using environment variables
+      - ${HOST_HF_CACHE:-${HOME}/.cache/huggingface}:${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - ${HOST_OLLAMA_CACHE:-${HOME}/.ollama}:${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      # Application data persistence
+      - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
+      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}
+      # Development: mount source code for live reload
+      - .:/app
+      # Development: mount logs directory for easier debugging
+      - ./logs:/app/logs
+    environment:
+      - OLLAMA_API_URL=http://localhost:11434
+      - VLLM_API_URL=http://localhost:8001
+      - CHROMA_DB_PATH=${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - UPLOAD_FOLDER=${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - STORAGE_PATH=${CONTAINER_STORAGE_DIR:-/app/storage}
+      - HF_HOME=${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - OLLAMA_MODELS=${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      - PYTHONPATH=/app
+      # Development settings
+      - DEBUG=1
+      - RELOAD=1
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=development
+      # Development performance settings (lower for debugging)
+      - OMP_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
+    restart: unless-stopped
+    # Development logging - verbose for debugging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "environment=development,service=backend"
+    # Development health check - more frequent for faster feedback
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug", "--access-log"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: llmwebui-frontend-dev
+    network_mode: host
+    volumes:
+      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}
+      # Development: mount source code for live reload
+      - .:/app
+      # Development: mount logs directory
+      - ./logs:/app/logs
+    environment:
+      - FASTAPI_URL=http://localhost:8000
+      - STREAMLIT_SERVER_RUNONCAVE=true
+      - ENVIRONMENT=development
+      - STREAMLIT_LOGGER_LEVEL=DEBUG
+    restart: unless-stopped
+    # Development logging - verbose for debugging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "environment=development,service=frontend"
+    # Development health check - more frequent
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--server.fileWatcherType=poll", "--logger.level=debug"]
+    depends_on:
+      - backend

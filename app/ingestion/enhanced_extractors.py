@@ -1,12 +1,27 @@
 import pandas as pd
 import numpy as np
-import easyocr
-import cv2
 import io
 import logging
 from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Generator
+
+# Optional imports for enhanced features
+try:
+    import easyocr
+    EASYOCR_AVAILABLE = True
+except ImportError as e:
+    easyocr = None
+    EASYOCR_AVAILABLE = False
+    logging.warning(f"EasyOCR not available: {e}")
+
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError as e:
+    cv2 = None
+    CV2_AVAILABLE = False
+    logging.warning(f"OpenCV not available: {e}")
 
 from .enhanced_document_processor import extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced, get_document_processor
 
@@ -16,13 +31,20 @@ class EnhancedImageProcessor:
     """Enhanced image processor with OCR and content analysis."""
     
     def __init__(self):
-        try:
-            self.ocr_reader = easyocr.Reader(['en'], gpu=False)
-            self.initialized = True
-        except Exception as e:
-            logger.warning(f"OCR initialization failed: {e}. Falling back to basic processing.")
-            self.ocr_reader = None
-            self.initialized = False
+        self.ocr_reader = None
+        self.initialized = False
+        
+        if EASYOCR_AVAILABLE:
+            try:
+                self.ocr_reader = easyocr.Reader(['en'], gpu=False)
+                self.initialized = True
+                logger.info("EasyOCR initialized successfully")
+            except Exception as e:
+                logger.warning(f"OCR initialization failed: {e}. Falling back to basic processing.")
+                self.ocr_reader = None
+                self.initialized = False
+        else:
+            logger.warning("EasyOCR not available. Using basic image processing only.")
     
     def extract_image_content(self, image_bytes: bytes, metadata: dict) -> List[dict]:
         """Extract meaningful content from images using OCR and analysis."""
@@ -164,6 +186,10 @@ class EnhancedImageProcessor:
     def _detect_structured_content(self, img_array: np.ndarray, metadata: dict) -> List[dict]:
         """Detect tables, charts, or other structured content."""
         content = []
+        
+        if not CV2_AVAILABLE:
+            logger.debug("OpenCV not available, skipping structured content detection")
+            return content
         
         try:
             # Convert to grayscale for line detection
