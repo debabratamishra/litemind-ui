@@ -270,7 +270,6 @@ export UPLOAD_FOLDER="./uploads"
 📖 **For comprehensive troubleshooting guides:**
 - Docker issues: [DOCKER.md](DOCKER.md)
 - Health checks: [DOCKER_HEALTH_CHECKS.md](DOCKER_HEALTH_CHECKS.md)
-- Cache management: [CACHE_MANAGEMENT.md](CACHE_MANAGEMENT.md)
 
 ## 🤝 Contributing
 
