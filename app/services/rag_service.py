@@ -79,10 +79,30 @@ class RAGService:
     """
     def __init__(self):
         """Initialize storage, embedding models, collections, and in-memory indexes."""
-        if os.path.exists(Config.CHROMA_DB_PATH):
-            shutil.rmtree(Config.CHROMA_DB_PATH)
+        # Get the appropriate ChromaDB path based on environment
+        self.chroma_db_path = self._get_chroma_db_path()
+        
+        # In containerized environments, we can't remove mounted volumes
+        # Instead, clean the contents if the directory exists
+        if os.path.exists(self.chroma_db_path):
+            try:
+                shutil.rmtree(self.chroma_db_path)
+            except OSError as e:
+                # If we can't remove the directory (e.g., mounted volume),
+                # try to clean its contents instead
+                logger.warning(f"Could not remove ChromaDB directory {self.chroma_db_path}: {e}")
+                try:
+                    for item in os.listdir(self.chroma_db_path):
+                        item_path = os.path.join(self.chroma_db_path, item)
+                        if os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                        else:
+                            os.remove(item_path)
+                    logger.info(f"Cleaned contents of ChromaDB directory: {self.chroma_db_path}")
+                except Exception as clean_error:
+                    logger.warning(f"Could not clean ChromaDB directory contents: {clean_error}")
 
-        self.client = chromadb.PersistentClient(path=Config.CHROMA_DB_PATH, settings=Settings(anonymized_telemetry=False))
+        self.client = chromadb.PersistentClient(path=self.chroma_db_path, settings=Settings(anonymized_telemetry=False))
 
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
@@ -107,8 +127,54 @@ class RAGService:
 
         self.stop_words = set(stopwords.words('english'))
 
-        self.image_cache_dir = Path("./uploads/imgcache")
+        # Initialize image cache directory using environment-aware path
+        upload_dir = self._get_upload_directory()
+        self.image_cache_dir = Path(upload_dir) / "imgcache"
         self.image_cache_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Image cache directory initialized at: {self.image_cache_dir}")
+    
+    def _get_chroma_db_path(self) -> str:
+        """Get the appropriate ChromaDB path based on execution environment."""
+        try:
+            from app.services.host_service_manager import host_service_manager
+            path = str(host_service_manager.environment_config.chroma_db_dir)
+            logger.debug(f"Using ChromaDB path from host service manager: {path}")
+            return path
+        except ImportError:
+            logger.warning("Host service manager not available, using fallback config")
+            # Fallback to config-based detection
+            from config import Config
+            path = Config.get_chroma_db_path()
+            logger.debug(f"Using fallback ChromaDB path: {path}")
+            return path
+    
+    def _get_upload_directory(self) -> str:
+        """Get the appropriate upload directory based on execution environment."""
+        try:
+            from app.services.host_service_manager import host_service_manager
+            path = str(host_service_manager.environment_config.upload_dir)
+            logger.debug(f"Using upload directory from host service manager: {path}")
+            return path
+        except ImportError:
+            logger.warning("Host service manager not available, using fallback config")
+            # Fallback to config-based detection
+            from config import Config
+            path = Config.get_upload_folder()
+            logger.debug(f"Using fallback upload directory: {path}")
+            return path
+    
+    def _get_ollama_url(self) -> str:
+        """Get the appropriate Ollama URL based on execution environment."""
+        try:
+            from app.services.host_service_manager import host_service_manager
+            url = host_service_manager.environment_config.ollama_url
+            logger.debug(f"Using Ollama URL from host service manager: {url}")
+            return url
+        except ImportError:
+            logger.warning("Host service manager not available, using fallback config")
+            url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+            logger.debug(f"Using fallback Ollama URL: {url}")
+            return url
     
     def _calculate_file_hash(self, file_path: str) -> str:
         """Calculate SHA-256 hash of a file for duplicate detection."""
@@ -727,7 +793,7 @@ class CrewAIRAGOrchestrator:
         self.ollama_llm = LLM(
             provider="ollama",
             model=model_name,
-            api_base=os.getenv("OLLAMA_API_BASE", "http://localhost:11434"),
+            api_base=self._get_ollama_url(),
             temperature=0.0
         )
         self.model_name = model_name
@@ -753,7 +819,7 @@ class CrewAIRAGOrchestrator:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    f"{os.getenv('OLLAMA_API_BASE', 'http://localhost:11434')}/api/show",
+                    f"{self._get_ollama_url()}/api/show",
                     json={"name": model}
                 )
                 resp.raise_for_status()

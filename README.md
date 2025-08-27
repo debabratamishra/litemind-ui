@@ -1,8 +1,23 @@
 # LLM WebUI
 
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-00A971.svg)](https://fastapi.tiangolo.com/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-FF4B4B.svg)](https://streamlit.io/)
+[![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?logo=docker&logoColor=white)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 A robust, production-ready web interface for Large Language Models (LLMs) featuring a hybrid architecture with FastAPI backend and Streamlit frontend. Built for developers, researchers, and AI enthusiasts who need a comprehensive platform for LLM interaction, document processing, and API integration.
 
 ![LLMWebUI Demo](llmwebui_demo.gif)
+
+## 🏷️ Features
+
+![Ollama](https://img.shields.io/badge/Ollama-Local%20LLMs-8A2BE2)
+![vLLM](https://img.shields.io/badge/vLLM-HuggingFace-FF6B35)
+![RAG](https://img.shields.io/badge/RAG-Document%20Q&A-32CD32)
+![API](https://img.shields.io/badge/API-REST%20%2B%20Streaming-007ACC)
+![Multi-format](https://img.shields.io/badge/Documents-PDF%20%7C%20DOCX%20%7C%20TXT-FFA500)
 
 ## 🚀 Architecture
 
@@ -20,9 +35,10 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 ### 🔧 **Core Capabilities**
 
 - ⚡ **High-Performance API** - Async FastAPI backend for scalable LLM processing
-- 🧠 **Multi-Model Support** - Dynamic model detection from Ollama backend handled via `ollama.py`
-- 📚 **RAG Integration** - Upload documents (PDFs, DOCX, TXT) using enhanced extraction and preprocessing modules (`enhanced_extractors.py`, `enhanced_document_processor.py`) and query with context-aware responses
+- 🧠 **Dual Backend Support** - Seamlessly switch between Ollama (local) and vLLM (Hugging Face) backends
+- 📚 **RAG Integration** - Upload documents (PDFs, DOCX, TXT) with enhanced extraction and query with context-aware responses
 - 🔄 **Auto-Failover** - Intelligent backend detection with graceful fallbacks
+- 🤖 **Multi-Model Support** - Access to popular models through vLLM or local Ollama models
 
 ### 🛠 **Developer Experience**
 
@@ -42,13 +58,67 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 
 ## 📋 Prerequisites
 
-- Python 3.12+ (Should support earlier versions of Python, but it has been developed and tested with this version onwards)
+**For Ollama Backend:**
+- Python 3.12+ (Should support earlier versions, but tested with 3.12+)
 - Ollama - Running locally on `localhost:11434`
 - UV Package Manager - For dependency management
+
+**For vLLM Backend (Optional):**
+- Hugging Face account and access token
+- Compatible GPU (recommended for better performance)
+- FastAPI backend running (automatically configured)
 
 ---
 
 ## 🛠 Installation
+
+### Option 1: Docker Deployment (Recommended)
+
+**Quick Start with Docker:**
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/debabratamishra/llm-webui
+cd llm-webui
+```
+
+2. **Setup Docker environment**
+```bash
+make setup
+# or manually: ./scripts/docker-setup.sh
+```
+
+3. **Start the application**
+```bash
+make up
+# or: docker-compose up -d
+```
+
+4. **Access the application**
+- Frontend (Streamlit): http://localhost:8501
+- Backend API: http://localhost:8000
+- API Documentation: http://localhost:8000/docs
+
+**Prerequisites for Docker:**
+- Docker and Docker Compose installed
+- Ollama running on host system (`localhost:11434`)
+- At least 4GB RAM (8GB+ recommended)
+
+**Volume Mounts & Host Integration:**
+- Automatically mounts HuggingFace cache (`~/.cache/huggingface`)
+- Mounts Ollama cache (`~/.ollama`) for model persistence
+- Preserves uploaded documents and vector database
+- Manages vLLM processes on host system
+
+📖 **For detailed Docker setup, troubleshooting, and advanced configuration, see [DOCKER.md](DOCKER.md).**
+
+**Common Docker Issues:**
+- Ollama connection problems → Check if Ollama is running on `localhost:11434`
+- Permission errors → Run `chmod 755 ~/.cache/huggingface ~/.ollama`
+- Port conflicts → Use `lsof -i :8000 :8501` to check port usage
+- Build failures → Run `make clean && make setup && make up`
+
+### Option 2: Native Installation
 
 1. **Clone the repository**
 
@@ -71,81 +141,44 @@ mkdir -p uploads .streamlit
 
 - The `UPLOAD_FOLDER` can be customized via environment variables.
 
-## 🚀 Quick Start
-
-### 1. Start the FastAPI Backend
-
-```bash
-python main.py
-```
-
-- The main API routes are registered in `main.py`.
-
-**Expected Output:**
-
-```bash
-INFO:     Started server process [90666]
-INFO:     Waiting for application startup.
-INFO:main:LLM WebUI API starting up…
-INFO:main:Upload folder: uploads
-INFO:main:Uploads folder cleared
-INFO:sentence_transformers.SentenceTransformer:Load pretrained SentenceTransformer: all-MiniLM-L6-v2
-INFO:main:RAG service ready
-INFO:main:Torch threads set: intra=7
-INFO:main:OMP/MKL threads set to 7
-INFO:main:Chat service ready
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://localhost:8000 (Press CTRL+C to quit)
-```
-
-### 2. Launch the Streamlit Frontend
-
-```bash
-streamlit run streamlit_app.py --server.address localhost --server.port 8501
-```
-
-- `streamlit_app.py` integrates backend detection logic for FastAPI.
-
-**Expected Output:**
-
-```bash
-  You can now view your Streamlit app in your browser.
-
-  Local URL: http://localhost:8501
-```
-
-### 3. Access Your Application
-
-- **🖥 Web Interface:** http://localhost:8501
-- **📖 API Documentation:** http://localhost:8000/docs
-- **🔍 Alternative Docs:** http://localhost:8000/redoc
-
 ## 🔌 API Endpoints
 
 | Endpoint | Method | Description |
 | :-- | :-- | :-- |
 | `/health` | GET | Backend health check |
 | `/models` | GET | Available Ollama models |
-| `/api/chat` | POST | Process chat messages leveraging `ollama.py` for LLM interactions |
-| `/api/chat/stream` | POST | Streaming chat responses leveraging `ollama.py` for LLM interactions |
-| `/api/rag/upload` | POST | Upload documents for RAG using `file_ingest.py` and `enhanced_document_processor.py` internally |
-| `/api/rag/query` | POST | Query uploaded documents routed through `rag_service.py` for vector search and contextual response |
+| `/api/chat` | POST | Process chat messages (supports both Ollama and vLLM backends) |
+| `/api/chat/stream` | POST | Streaming chat responses (supports both backends) |
+| `/api/rag/upload` | POST | Upload documents for RAG processing |
+| `/api/rag/query` | POST | Query uploaded documents with context-aware responses |
 | `/api/rag/documents` | GET | List uploaded documents |
+| `/api/vllm/models` | GET | Available vLLM models and configuration |
+| `/api/vllm/set-token` | POST | Configure Hugging Face access token |
 
 ## 💡 Usage Examples
 
 ### Chat Interface
 
 1. Navigate to the **Chat** tab
-2. Select your preferred model from the dropdown
-3. Enter your message and receive AI responses
+2. **Select Backend:** Choose between Ollama (local) or vLLM (Hugging Face)
+3. **Configure Models:** 
+   - For Ollama: Select from locally installed models
+   - For vLLM: Choose from popular models or enter custom model names
+4. Enter your message and receive AI responses
 
 ### Document Q\&A (RAG)
 
 1. Switch to the **RAG** tab
 2. Upload PDF, TXT, or DOCX files
-3. Query your documents with natural language
-4. Get contextually relevant answers
+3. **Choose Backend:** RAG works with both Ollama and vLLM backends
+4. Query your documents with natural language
+5. Get contextually relevant answers
+
+### Backend Switching
+
+- **Seamless Integration:** Switch between backends without losing your current page
+- **Model Persistence:** Backend-specific model selections are preserved
+- **Automatic Configuration:** UI adapts based on selected backend capabilities
 
 ### 🌐 API Integration
 
@@ -208,6 +241,36 @@ export UPLOAD_FOLDER="./uploads"
 - **Streaming Responses:** Real-time token streaming for better UX
 - **Document Processing:** Multi-format document ingestion and vectorization performed at ingestion for faster retrieval
 - **Error Handling:** Comprehensive error handling with user-friendly messages
+
+## 🔧 Troubleshooting
+
+### Quick Fixes for Common Issues
+
+**Docker Deployment Issues:**
+- **Ollama not accessible:** Ensure Ollama is running with `ollama serve`
+- **Permission errors:** Run `chmod 755 ~/.cache/huggingface ~/.ollama`
+- **Port conflicts:** Check with `lsof -i :8000 :8501` and kill conflicting processes
+- **Container build fails:** Clean with `make clean && make setup && make up`
+
+**Backend Issues:**
+- **vLLM backend not working:** Verify Hugging Face token is valid and model exists
+- **Backend switching problems:** Clear browser cache and reload the page
+- **Model loading errors:** Check model compatibility and available GPU memory
+
+**Native Installation Issues:**
+- **Module not found:** Reinstall dependencies with `uv pip install -r requirements.txt`
+- **Streamlit not starting:** Check if port 8501 is available
+- **FastAPI errors:** Verify Python 3.12+ and check logs in terminal
+
+**General Issues:**
+- **Models not loading:** Verify Ollama is running and models are pulled
+- **Upload failures:** Check `uploads` directory permissions
+- **RAG not working:** Ensure documents are uploaded and processed successfully
+
+📖 **For comprehensive troubleshooting guides:**
+- Docker issues: [DOCKER.md](DOCKER.md)
+- Health checks: [DOCKER_HEALTH_CHECKS.md](DOCKER_HEALTH_CHECKS.md)
+- Cache management: [CACHE_MANAGEMENT.md](CACHE_MANAGEMENT.md)
 
 ## 🤝 Contributing
 

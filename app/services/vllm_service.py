@@ -1,6 +1,17 @@
 """
 vLLM service for model management and inference.
 Handles Huggingface authentication, model downloading, and streaming responses.
+
+This service supports both native and containerized execution environments:
+- Native: Runs vLLM processes directly using asyncio subprocess
+- Containerized: Spawns vLLM processes on the host system using conda environments
+
+Key containerized features:
+- Automatic detection of container vs native execution
+- Host system process management using Docker volume mounts and host network
+- Conda environment activation (llm_ui) for vLLM service spawning
+- Container-aware process detection and management methods
+- OS-independent cache directory handling
 """
 
 import asyncio
@@ -11,8 +22,9 @@ import subprocess
 import tempfile
 import sys
 import shutil
+import signal
 from pathlib import Path
-from typing import Dict, List, Optional, AsyncGenerator
+from typing import Dict, List, Optional, AsyncGenerator, Union
 import httpx
 import psutil
 from huggingface_hub import login, list_models, model_info, HfApi
@@ -24,27 +36,60 @@ class VLLMService:
     """Service for managing vLLM models and inference."""
     
     def __init__(self):
-        self.api_base = "http://localhost:8001/v1"  # vLLM server port
         self.hf_token = None
         self.current_model = None
         self.server_process = None
-        self.models_cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+        self.host_process_pid = None  # Track host process PID when running in container
+        self.containerized_mode = os.path.exists('/.dockerenv')  # Detect if running in container
+        self._initialize_config()
     
-    def _check_vllm_available(self) -> Optional[str]:
-        """Return a helpful error string if vLLM is not importable; otherwise None."""
+    def _initialize_config(self):
+        """Initialize configuration based on execution environment."""
         try:
-            import vllm  # noqa: F401
-        except Exception as e:
-            return (
-                "vLLM is not installed in this Python environment. "
-                "Install it in the *same* env running this app, e.g.\n"
-                "  pip install -U vllm\n"
-                "On macOS/CPU-only you may need a CPU torch build:\n"
-                "  pip install -U vllm --extra-index-url https://download.pytorch.org/whl/cpu\n"
-                f"Import error: {e}"
+            from app.services.host_service_manager import host_service_manager
+            self.host_service_manager = host_service_manager
+            config = host_service_manager.environment_config
+            self.is_containerized = config.is_containerized
+            self.api_base = f"{config.vllm_url}/v1"
+            self.models_cache_dir = config.hf_cache_dir / "hub"
+            logger.info(f"vLLM service configured for {'container' if config.is_containerized else 'native'} environment")
+            logger.info(f"API base: {self.api_base}, Cache dir: {self.models_cache_dir}")
+        except ImportError:
+            # Fallback configuration
+            self.is_containerized = False
+            self.host_service_manager = None
+            self.api_base = "http://localhost:8001/v1"
+            self.models_cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+            logger.warning("Host service manager not available, using default vLLM configuration")
+    
+    def _check_vllm_available(self) -> bool:
+        """Check if vLLM is available in the llm_ui environment"""
+        if self.containerized_mode:
+            # Running in Docker container - vLLM intentionally not installed
+            logger.warning("vLLM not available in containerized mode")
+            return False
+        
+        try:
+            # Test if vLLM is available in llm_ui environment
+            import subprocess
+            result = subprocess.run(
+                ["/bin/bash", "-c", "conda activate llm_ui && python -c 'import vllm; print(vllm.__version__)'"],
+                capture_output=True,
+                text=True,
+                timeout=10
             )
-        return None
-
+            
+            if result.returncode == 0 and result.stdout.strip():
+                logger.info(f"vLLM available in llm_ui environment, version: {result.stdout.strip()}")
+                return True
+            else:
+                logger.warning(f"vLLM check failed: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error checking vLLM availability: {str(e)}")
+            return False
+    
     def _on_cpu(self) -> bool:
         """Best-effort detection of CPU-only runtime."""
         try:
@@ -56,6 +101,113 @@ class VLLMService:
             # If torch isn't importable or any error occurs, assume CPU.
             return True
 
+    def _check_conda_environment(self) -> bool:
+        """Check if the vllm_service conda environment exists."""
+        try:
+            result = subprocess.run(
+                ["conda", "env", "list"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                return "vllm_service" in result.stdout
+            return False
+        except Exception as e:
+            logger.warning(f"Could not check conda environments: {e}")
+            return False
+
+    def _get_conda_activation_command(self) -> str:
+        """Get conda activation command for llm_ui environment"""
+        if self.containerized_mode:
+            return ""
+        
+        # Use llm_ui environment as requested by user
+        return "conda activate llm_ui && "
+
+    def _find_host_vllm_processes(self) -> List[int]:
+        """Find existing vLLM processes running on the host system."""
+        vllm_pids = []
+        try:
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    cmdline = proc.info['cmdline']
+                    if cmdline and any('vllm' in str(arg).lower() for arg in cmdline):
+                        # Check if it's a vLLM server process (not just any vllm import)
+                        if any('serve' in str(arg) or 'api_server' in str(arg) or '--port' in str(arg) for arg in cmdline):
+                            vllm_pids.append(proc.info['pid'])
+                            logger.info(f"Found vLLM process: PID {proc.info['pid']}, CMD: {' '.join(cmdline)}")
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+        except Exception as e:
+            logger.error(f"Error finding vLLM processes: {e}")
+        
+        return vllm_pids
+
+    def _kill_host_process(self, pid: int) -> bool:
+        """Kill a process on the host system by PID."""
+        try:
+            if self.is_containerized:
+                # When in container, we need to kill the process on the host
+                # This requires the container to have access to host processes
+                # We'll use a system call that can reach the host process
+                result = subprocess.run(
+                    ["kill", "-TERM", str(pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    logger.info(f"Successfully sent TERM signal to host process {pid}")
+                    return True
+                else:
+                    # Try SIGKILL if SIGTERM fails
+                    result = subprocess.run(
+                        ["kill", "-KILL", str(pid)],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if result.returncode == 0:
+                        logger.info(f"Successfully sent KILL signal to host process {pid}")
+                        return True
+                    else:
+                        logger.error(f"Failed to kill host process {pid}: {result.stderr}")
+                        return False
+            else:
+                # Native execution - use psutil
+                proc = psutil.Process(pid)
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                logger.info(f"Successfully killed native process {pid}")
+                return True
+        except Exception as e:
+            logger.error(f"Error killing process {pid}: {e}")
+            return False
+
+    async def _check_host_process_running(self, pid: int) -> bool:
+        """Check if a process is running on the host system."""
+        try:
+            if self.is_containerized:
+                # Check if process exists on host system
+                result = subprocess.run(
+                    ["ps", "-p", str(pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                return result.returncode == 0
+            else:
+                # Native execution - use psutil
+                return psutil.pid_exists(pid)
+        except Exception as e:
+            logger.error(f"Error checking process {pid}: {e}")
+            return False
+
     def _scrub_hf_env(self, env: Dict[str, str]) -> Dict[str, str]:
         """Remove HF auth variables so downstream libs don't send bad Authorization headers."""
         for k in ("HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN"):
@@ -64,18 +216,28 @@ class VLLMService:
 
     def _build_vllm_cmd(self, model_name: str, **kwargs) -> List[str]:
         """Build the command to start the vLLM OpenAI-compatible server.
-        Prefers the installed `vllm` CLI, falls back to `python -m`."""
+        Handles both containerized and native execution environments."""
+        
+        # Get conda activation command if needed
+        conda_cmd = self._get_conda_activation_command()
+        
+        # Build the base vLLM command
         vllm_cli = shutil.which("vllm")
         if vllm_cli:
             # Newer vLLM exposes `vllm serve <model>`
-            cmd = [vllm_cli, "serve", model_name]
+            base_cmd = [vllm_cli, "serve", model_name]
             # host/port flags are supported by `vllm serve`
-            cmd.extend(["--host", "0.0.0.0", "--port", "8001"])
-            # cmd.extend(["--enable-auto-tool-choice"])  # Enable tool/chat support
+            base_cmd.extend(["--host", "0.0.0.0", "--port", "8001"])
         else:
-            # Fallback to python -m entrypoint using the *current* interpreter
-            cmd = [sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-                   "--host", "0.0.0.0", "--port", "8001", "--model", model_name]
+            # Fallback to python -m entrypoint
+            if self.is_containerized:
+                # In container, use python from the conda environment on host
+                base_cmd = ["python", "-m", "vllm.entrypoints.openai.api_server",
+                           "--host", "0.0.0.0", "--port", "8001", "--model", model_name]
+            else:
+                # Native execution - use current interpreter
+                base_cmd = [sys.executable, "-m", "vllm.entrypoints.openai.api_server",
+                           "--host", "0.0.0.0", "--port", "8001", "--model", model_name]
 
         # Dtype: default to 'auto' to work on CPU/GPU without forcing half
         requested_dtype = kwargs.get("dtype")
@@ -86,32 +248,48 @@ class VLLMService:
             if dtype.lower() in {"half", "fp16", "float16"} and self._on_cpu():
                 logger.info("Overriding dtype 'half' to 'auto' on CPU-only runtime.")
                 dtype = "auto"
-        cmd.extend(["--dtype", dtype])
+        base_cmd.extend(["--dtype", dtype])
 
         # Optional arguments (only include if explicitly provided). On CPU, skip GPU memory utilization.
         if "max_model_len" in kwargs and kwargs["max_model_len"] is not None:
-            cmd.extend(["--max-model-len", str(kwargs["max_model_len"])])
+            base_cmd.extend(["--max-model-len", str(kwargs["max_model_len"])])
         if ("gpu_memory_utilization" in kwargs and kwargs["gpu_memory_utilization"] is not None
                 and not self._on_cpu()):
-            cmd.extend(["--gpu-memory-utilization", str(kwargs["gpu_memory_utilization"])])
+            base_cmd.extend(["--gpu-memory-utilization", str(kwargs["gpu_memory_utilization"])])
 
-        return cmd
+        # Combine conda activation with vLLM command
+        if conda_cmd:
+            # Use conda run to execute in the llm_ui environment
+            full_cmd = conda_cmd + base_cmd
+        else:
+            full_cmd = base_cmd
+
+        logger.info(f"Built vLLM command: {' '.join(full_cmd)}")
+        return full_cmd
         
-    async def _is_process_running(self, process) -> bool:
-        """Check if an asyncio subprocess is still running."""
+    async def _is_process_running(self, process: Optional[Union[asyncio.subprocess.Process, int]]) -> bool:
+        """Check if a process is still running (handles both asyncio subprocess and PID)."""
         if process is None:
             return False
+        
         try:
-            # For asyncio subprocess, check returncode
-            if hasattr(process, 'returncode') and process.returncode is not None:
-                return False
-            # If returncode is None, process is still running
-            return True
+            if isinstance(process, int):
+                # It's a PID - check if host process is running
+                return await self._check_host_process_running(process)
+            else:
+                # It's an asyncio subprocess
+                if hasattr(process, 'returncode') and process.returncode is not None:
+                    return False
+                # If returncode is None, process is still running
+                return True
         except Exception:
             # Fallback: try to check if we can get status without blocking
             try:
-                await asyncio.wait_for(process.wait(), timeout=0.001)
-                return False  # Process completed
+                if isinstance(process, int):
+                    return await self._check_host_process_running(process)
+                else:
+                    await asyncio.wait_for(process.wait(), timeout=0.001)
+                    return False  # Process completed
             except asyncio.TimeoutError:
                 return True  # Still running
             except Exception:
@@ -362,13 +540,45 @@ class VLLMService:
 
             logger.info(f"Starting vLLM server with command: {' '.join(cmd)}")
 
-            # Start server process
-            self.server_process = await asyncio.create_subprocess_exec(
-                *cmd,
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            # Start server process - handle containerized vs native execution
+            if self.is_containerized:
+                # In container: spawn process on host system using the conda environment
+                # We need to construct a command that will run on the host system
+                try:
+                    logger.info(f"Starting vLLM server on host system using conda environment 'llm_ui'")
+                    logger.info(f"Command to execute: {' '.join(cmd)}")
+                    
+                    # Start the process and let it run independently on the host
+                    # We use Popen with proper environment setup
+                    process = subprocess.Popen(
+                        cmd,
+                        env=env,
+                        stdout=subprocess.DEVNULL,  # Don't capture output to avoid blocking
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,    # Start in new session to avoid signal propagation
+                        cwd=os.path.expanduser("~")  # Set working directory to home
+                    )
+                    
+                    self.host_process_pid = process.pid
+                    self.server_process = process.pid  # Store PID for tracking
+                    
+                    logger.info(f"Started vLLM server on host system with PID: {process.pid}")
+                    
+                    # Don't wait for the process - let it run independently
+                    # The process will continue running on the host even if container restarts
+                    
+                except Exception as e:
+                    logger.error(f"Failed to start vLLM process on host: {e}")
+                    return {"status": "error", "message": f"Failed to start host process: {str(e)}"}
+            else:
+                # Native execution: use asyncio subprocess as before
+                self.server_process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    env=env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                logger.info(f"Started vLLM server natively with asyncio subprocess")
 
             # Wait a bit for server to start
             logger.info("Waiting for vLLM server to start...")
@@ -397,17 +607,38 @@ class VLLMService:
 
                 # Check if process died
                 if not await self._is_process_running(self.server_process):
-                    # Get error output
+                    # Get error output - handle both process types
                     try:
-                        stdout, stderr = await self.server_process.communicate()
-                        stderr_txt = (stderr or b"").decode(errors="ignore")
-                        stdout_txt = (stdout or b"").decode(errors="ignore")
-                        error_msg = (
-                            "vLLM server process terminated during startup.\n"
-                            f"Command: {' '.join(cmd)}\n"
-                            f"STDERR (tail):\n{stderr_txt[-4000:]}\n"
-                            f"STDOUT (tail):\n{stdout_txt[-4000:]}"
-                        )
+                        if self.is_containerized and isinstance(self.server_process, int):
+                            # For host processes, we can't easily get stdout/stderr
+                            # But we can check if there are any vLLM processes running
+                            running_vllm_pids = self._find_host_vllm_processes()
+                            if running_vllm_pids:
+                                logger.info(f"Found running vLLM processes: {running_vllm_pids}")
+                                # Update our tracked process to one of the running ones
+                                self.server_process = running_vllm_pids[0]
+                                continue  # Go back and check if server is responsive
+                            
+                            error_msg = (
+                                f"vLLM server process (PID: {self.server_process}) terminated during startup.\n"
+                                f"Command: {' '.join(cmd)}\n"
+                                "Check that:\n"
+                                "1. vLLM is installed in the 'vllm_service' conda environment on the host\n"
+                                "2. The model name is correct\n"
+                                "3. There's sufficient memory available\n"
+                                "Run this command on the host to test: conda activate vllm_service && vllm serve --help"
+                            )
+                        else:
+                            # For asyncio subprocess, get output as before
+                            stdout, stderr = await self.server_process.communicate()
+                            stderr_txt = (stderr or b"").decode(errors="ignore")
+                            stdout_txt = (stdout or b"").decode(errors="ignore")
+                            error_msg = (
+                                "vLLM server process terminated during startup.\n"
+                                f"Command: {' '.join(cmd)}\n"
+                                f"STDERR (tail):\n{stderr_txt[-4000:]}\n"
+                                f"STDOUT (tail):\n{stdout_txt[-4000:]}"
+                            )
                         logger.error(error_msg)
                         return {"status": "error", "message": error_msg}
                     except Exception as e:
@@ -426,30 +657,58 @@ class VLLMService:
             return {"status": "error", "message": str(e)}
     
     async def stop_vllm_server(self) -> Dict[str, str]:
-        """Stop the vLLM server."""
+        """Stop the vLLM server (handles both containerized and native processes)."""
         try:
             if self.server_process and await self._is_process_running(self.server_process):
                 logger.info("Terminating vLLM server...")
-                self.server_process.terminate()
                 
-                try:
-                    # Wait for graceful shutdown
-                    await asyncio.wait_for(self.server_process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    # Force kill if it doesn't shutdown gracefully
-                    logger.warning("vLLM server didn't shutdown gracefully, forcing kill...")
-                    self.server_process.kill()
-                    await self.server_process.wait()
+                if self.is_containerized and isinstance(self.server_process, int):
+                    # Handle host process termination
+                    success = self._kill_host_process(self.server_process)
+                    if success:
+                        # Wait a bit for process to terminate
+                        await asyncio.sleep(2)
+                        # Verify it's stopped
+                        if not await self._check_host_process_running(self.server_process):
+                            logger.info(f"vLLM host process {self.server_process} stopped successfully")
+                        else:
+                            logger.warning(f"vLLM host process {self.server_process} may still be running")
+                    else:
+                        logger.error(f"Failed to stop vLLM host process {self.server_process}")
+                        return {"status": "error", "message": f"Failed to stop host process {self.server_process}"}
+                else:
+                    # Handle asyncio subprocess termination
+                    self.server_process.terminate()
+                    
+                    try:
+                        # Wait for graceful shutdown
+                        await asyncio.wait_for(self.server_process.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        # Force kill if it doesn't shutdown gracefully
+                        logger.warning("vLLM server didn't shutdown gracefully, forcing kill...")
+                        self.server_process.kill()
+                        await self.server_process.wait()
                 
                 self.server_process = None
+                self.host_process_pid = None
                 self.current_model = None
                 logger.info("vLLM server stopped")
                 return {"status": "success", "message": "Server stopped"}
             else:
+                # Check for any orphaned vLLM processes and clean them up
+                if self.is_containerized:
+                    orphaned_pids = self._find_host_vllm_processes()
+                    if orphaned_pids:
+                        logger.info(f"Found orphaned vLLM processes: {orphaned_pids}")
+                        for pid in orphaned_pids:
+                            self._kill_host_process(pid)
+                        return {"status": "success", "message": f"Cleaned up {len(orphaned_pids)} orphaned processes"}
+                
                 return {"status": "info", "message": "No server running"}
         except Exception as e:
             logger.error(f"Error stopping server: {e}")
             self.server_process = None  # Reset even on error
+            self.host_process_pid = None
             self.current_model = None
             return {"status": "error", "message": str(e)}
     
@@ -461,6 +720,42 @@ class VLLMService:
                 return response.status_code == 200
         except Exception:
             return False
+
+    async def get_server_status(self) -> Dict[str, any]:
+        """Get comprehensive server status including process information."""
+        status = {
+            "is_running": False,
+            "is_responsive": False,
+            "process_info": None,
+            "host_processes": [],
+            "current_model": self.current_model,
+            "execution_mode": "containerized" if self.is_containerized else "native"
+        }
+        
+        # Check if server is responsive
+        status["is_responsive"] = await self.is_server_running()
+        
+        # Check process status
+        if self.server_process:
+            status["is_running"] = await self._is_process_running(self.server_process)
+            if self.is_containerized and isinstance(self.server_process, int):
+                status["process_info"] = {
+                    "type": "host_process",
+                    "pid": self.server_process,
+                    "running": status["is_running"]
+                }
+            else:
+                status["process_info"] = {
+                    "type": "asyncio_subprocess",
+                    "running": status["is_running"]
+                }
+        
+        # Find all vLLM processes on host (useful for debugging)
+        if self.is_containerized:
+            host_pids = self._find_host_vllm_processes()
+            status["host_processes"] = host_pids
+        
+        return status
 
     def _messages_to_prompt(self, messages: List[Dict[str, str]]) -> str:
         """Naive messages->prompt conversion for fallback to /v1/completions."""

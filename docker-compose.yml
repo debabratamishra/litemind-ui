@@ -1,0 +1,82 @@
+# macOS-Compatible Docker Compose Configuration
+# This version uses proper port mapping instead of host networking for macOS compatibility
+
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: llmwebui-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # OS-independent cache directories using environment variables
+      - ${HOST_HF_CACHE:-${HOME}/.cache/huggingface}:${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - ${HOST_OLLAMA_CACHE:-${HOME}/.ollama}:${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      # Application data persistence
+      - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
+      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
+    environment:
+      - OLLAMA_API_URL=http://host.docker.internal:11434
+      - VLLM_API_URL=http://host.docker.internal:8001
+      - CHROMA_DB_PATH=${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - UPLOAD_FOLDER=${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - STORAGE_PATH=${CONTAINER_STORAGE_DIR:-/app/storage}
+      - HF_HOME=${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - OLLAMA_MODELS=${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Performance tuning
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
+      - NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-4}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: llmwebui-frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
+    environment:
+      - FASTAPI_URL=http://backend:8000
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  default:
+    driver: bridge

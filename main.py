@@ -9,6 +9,7 @@ import signal
 import shutil
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Optional, List, Dict
 import hashlib
@@ -33,20 +34,39 @@ except Exception:
     torch = None
 
 # ---------------------------------------------------------------------------
-# Logging
+# Logging Configuration
 # ---------------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Import and setup logging configuration
+try:
+    from logging_config import setup_logging, get_logger
+    setup_logging()
+    logger = get_logger(__name__)
+except ImportError:
+    # Fallback to basic logging if logging_config is not available
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants
+# Configuration and Constants
 # ---------------------------------------------------------------------------
-UPLOAD_FOLDER = Path("./uploads")
-UPLOAD_FOLDER.mkdir(exist_ok=True)
+from config import Config
 
-# ---- Persistent RAG config & collection helpers ----
-CONFIG_PATH = Path("./storage/rag_config.json")
-CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+# Apply performance settings early
+Config.apply_performance_settings()
+
+# Get dynamic configuration
+dynamic_config = Config.get_dynamic_config()
+UPLOAD_FOLDER = Path(dynamic_config["upload_dir"])
+
+# Handle storage directory - use fallback if not provided by host service manager
+storage_dir = dynamic_config.get("storage_dir")
+if not storage_dir:
+    # Fallback to Config class method
+    storage_dir = Config.get_storage_path()
+CONFIG_PATH = Path(storage_dir) / "rag_config.json"
+
+# Ensure directories exist
+Config.ensure_directories()
 
 DEFAULT_RAG_CONFIG: Dict[str, object] = {
     "provider": "huggingface",
@@ -74,14 +94,34 @@ rag_service = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager to handle startup and shutdown."""
+    # Record startup time for health checks
+    app.state.start_time = time.time()
     logger.info("LLM WebUI API starting up…")
+    
+    # Log configuration info
+    config_info = Config.get_dynamic_config()
+    logger.info("Environment: %s", "containerized" if config_info["is_containerized"] else "native")
     logger.info("Upload folder: %s", UPLOAD_FOLDER)
+    logger.info("ChromaDB path: %s", config_info["chroma_db_dir"])
+    logger.info("Storage path: %s", config_info["storage_dir"])
+
+    # Validate configuration
+    validation = Config.validate_configuration()
+    if not validation["valid"]:
+        logger.error("Configuration validation failed: %s", validation["errors"])
+        for error in validation["errors"]:
+            logger.error("  - %s", error)
+    for warning in validation["warnings"]:
+        logger.warning("  - %s", warning)
 
     # Purge uploads at startup (fresh state on every restart)
     try:
         if UPLOAD_FOLDER.exists():
             shutil.rmtree(UPLOAD_FOLDER, ignore_errors=True)
         UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+        # Set proper permissions for container environment
+        if config_info["is_containerized"]:
+            os.chmod(UPLOAD_FOLDER, 0o755)
         logger.info("Uploads folder cleared at startup")
     except Exception as e:
         logger.warning("Failed to clear uploads at startup: %s", e)
@@ -101,7 +141,7 @@ async def lifespan(app: FastAPI):
         if provider == "ollama":
             rag_service.embedding_function = OllamaEmbeddingFunction(
                 model_name=model_name,
-                url="http://localhost:11434/api/embeddings",
+                url=f"{config_info['ollama_url']}/api/embeddings",
             )
         else:
             rag_service.embedding_function = LocalHFEmbeddingFunction(
@@ -211,12 +251,6 @@ class RAGQueryRequestEnhanced(BaseModel):
     backend: Optional[str] = "ollama"  # "ollama" or "vllm"
     hf_token: Optional[str] = None
 
-# class ChatRequest(BaseModel):
-#     message: str
-#     model: Optional[str] = "default"
-#     temperature: Optional[float] = 0.7
-
-
 class ChatResponse(BaseModel):
     response: str
     model: str
@@ -236,12 +270,353 @@ async def health_check():
     return {"status": "healthy", "service": "LLM WebUI API"}
 
 
+@app.get("/health/ready")
+async def readiness_check():
+    """
+    Container readiness check endpoint.
+    
+    This endpoint performs comprehensive checks to determine if the container
+    is ready to serve requests. It validates:
+    - RAG service initialization
+    - Host service connectivity
+    - Volume mount accessibility
+    - Critical configuration
+    """
+    try:
+        readiness_status = {
+            "status": "ready",
+            "timestamp": time.time(),
+            "checks": {}
+        }
+        
+        # Check RAG service
+        if rag_service is None:
+            readiness_status["checks"]["rag_service"] = {
+                "status": "failed",
+                "error": "RAG service not initialized"
+            }
+            readiness_status["status"] = "not_ready"
+        else:
+            readiness_status["checks"]["rag_service"] = {
+                "status": "ready",
+                "details": "RAG service initialized"
+            }
+        
+        # Check critical directories using environment-aware paths
+        try:
+            from app.services.host_service_manager import host_service_manager
+            chroma_path = host_service_manager.environment_config.chroma_db_dir
+        except ImportError:
+            chroma_path = Path(Config.get_chroma_db_path())
+        
+        critical_dirs = [UPLOAD_FOLDER, chroma_path]
+        dir_checks = {}
+        
+        for dir_path in critical_dirs:
+            dir_name = dir_path.name
+            if dir_path.exists() and os.access(dir_path, os.R_OK | os.W_OK):
+                dir_checks[dir_name] = {"status": "ready", "path": str(dir_path)}
+            else:
+                dir_checks[dir_name] = {
+                    "status": "failed", 
+                    "path": str(dir_path),
+                    "error": "Directory not accessible"
+                }
+                readiness_status["status"] = "not_ready"
+        
+        readiness_status["checks"]["directories"] = dir_checks
+        
+        # Check host services (non-blocking)
+        try:
+            from app.services.host_service_manager import host_service_manager
+            
+            # Quick service check with short timeout
+            ollama_status = await host_service_manager.validate_service_connectivity(
+                "Ollama", host_service_manager.environment_config.ollama_url, timeout=2.0
+            )
+            
+            readiness_status["checks"]["ollama"] = {
+                "status": "ready" if ollama_status.is_available else "degraded",
+                "url": ollama_status.url,
+                "response_time_ms": ollama_status.response_time_ms,
+                "error": ollama_status.error_message
+            }
+            
+            # vLLM is optional, so don't fail readiness if it's unavailable
+            vllm_status = await host_service_manager.validate_service_connectivity(
+                "vLLM", host_service_manager.environment_config.vllm_url, timeout=2.0
+            )
+            
+            readiness_status["checks"]["vllm"] = {
+                "status": "ready" if vllm_status.is_available else "unavailable",
+                "url": vllm_status.url,
+                "response_time_ms": vllm_status.response_time_ms,
+                "error": vllm_status.error_message,
+                "optional": True
+            }
+            
+        except ImportError:
+            readiness_status["checks"]["host_services"] = {
+                "status": "unavailable",
+                "error": "Host service manager not available"
+            }
+        
+        # Return appropriate HTTP status
+        if readiness_status["status"] == "ready":
+            return readiness_status
+        else:
+            return JSONResponse(
+                status_code=503,
+                content=readiness_status
+            )
+            
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "timestamp": time.time(),
+                "error": str(e)
+            }
+        )
+
+
+@app.get("/health/live")
+async def liveness_check():
+    """
+    Container liveness check endpoint.
+    
+    This endpoint performs basic checks to determine if the container
+    is alive and should not be restarted. It only checks critical
+    application components that indicate the process is functioning.
+    """
+    try:
+        # Basic application health indicators
+        liveness_status = {
+            "status": "alive",
+            "timestamp": time.time(),
+            "process_id": os.getpid(),
+            "checks": {}
+        }
+        
+        # Check if FastAPI app is responsive
+        liveness_status["checks"]["fastapi"] = {
+            "status": "alive",
+            "details": "FastAPI application responding"
+        }
+        
+        # Check if we can access the file system
+        try:
+            temp_file = Path("/tmp/liveness_check")
+            temp_file.write_text("test")
+            temp_file.unlink()
+            liveness_status["checks"]["filesystem"] = {
+                "status": "alive",
+                "details": "Filesystem accessible"
+            }
+        except Exception as e:
+            liveness_status["checks"]["filesystem"] = {
+                "status": "failed",
+                "error": str(e)
+            }
+            liveness_status["status"] = "unhealthy"
+        
+        # Check memory usage (basic check)
+        try:
+            import psutil
+            memory_percent = psutil.virtual_memory().percent
+            liveness_status["checks"]["memory"] = {
+                "status": "alive" if memory_percent < 95 else "critical",
+                "usage_percent": memory_percent
+            }
+            if memory_percent >= 95:
+                liveness_status["status"] = "critical"
+        except ImportError:
+            # psutil not available, skip memory check
+            pass
+        
+        # Return appropriate status
+        if liveness_status["status"] in ["alive", "critical"]:
+            return liveness_status
+        else:
+            return JSONResponse(
+                status_code=503,
+                content=liveness_status
+            )
+            
+    except Exception as e:
+        logger.error(f"Liveness check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "dead",
+                "timestamp": time.time(),
+                "error": str(e)
+            }
+        )
+
+
+@app.get("/health/startup")
+async def startup_check():
+    """
+    Container startup check endpoint.
+    
+    This endpoint indicates when the container has completed its startup
+    sequence and is ready to begin serving traffic. It's more comprehensive
+    than readiness but less frequent than liveness checks.
+    """
+    try:
+        startup_status = {
+            "status": "started",
+            "timestamp": time.time(),
+            "startup_time": time.time() - app.state.start_time if hasattr(app.state, 'start_time') else None,
+            "checks": {}
+        }
+        
+        # Check if all services are initialized
+        services_ready = True
+        
+        # RAG service check
+        if rag_service is None:
+            startup_status["checks"]["rag_service"] = {
+                "status": "initializing",
+                "error": "RAG service not yet initialized"
+            }
+            services_ready = False
+        else:
+            startup_status["checks"]["rag_service"] = {
+                "status": "started",
+                "details": "RAG service initialized and ready"
+            }
+        
+        # Configuration validation
+        try:
+            config_validation = Config.validate_configuration()
+            if config_validation["valid"]:
+                startup_status["checks"]["configuration"] = {
+                    "status": "started",
+                    "details": "Configuration validated successfully"
+                }
+            else:
+                startup_status["checks"]["configuration"] = {
+                    "status": "failed",
+                    "errors": config_validation["errors"],
+                    "warnings": config_validation["warnings"]
+                }
+                services_ready = False
+        except Exception as e:
+            startup_status["checks"]["configuration"] = {
+                "status": "failed",
+                "error": str(e)
+            }
+            services_ready = False
+        
+        # Directory initialization check
+        try:
+            directory_status = Config.ensure_directories()
+            failed_dirs = [name for name, success in directory_status.items() if not success]
+            
+            if not failed_dirs:
+                startup_status["checks"]["directories"] = {
+                    "status": "started",
+                    "details": "All directories created successfully"
+                }
+            else:
+                startup_status["checks"]["directories"] = {
+                    "status": "failed",
+                    "failed_directories": failed_dirs
+                }
+                services_ready = False
+        except Exception as e:
+            startup_status["checks"]["directories"] = {
+                "status": "failed",
+                "error": str(e)
+            }
+            services_ready = False
+        
+        # Overall startup status
+        if services_ready:
+            startup_status["status"] = "started"
+            return startup_status
+        else:
+            startup_status["status"] = "starting"
+            return JSONResponse(
+                status_code=503,
+                content=startup_status
+            )
+            
+    except Exception as e:
+        logger.error(f"Startup check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "failed",
+                "timestamp": time.time(),
+                "error": str(e)
+            }
+        )
+
+
+@app.get("/api/system/status")
+async def get_system_status():
+    """Get comprehensive system status including environment and service information."""
+    try:
+        from app.services.host_service_manager import host_service_manager
+        return await host_service_manager.get_system_status()
+    except ImportError:
+        return {
+            "error": "Host service manager not available",
+            "environment": {"is_containerized": False}
+        }
+
+
+@app.get("/api/system/services")
+async def validate_host_services():
+    """Validate connectivity to all required host services."""
+    try:
+        from app.services.host_service_manager import host_service_manager
+        services = await host_service_manager.validate_all_required_services()
+        return {
+            "services": {
+                name: {
+                    "available": status.is_available,
+                    "url": status.url,
+                    "error": status.error_message,
+                    "response_time_ms": status.response_time_ms
+                }
+                for name, status in services.items()
+            }
+        }
+    except ImportError:
+        return {"error": "Host service manager not available"}
+
+
+@app.get("/api/system/config")
+async def get_dynamic_config():
+    """Get dynamic configuration based on execution environment."""
+    try:
+        from app.services.host_service_manager import host_service_manager
+        return host_service_manager.get_dynamic_config()
+    except ImportError:
+        from config import Config
+        return Config.get_dynamic_config()
+
+
 @app.get("/models")
 async def get_available_models():
     """Return available Ollama model names from the local backend."""
     try:
+        # Get dynamic Ollama URL
+        try:
+            from app.services.host_service_manager import host_service_manager
+            ollama_url = host_service_manager.environment_config.ollama_url
+        except ImportError:
+            from config import Config
+            ollama_url = Config.OLLAMA_API_URL
+        
         async with httpx.AsyncClient() as client:
-            resp = await client.get("http://localhost:11434/api/tags")
+            resp = await client.get(f"{ollama_url}/api/tags")
             resp.raise_for_status()
             data = resp.json()
             model_names = [model["name"] for model in data.get("models", [])]
@@ -299,9 +674,11 @@ async def save_rag_config(request: RAGConfigRequest):
 
         # Apply embedding function without wiping existing vectors
         if request.provider.lower() == "ollama":
+            # Get current dynamic config for Ollama URL
+            current_config = Config.get_dynamic_config()
             rag_service.embedding_function = OllamaEmbeddingFunction(
                 model_name=request.embedding_model,
-                url="http://localhost:11434/api/embeddings",
+                url=f"{current_config['ollama_url']}/api/embeddings",
             )
         elif request.provider.lower() == "huggingface":
             rag_service.embedding_function = LocalHFEmbeddingFunction(
@@ -403,14 +780,17 @@ async def set_embedding(request: dict):
         try:
             if provider.lower() == "ollama":
                 yield "Checking for Ollama model...\n"
+                # Get current dynamic config for Ollama URL
+                current_config = Config.get_dynamic_config()
+                ollama_url = current_config['ollama_url']
                 async with httpx.AsyncClient() as client:
-                    tags = await client.get("http://localhost:11434/api/tags")
+                    tags = await client.get(f"{ollama_url}/api/tags")
                     tags.raise_for_status()
                     models = [m["name"] for m in tags.json().get("models", [])]
 
                     if model_name not in models:
                         yield f"Model not found. Pulling '{model_name}' from Ollama...\n"
-                        pull_url = "http://localhost:11434/api/pull"
+                        pull_url = f"{ollama_url}/api/pull"
                         async with client.stream("POST", pull_url, json={"name": model_name, "stream": True}) as resp:
                             async for line in resp.aiter_lines():
                                 if not line:
@@ -426,7 +806,7 @@ async def set_embedding(request: dict):
                         yield "Ollama model already available.\n"
 
                 rag_service.embedding_function = OllamaEmbeddingFunction(
-                    url="http://localhost:11434/api/embeddings",
+                    url=f"{ollama_url}/api/embeddings",
                     model_name=model_name,
                 )
                 yield "Ollama embedding function set.\n"
@@ -850,56 +1230,6 @@ async def chat_stream_enhanced(request: ChatRequestEnhanced):
             yield f"Error: {str(e)}\n"
 
     return StreamingResponse(event_generator(), media_type="text/plain")
-
-# Update RAG endpoint to support both backends  
-# @app.post("/api/rag/query")
-# async def rag_query_enhanced(request: RAGQueryRequestEnhanced):
-#     """Query RAG system with selected backend."""
-#     try:
-#         if request.backend == "vllm":
-#             if request.hf_token:
-#                 vllm_service.set_hf_token(request.hf_token)
-            
-#             # Get context from RAG service
-#             if request.use_hybrid_search and rag_service.bm25_model:
-#                 documents = rag_service.hybrid_search(request.query, request.n_results)
-#                 context = " ".join(documents)
-#             else:
-#                 results = rag_service.text_collection.query(query_texts=[request.query], n_results=request.n_results)
-#                 context = " ".join(results['documents'][0]) if results.get('documents') else ""
-            
-#             # Create messages for vLLM
-#             messages = request.messages + [
-#                 {"role": "system", "content": request.system_prompt},
-#                 {"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"}
-#             ]
-            
-#             # Stream response
-#             async def event_generator():
-#                 async for chunk in vllm_service.stream_vllm_chat(
-#                     messages,
-#                     model=request.model
-#                 ):
-#                     yield chunk + "\n"
-            
-#             return StreamingResponse(event_generator(), media_type="text/plain")
-#         else:
-#             # Use existing Ollama RAG logic
-#             async def event_generator():
-#                 async for chunk in rag_service.query(
-#                     request.query,
-#                     request.system_prompt,
-#                     request.messages,
-#                     request.n_results,
-#                     request.use_hybrid_search,
-#                     request.model
-#                 ):
-#                     yield chunk + "\n"
-            
-#             return StreamingResponse(event_generator(), media_type="text/plain")
-            
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
 
 # Update RAG endpoint to support vLLM
 @app.post("/api/rag/query")

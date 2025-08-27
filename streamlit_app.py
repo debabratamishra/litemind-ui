@@ -25,10 +25,13 @@ from app.services.ollama import stream_ollama
 # Configuration
 # ---------------------------------------------------------------------------
 
-FASTAPI_URL: str = "http://localhost:8000"
-FASTAPI_TIMEOUT: int = 120  # seconds
-CONNECT_TIMEOUT: int = 5   # seconds
-READ_TIMEOUT: int = 600    # seconds
+import os
+
+# Get FastAPI URL from environment variable or use default
+FASTAPI_URL: str = os.getenv("FASTAPI_URL", "http://localhost:8000")
+FASTAPI_TIMEOUT: int = 120
+CONNECT_TIMEOUT: int = 5
+READ_TIMEOUT: int = 600
 
 
 logging.basicConfig(level=logging.INFO)
@@ -1317,7 +1320,17 @@ else:
 
 st.sidebar.markdown("---")
 
-page = st.sidebar.selectbox("Navigate to:", ["💬 Chat", "📚 RAG"], index=0)
+# Initialize page selection in session state to preserve state during rerun
+if "selected_page" not in st.session_state:
+    st.session_state.selected_page = "💬 Chat"
+
+page = st.sidebar.selectbox("Navigate to:", ["💬 Chat", "📚 RAG"], 
+                           index=0 if st.session_state.selected_page == "💬 Chat" else 1,
+                           key="page_selector")
+
+# Update session state when page selection changes
+if page != st.session_state.selected_page:
+    st.session_state.selected_page = page
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔧 System Status")
@@ -1679,36 +1692,6 @@ elif page == "📚 RAG":
                             st.rerun()
                         else:
                             st.error("❌ Enhanced processing failed. See details above.")
-
-        # File Management Section (preserved)
-        st.subheader("📂 File Management")
-        
-        processed_files_info = get_processed_files()
-        if processed_files_info and processed_files_info.get("total_files", 0) > 0:
-            st.write(f"**Total Files**: {processed_files_info['total_files']} | **Total Chunks**: {processed_files_info['total_chunks']}")
-            
-            with st.expander("📋 View Processed Files", expanded=False):
-                for file_info in processed_files_info.get("files", []):
-                    col1, col2, col3 = st.columns([3, 2, 1])
-                    
-                    with col1:
-                        st.write(f"**{file_info['filename']}**")
-                        st.caption(f"Processed: {file_info['processed_at']}")
-                    
-                    with col2:
-                        st.write(f"📊 {file_info['chunk_count']} chunks")
-                    
-                    with col3:
-                        if st.button("🗑️", key=f"remove_{file_info['filename']}", help=f"Remove {file_info['filename']}"):
-                            with st.spinner(f"Removing {file_info['filename']}..."):
-                                success, message = remove_processed_file(file_info['filename'])
-                                if success:
-                                    st.success(f"✅ {message}")
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ {message}")
-        else:
-            st.info("📭 No files have been processed yet.")
 
         st.subheader("⚙️ System Configuration")
         system_prompt = st.text_area(

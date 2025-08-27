@@ -4,21 +4,41 @@ Notes
 -----
 * The function yields partial text chunks so callers can stream to clients.
 * Retries with exponential backoff on transient network errors.
+* Supports dynamic configuration for container vs native execution.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import re
+import logging
 
 import httpx
 
 from config import Config
 
+logger = logging.getLogger(__name__)
+
 
 _OLLAMA_TIMEOUT = httpx.Timeout(connect=5.0, read=600.0, write=60.0, pool=None)
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = 2.0  # seconds
+
+
+def get_ollama_url():
+    """Get the appropriate Ollama URL based on execution environment."""
+    try:
+        from app.services.host_service_manager import host_service_manager
+        url = host_service_manager.environment_config.ollama_url
+        logger.debug(f"Using Ollama URL from host service manager: {url}")
+        return url
+    except ImportError:
+        logger.warning("Host service manager not available, using fallback config")
+        # Fallback to config-based detection
+        from config import Config
+        url = Config.OLLAMA_API_URL
+        logger.debug(f"Using fallback Ollama URL: {url}")
+        return url
 
 
 async def stream_ollama(messages, model: str = "gemma3n:e2b", temperature: float = 0.7):
@@ -38,7 +58,9 @@ async def stream_ollama(messages, model: str = "gemma3n:e2b", temperature: float
     str
         Partial text chunks suitable for streaming to a client.
     """
-    url = f"{Config.OLLAMA_API_URL}/api/chat"
+    ollama_url = get_ollama_url()
+    url = f"{ollama_url}/api/chat"
+    logger.info(f"Using Ollama URL: {ollama_url}")
     payload = {
         "model": model,
         "messages": messages,
