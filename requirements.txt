@@ -25,3 +25,8 @@ pandas
 psutil
 nltk
 streamlit
+streamlit-audiorecorder
+transformers
+torch
+librosa
+soundfile

@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService, CrewAIRAGOrchestrator
+from app.services.speech_service import get_speech_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from sentence_transformers import SentenceTransformer
 from app.services.vllm_service import vllm_service
@@ -259,6 +260,11 @@ class RAGConfigRequest(BaseModel):
     provider: str
     embedding_model: str
     chunk_size: int
+
+class STTRequest(BaseModel):
+    """Request model for speech-to-text transcription."""
+    audio_data: str  # Base64 encoded audio data
+    sample_rate: Optional[int] = 16000
 
 
 # ---------------------------------------------------------------------------
@@ -1085,6 +1091,94 @@ async def processing_capabilities():
             "capabilities": {"enhanced_csv": False, "ocr_available": False, "memory_optimized": True},
         }
     
+
+# ---------------------------------------------------------------------------
+# Speech-to-Text routes
+# ---------------------------------------------------------------------------
+
+@app.post("/api/stt/transcribe")
+async def transcribe_audio_endpoint(request: STTRequest):
+    """Transcribe audio data to text using the speech service."""
+    try:
+        import base64
+        
+        # Decode base64 audio data
+        audio_bytes = base64.b64decode(request.audio_data)
+        
+        # Get speech service and transcribe
+        speech_service = get_speech_service()
+        transcribed_text = speech_service.transcribe_audio(audio_bytes, request.sample_rate)
+        
+        if transcribed_text:
+            return {
+                "status": "success",
+                "transcription": transcribed_text,
+                "length": len(transcribed_text)
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Failed to transcribe audio",
+                "transcription": ""
+            }
+    except Exception as e:
+        logger.error(f"STT transcription error: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+@app.post("/api/stt/transcribe-file")
+async def transcribe_file_endpoint(file: UploadFile = File(...)):
+    """Transcribe an uploaded audio file to text."""
+    try:
+        # Save uploaded file temporarily
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+            tmp_file.write(await file.read())
+            tmp_file_path = tmp_file.name
+        
+        try:
+            # Get speech service and transcribe
+            speech_service = get_speech_service()
+            transcribed_text = speech_service.transcribe_file(tmp_file_path)
+            
+            if transcribed_text:
+                return {
+                    "status": "success",
+                    "transcription": transcribed_text,
+                    "filename": file.filename,
+                    "length": len(transcribed_text)
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "Failed to transcribe audio file",
+                    "transcription": ""
+                }
+        finally:
+            # Clean up temporary file
+            import os
+            os.unlink(tmp_file_path)
+            
+    except Exception as e:
+        logger.error(f"STT file transcription error: {e}")
+        raise HTTPException(status_code=500, detail=f"File transcription failed: {str(e)}")
+
+@app.get("/api/stt/status")
+async def get_stt_status():
+    """Get STT service status and model information."""
+    try:
+        speech_service = get_speech_service()
+        return {
+            "status": "ready",
+            "model_name": speech_service.model_name,
+            "device": "cuda" if hasattr(speech_service.pipe, 'device') and 'cuda' in str(speech_service.pipe.device) else "cpu"
+        }
+    except Exception as e:
+        logger.error(f"STT status check error: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
 
 # --------------------------------------------------------------------------- 
 # vLLM routes

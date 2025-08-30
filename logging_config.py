@@ -11,6 +11,58 @@ from pathlib import Path
 from typing import Dict, Any
 
 
+def _detect_container_environment() -> bool:
+    """
+    Detect if the application is running inside a container.
+    
+    Uses multiple detection methods for reliability:
+    1. Check for /.dockerenv file (Docker-specific)
+    2. Check cgroup information
+    3. Check environment variables
+    4. Check for container-specific mount points
+    
+    Returns:
+        bool: True if running in a container, False otherwise
+    """
+    # Method 1: Check for Docker-specific file
+    if Path("/.dockerenv").exists():
+        return True
+    
+    # Method 2: Check cgroup information
+    try:
+        with open("/proc/1/cgroup", "r") as f:
+            cgroup_content = f.read()
+            if "docker" in cgroup_content or "containerd" in cgroup_content:
+                return True
+    except (FileNotFoundError, PermissionError):
+        # /proc/1/cgroup might not exist on non-Linux systems
+        pass
+    
+    # Method 3: Check environment variables
+    container_env_vars = [
+        "DOCKER_CONTAINER",
+        "KUBERNETES_SERVICE_HOST",
+        "CONTAINER_NAME"
+    ]
+    
+    for env_var in container_env_vars:
+        if os.getenv(env_var):
+            return True
+    
+    # Method 4: Check for container-specific mount points (Linux)
+    import platform
+    if platform.system() == "Linux":
+        try:
+            with open("/proc/mounts", "r") as f:
+                mounts = f.read()
+                if "overlay" in mounts or "aufs" in mounts:
+                    return True
+        except (FileNotFoundError, PermissionError):
+            pass
+    
+    return False
+
+
 def get_logging_config(environment: str = None) -> Dict[str, Any]:
     """
     Get logging configuration based on environment.
@@ -24,8 +76,16 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
     if environment is None:
         environment = os.getenv('ENVIRONMENT', 'development')
     
+    # Detect execution environment
+    is_containerized = _detect_container_environment()
+    
+    # Set logs directory based on environment
+    if is_containerized:
+        logs_dir = Path('/app/logs')
+    else:
+        logs_dir = Path('./logs')
+    
     # Ensure logs directory exists
-    logs_dir = Path('/app/logs')
     logs_dir.mkdir(exist_ok=True)
     
     # Base configuration
@@ -84,7 +144,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'DEBUG',
                 'formatter': 'detailed',
-                'filename': '/app/logs/debug.log',
+                'filename': str(logs_dir / 'debug.log'),
                 'maxBytes': 50 * 1024 * 1024,  # 50MB
                 'backupCount': 5,
                 'encoding': 'utf-8'
@@ -93,7 +153,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'ERROR',
                 'formatter': 'detailed',
-                'filename': '/app/logs/error.log',
+                'filename': str(logs_dir / 'error.log'),
                 'maxBytes': 10 * 1024 * 1024,  # 10MB
                 'backupCount': 3,
                 'encoding': 'utf-8'
@@ -121,7 +181,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'INFO',
                 'formatter': 'json',
-                'filename': '/app/logs/application.log',
+                'filename': str(logs_dir / 'application.log'),
                 'maxBytes': 100 * 1024 * 1024,  # 100MB
                 'backupCount': 10,
                 'encoding': 'utf-8'
@@ -130,7 +190,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'ERROR',
                 'formatter': 'json',
-                'filename': '/app/logs/error.log',
+                'filename': str(logs_dir / 'error.log'),
                 'maxBytes': 50 * 1024 * 1024,  # 50MB
                 'backupCount': 5,
                 'encoding': 'utf-8'
@@ -139,7 +199,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'INFO',
                 'formatter': 'json',
-                'filename': '/app/logs/access.log',
+                'filename': str(logs_dir / 'access.log'),
                 'maxBytes': 100 * 1024 * 1024,  # 100MB
                 'backupCount': 5,
                 'encoding': 'utf-8'

@@ -20,6 +20,61 @@ import requests
 import streamlit as st
 
 from app.services.ollama import stream_ollama
+from app.services.speech_service import get_speech_service
+
+# ---------------------------------------------------------------------------
+# Audio recorder import (robust multi-backend detection)
+# ---------------------------------------------------------------------------
+# Several community components exist with similar names. We attempt them in a
+# priority order and expose a uniform callable record_audio(). This reduces the
+# chance a user installs the right PyPI package but we import the wrong symbol.
+AUD_RECORDER_BACKEND = None  # name of the backend actually imported
+AUD_IMPORT_ERROR = None      # last import error (for diagnostics)
+
+def _init_audio_backend():
+    global AUD_RECORDER_BACKEND, AUD_IMPORT_ERROR, record_audio
+    # Attempt 1: streamlit_audiorecorder ("streamlit-audiorecorder")
+    try:
+        import streamlit_audiorecorder as _sar  # type: ignore
+        def record_audio(**kwargs):  # wrapper to keep a consistent API
+            return _sar.audio_recorder(**kwargs)
+        AUD_RECORDER_BACKEND = "streamlit_audiorecorder"
+        return
+    except Exception as e:
+        AUD_IMPORT_ERROR = e
+    # Attempt 2: audio_recorder_streamlit ("audio-recorder-streamlit")
+    try:
+        from audio_recorder_streamlit import audio_recorder as _ars  # type: ignore
+        def record_audio(**kwargs):
+            # This variant uses different arg names; map the most common ones.
+            text = kwargs.get("text", "")
+            recording_color = kwargs.get("recording_color", "red")
+            neutral_color = kwargs.get("neutral_color", "gray")
+            # Component returns raw wav bytes directly.
+            return _ars(text, text, recording_color=recording_color, neutral_color=neutral_color)
+        AUD_RECORDER_BACKEND = "audio_recorder_streamlit"
+        return
+    except Exception as e:
+        AUD_IMPORT_ERROR = e
+    # Attempt 3: audiorecorder ("streamlit-audiorecorder" older API)
+    try:
+        from audiorecorder import audiorecorder as _legacy  # type: ignore
+        def record_audio(**kwargs):
+            # Returns a pydub AudioSegment; convert to bytes via export.
+            seg = _legacy("Click to record", "Click to stop")
+            if seg and hasattr(seg, 'export'):
+                import io
+                buff = io.BytesIO()
+                seg.export(buff, format="wav")
+                return buff.getvalue()
+            return None
+        AUD_RECORDER_BACKEND = "audiorecorder_legacy"
+        return
+    except Exception as e:
+        AUD_IMPORT_ERROR = e
+
+_init_audio_backend()
+AUDIO_RECORDER_AVAILABLE = AUD_RECORDER_BACKEND is not None
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -1278,6 +1333,141 @@ def stream_enhanced_rag_query(query: str, messages: list, model: str, system_pro
     placeholder.markdown(full_response)
     return full_response
 
+# ---------------------------------------------------------------------------
+# Voice Input Functions
+# ---------------------------------------------------------------------------
+
+def get_voice_input(placeholder_text: str = "Type your message or use voice input...", page_key: str = "chat") -> Optional[str]:
+    """
+    Create a streamlined input component with embedded voice recording capability.
+    
+    Args:
+        placeholder_text: Placeholder text for the input
+        page_key: Unique key for the page to avoid conflicts
+    
+    Returns:
+        The transcribed text from voice or typed text, or None if no input
+    """
+    # Initialize session state for voice input
+    voice_text_key = f"voice_text_{page_key}"
+    voice_recording_key = f"voice_recording_{page_key}"
+    
+    if voice_text_key not in st.session_state:
+        st.session_state[voice_text_key] = ""
+    if voice_recording_key not in st.session_state:
+        st.session_state[voice_recording_key] = False
+    
+    # Create the embedded input layout
+    input_container = st.container()
+    
+    with input_container:
+        if not AUDIO_RECORDER_AVAILABLE:
+            # Fallback: simple input with disabled voice icon
+            col_input, col_voice_disabled, col_send = st.columns([10, 1, 1])
+            
+            with col_input:
+                text_input = st.text_input(
+                    placeholder_text,
+                    key=f"voice_text_fallback_{page_key}",
+                    label_visibility="collapsed",
+                    placeholder=placeholder_text
+                )
+            
+            with col_voice_disabled:
+                st.button("🎤", key=f"voice_disabled_{page_key}", help="Voice input unavailable", disabled=True)
+            
+            with col_send:
+                submit_clicked = st.button("➤", key=f"voice_submit_fallback_{page_key}", type="primary", 
+                                         disabled=not text_input.strip(), help="Send message")
+            
+            if submit_clicked and text_input.strip():
+                return text_input.strip()
+            return None
+        
+        # Voice-enabled UI
+        col_input, col_voice, col_send = st.columns([10, 1, 1])
+        
+        with col_input:
+            # Text input with current value
+            current_text = st.session_state[voice_text_key] if st.session_state[voice_text_key] else ""
+            text_input = st.text_input(
+                placeholder_text,
+                value=current_text,
+                key=f"voice_text_input_{page_key}",
+                label_visibility="collapsed",
+                placeholder=placeholder_text
+            )
+        
+        with col_voice:
+            # Embedded voice button - changes based on state
+            if st.session_state[voice_recording_key]:
+                if st.button("⏹️", key=f"voice_stop_{page_key}", help="Stop recording", type="secondary"):
+                    st.session_state[voice_recording_key] = False
+                    st.rerun()
+            else:
+                if st.button("🎤", key=f"voice_start_{page_key}", help="Start voice recording"):
+                    st.session_state[voice_recording_key] = True
+                    st.rerun()
+        
+        with col_send:
+            # Send button
+            final_text = text_input.strip() if text_input else ""
+            submit_clicked = st.button("➤", key=f"voice_submit_{page_key}", type="primary", 
+                                     disabled=not final_text, help="Send message")
+    
+    # Handle voice recording UI
+    if st.session_state[voice_recording_key] and AUDIO_RECORDER_AVAILABLE:
+        st.info("🎤 Recording... Click ⏹️ to stop")
+        
+        # Use a more minimal recorder interface
+        try:
+            audio_data = record_audio(
+                text="Recording...",
+                recording_color="#e74c3c",
+                neutral_color="#2ecc71",
+                icon_name="microphone"
+            )
+            
+            # Process audio when captured
+            if audio_data:
+                with st.spinner("🎤 Transcribing audio..."):
+                    # Process the audio
+                    raw_bytes = None
+                    if isinstance(audio_data, dict) and 'bytes' in audio_data:
+                        raw_bytes = audio_data['bytes']
+                    elif isinstance(audio_data, (bytes, bytearray)):
+                        raw_bytes = bytes(audio_data)
+                    
+                    if raw_bytes:
+                        try:
+                            speech_service = get_speech_service()
+                            transcribed_text = speech_service.transcribe_audio(raw_bytes)
+                            if transcribed_text:
+                                st.session_state[voice_text_key] = transcribed_text
+                                st.session_state[voice_recording_key] = False
+                                st.success(f"✅ Transcribed: {transcribed_text}")
+                                st.rerun()
+                            else:
+                                st.error("❌ Failed to transcribe audio")
+                                st.session_state[voice_recording_key] = False
+                        except Exception as e:
+                            st.error(f"❌ Transcription error: {e}")
+                            st.session_state[voice_recording_key] = False
+                    else:
+                        st.warning("⚠️ No audio captured. Please try again.")
+                        st.session_state[voice_recording_key] = False
+                
+        except Exception as rec_err:
+            st.error(f"Audio recorder error: {rec_err}")
+            st.session_state[voice_recording_key] = False
+    
+    # Handle form submission
+    if submit_clicked and final_text:
+        st.session_state[voice_text_key] = ""  # Clear for next input
+        return final_text
+    
+    return None
+
 # Main application code with enhanced backend support
 st.set_page_config(page_title="LLM WebUI", layout="wide", initial_sidebar_state="expanded")
 
@@ -1342,6 +1532,16 @@ if backend_available:
         st.sidebar.info("🦙 Ollama Mode Active")
 else:
     st.sidebar.warning("⚠️ Using Local Backend")
+
+# Voice feature status
+if AUDIO_RECORDER_AVAILABLE:
+    st.sidebar.success(f"🎤 Voice Input: {AUD_RECORDER_BACKEND} backend active")
+else:
+    st.sidebar.info("🎤 Voice Input Disabled")
+    if AUD_IMPORT_ERROR:
+        with st.sidebar.expander("Voice Diagnostics", expanded=False):
+            st.write(f"Last import error: {AUD_IMPORT_ERROR}")
+            st.write("Tried packages: streamlit-audiorecorder, audio-recorder-streamlit, audiorecorder")
 
 # Backend-specific configuration
 hf_token_valid = False
@@ -1413,7 +1613,7 @@ if page == "💬 Chat":
             unsafe_allow_html=True,
         )
 
-    user_input = st.chat_input("Ask Anything")
+    user_input = get_voice_input("Ask Anything", "chat")
 
     if user_input:
         
@@ -1712,7 +1912,7 @@ elif page == "📚 RAG":
             with st.chat_message(message["role"]):
                 render_llm_text(message["content"])
 
-        rag_input = st.chat_input("Ask about your documents, data analysis, image content, or any uploaded materials...")
+        rag_input = get_voice_input("Ask about your documents, data analysis, image content, or any uploaded materials...", "rag")
 
         if rag_input:
             # Validate vLLM setup for RAG
