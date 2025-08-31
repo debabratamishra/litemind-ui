@@ -3,7 +3,7 @@ RAG page implementation.
 """
 import logging
 import streamlit as st
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text
@@ -30,8 +30,9 @@ class RAGPage:
         
         st.title("📚 RAG Interface")
         
-        # Initialize session state (moved to __init__ but keep for safety)
         self._initialize_session_state()
+        
+        self._render_system_prompt_config()
         
         # Only render main content sections, configuration is in sidebar
         self._render_upload_section()
@@ -44,15 +45,43 @@ class RAGPage:
         st.session_state.setdefault("rag_messages", [])
         st.session_state.setdefault("show_reset_confirm", False)
         
+        # Initialize RAG system prompt
+        st.session_state.setdefault("rag_system_prompt", DEFAULT_RAG_SYSTEM_PROMPT)
+        
         # Initialize default RAG configuration
         st.session_state.setdefault("rag_config", {
             "provider": "Ollama",
-            "embedding_model": "nomic-embed-text",
+            "embedding_model": "snowflake-arctic-embed2:latest",
             "chunk_size": 500,
             "n_results": 3,
             "use_multi_agent": False,
             "use_hybrid_search": False,
         })
+    
+    def _render_system_prompt_config(self):
+        """Render system prompt configuration in main page."""
+        with st.expander("📝 System Prompt Configuration", expanded=False):
+            st.markdown("**Customize the system prompt for RAG responses:**")
+            
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                rag_system_prompt = st.text_area(
+                    "System Prompt:",
+                    value=st.session_state.rag_system_prompt,
+                    height=120,
+                    help="Customize the system prompt for RAG responses",
+                    key="rag_system_prompt_main"
+                )
+            
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)  # Spacing
+                if st.button("🔄 Reset to Default", help="Reset to default system prompt"):
+                    st.session_state.rag_system_prompt = DEFAULT_RAG_SYSTEM_PROMPT
+                    st.rerun()
+            
+            # Update session state
+            st.session_state.rag_system_prompt = rag_system_prompt
     
     def _render_upload_section(self):
         """Render document upload section."""
@@ -282,21 +311,21 @@ class RAGPage:
         if backend_provider == "vllm":
             return st.session_state.get("vllm_model", "no-model")
         else:
-            return st.session_state.get("selected_rag_model", "default")
+            return st.session_state.get("selected_ollama_model", "default")
     
     def render_sidebar_config(self):
         """Render RAG-specific sidebar configuration."""
         st.sidebar.markdown("---")
         st.sidebar.subheader("📚 RAG Configuration")
         
+        # Base model selection for RAG (only when Ollama backend is selected)
+        self._render_sidebar_base_model_selection()
+
         # RAG Configuration Section
         self._render_sidebar_rag_config()
         
         # Display status
         self._render_sidebar_status()
-        
-        # Model selection
-        self._render_sidebar_model_selection()
         
         # Reasoning settings
         self._render_sidebar_reasoning_config()
@@ -347,35 +376,24 @@ class RAGPage:
 
         use_multi_agent = st.sidebar.checkbox(
             "Enable Multi-Agent Processing",
-            value=False,
+            value=st.session_state.rag_config.get("use_multi_agent", False),  # Use session state value
             help="Use multiple specialized agents for enhanced processing",
         )
 
         use_hybrid_search = st.sidebar.checkbox(
-            "🔍 Enable Hybrid Search (BM25 + Vector)",
-            value=False,
-            help="Combine keyword BM25 with semantic vector search",
-            disabled=not st.session_state.config_saved,
+            "Enable Hybrid Search",
+            value=st.session_state.rag_config.get("use_hybrid_search", False),  # Use session state value
+            help="Combine BM25 with semantic vector search (sparse + dense retrieval)",
         )
-
-        if use_multi_agent:
-            st.sidebar.text("🤖 Multi-Agent Features:")
-            st.sidebar.text("• Document analysis")
-            st.sidebar.text("• Content summarization")
-            st.sidebar.text("• Technical verification")
 
         # Save configuration
         if st.sidebar.button("💾 Save Configuration", type="primary"):
-            config = {
-                "provider": provider,
-                "embedding_model": embedding_model,
-                "chunk_size": chunk_size,
-                "n_results": n_results,
-                "use_multi_agent": use_multi_agent,
-                "use_hybrid_search": use_hybrid_search,
-            }
-            
-            success, message = rag_service.save_config(config)
+            # Save core RAG configuration via API
+            success, message = rag_service.save_configuration(
+                provider=provider,
+                embedding_model=embedding_model,
+                chunk_size=chunk_size
+            )
             st.session_state.config_saved = success
             st.session_state.config_message = message
         
@@ -396,12 +414,38 @@ class RAGPage:
             else:
                 st.sidebar.error(st.session_state.config_message)
     
+    def _render_sidebar_base_model_selection(self):
+        """Render base model selection for RAG in sidebar."""
+        backend_provider = st.session_state.get("current_backend", "ollama")
+        
+        # Only show Ollama base model selection when Ollama backend is selected
+        if backend_provider == "ollama" and st.session_state.get("backend_available", False):
+            # st.sidebar.markdown("---")
+            st.sidebar.subheader("🦙 Base Model")
+            
+            available_models = backend_service.get_available_models()
+            if available_models:
+                st.sidebar.selectbox(
+                    "Select Base Model:",
+                    available_models,
+                    help="Language model used for generating RAG responses",
+                    key="selected_ollama_model"
+                )
+            else:
+                st.sidebar.warning("⚠️ No Ollama models available")
+        elif backend_provider == "vllm":
+            vllm_model = st.session_state.get("vllm_model")
+            if vllm_model:
+                st.sidebar.success(f"🎯 Active vLLM Model: {vllm_model}")
+            else:
+                st.sidebar.warning("⚠️ No vLLM model loaded")
+                st.sidebar.info("Configure vLLM in the backend section above")
+    
     def _render_sidebar_status(self):
         """Render RAG status in sidebar."""
         rag_status = rag_service.get_status()
         if rag_status:
             if rag_status["status"] == "ready":
-                st.sidebar.success("✅ System Ready")
                 st.sidebar.write(f"📁 Files: {rag_status.get('uploaded_files', 0)}")
                 st.sidebar.write(f"📊 Chunks: {rag_status.get('indexed_chunks', 0)}")
             else:
@@ -448,6 +492,26 @@ class RAGPage:
             key="rag_hide_reasoning"
         )
         st.session_state.hide_reasoning = hide_reasoning
+    
+    def _render_sidebar_system_prompt(self):
+        """Render system prompt configuration in sidebar."""
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📝 System Prompt")
+        
+        rag_system_prompt = st.sidebar.text_area(
+            "RAG System Prompt:",
+            value=st.session_state.rag_system_prompt,
+            height=120,
+            help="Customize the system prompt for RAG responses",
+            key="rag_system_prompt_input"
+        )
+        
+        if st.sidebar.button("🔄 Reset to Default", help="Reset to default system prompt"):
+            st.session_state.rag_system_prompt = DEFAULT_RAG_SYSTEM_PROMPT
+            st.rerun()
+        
+        # Update session state
+        st.session_state.rag_system_prompt = rag_system_prompt
     
     def _render_sidebar_system_management(self):
         """Render system management options in sidebar."""

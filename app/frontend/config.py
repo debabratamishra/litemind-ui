@@ -29,7 +29,7 @@ SUPPORTED_EXTENSIONS = [
 # System prompts
 DEFAULT_RAG_SYSTEM_PROMPT = (
     "You are a helpful assistant with access to enhanced multimodal document knowledge. "
-    "Use detailed analysis from CSV files, extracted text from images, and comprehensive document "
+    "Use detailed analysis from the uploaded files, extracted text from images, and comprehensive document "
     "content to provide accurate answers. If the answer requires information not in the context, "
     "clearly state that."
 )

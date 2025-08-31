@@ -109,25 +109,6 @@ class StreamlitApp:
         else:
             st.sidebar.warning("⚠️ Using Local Backend")
     
-    def render_footer(self):
-        st.sidebar.markdown("---")
-        
-        backend_available = st.session_state.backend_available
-        capabilities = st.session_state.capabilities
-        backend_provider = st.session_state.get("current_backend", "ollama")
-        
-        if backend_available:
-            if capabilities and capabilities.get("status") == "ready":
-                st.sidebar.write("🟢 Enhanced processing ready")
-                if backend_provider == "vllm":
-                    st.sidebar.write("⚡ vLLM backend active")
-                else:
-                    st.sidebar.write("🦙 Ollama backend active")
-            else:
-                st.sidebar.write("🟡 Basic functionality available")
-        else:
-            st.sidebar.write("🔴 Limited functionality (backend offline)")
-    
     def run(self):
         self.render_sidebar_header()
         
@@ -137,8 +118,6 @@ class StreamlitApp:
             render_chat_page()
         elif selected_page == "📚 RAG":
             render_rag_page()
-        
-        self.render_footer()
 
 
 def main():

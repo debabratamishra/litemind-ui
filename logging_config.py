@@ -63,6 +63,30 @@ def _detect_container_environment() -> bool:
     return False
 
 
+from typing import Dict, Any
+
+
+class CleanFormatter(logging.Formatter):
+    """Custom formatter that cleans up logger names for better readability."""
+    
+    LOGGER_NAME_MAPPING = {
+        'uvicorn.error': 'server',
+        'uvicorn.access': 'access',
+        'uvicorn': 'server',
+        'app.services.host_service_manager': 'host_service',
+        'app.services.rag_service': 'rag_service',
+        'app.services.vllm_service': 'vllm_service',
+        'sentence_transformers.SentenceTransformer': 'sentence_transformers',
+        'logging_config': 'config',
+    }
+    
+    def format(self, record):
+        # Create a clean name for display
+        clean_name = self.LOGGER_NAME_MAPPING.get(record.name, record.name)
+        record.clean_name = clean_name
+        return super().format(record)
+
+
 def get_logging_config(environment: str = None) -> Dict[str, Any]:
     """
     Get logging configuration based on environment.
@@ -98,7 +122,8 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'datefmt': '%Y-%m-%d %H:%M:%S'
             },
             'simple': {
-                'format': '%(levelname)s - %(name)s - %(message)s'
+                '()': 'logging_config.CleanFormatter',
+                'format': '%(levelname)s - %(clean_name)s - %(message)s'
             },
             'json': {
                 'format': '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "module": "%(module)s", "function": "%(funcName)s", "line": %(lineno)d, "message": "%(message)s"}',
@@ -124,6 +149,11 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'handlers': ['console'],
                 'propagate': False
             },
+            'uvicorn.error': {
+                'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False
+            },
             'uvicorn.access': {
                 'level': 'INFO',
                 'handlers': ['console'],
@@ -131,6 +161,47 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
             },
             'streamlit': {
                 'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'logging_config': {
+                'level': 'WARNING',  # Hide logging_config setup messages from console
+                'handlers': ['console'],
+                'propagate': False
+            },
+            # Third-party library loggers to reduce verbosity
+            'httpcore': {
+                'level': 'WARNING',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'httpx': {
+                'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'urllib3': {
+                'level': 'WARNING',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'asyncio': {
+                'level': 'WARNING',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'chromadb': {
+                'level': 'WARNING',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'sentence_transformers': {
+                'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'app.services.host_service_manager': {
+                'level': 'WARNING',
                 'handlers': ['console'],
                 'propagate': False
             }
@@ -162,17 +233,70 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
         
         # Update console handler for development
         config['handlers']['console'].update({
-            'level': 'DEBUG',
-            'formatter': 'detailed'
+            'level': 'INFO',  # Changed from DEBUG to INFO to reduce console output
+            'formatter': 'simple'  # Changed from detailed to simple for cleaner console output
         })
         
         # Update loggers for development
-        config['loggers']['']['level'] = 'DEBUG'
+        config['loggers']['']['level'] = 'INFO'  # Changed from DEBUG to INFO
         config['loggers']['']['handlers'] = ['console', 'file_debug', 'file_error']
-        config['loggers']['uvicorn']['level'] = 'DEBUG'
+        config['loggers']['uvicorn']['level'] = 'INFO'  # Changed from DEBUG to INFO
         config['loggers']['uvicorn']['handlers'] = ['console', 'file_debug']
-        config['loggers']['uvicorn.access']['level'] = 'DEBUG'
+        config['loggers']['uvicorn.access']['level'] = 'INFO'  # Changed from DEBUG to INFO
         config['loggers']['uvicorn.access']['handlers'] = ['console', 'file_debug']
+        
+        # Add uvicorn.error logger configuration
+        config['loggers']['uvicorn.error'] = {
+            'level': 'INFO',
+            'handlers': ['console', 'file_debug'],
+            'propagate': False
+        }
+        
+        # Hide logging_config setup messages from console in development too
+        config['loggers']['logging_config'] = {
+            'level': 'WARNING',
+            'handlers': ['console', 'file_debug'],
+            'propagate': False
+        }
+        
+        # Add third-party library logger configurations for development
+        config['loggers'].update({
+            'httpcore': {
+                'level': 'WARNING',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'httpx': {
+                'level': 'INFO',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'urllib3': {
+                'level': 'WARNING',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'asyncio': {
+                'level': 'WARNING',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'chromadb': {
+                'level': 'WARNING',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'sentence_transformers': {
+                'level': 'INFO',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'app.services.host_service_manager': {
+                'level': 'WARNING',  # Reduce verbosity of directory creation messages
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            }
+        })
         
     elif environment == 'production':
         # Production: Structured JSON logging, error tracking
@@ -248,9 +372,9 @@ def setup_logging(environment: str = None) -> None:
     config = get_logging_config(environment)
     logging.config.dictConfig(config)
     
-    # Log the configuration setup
+    # Log the configuration setup (will be filtered out by console handler)
     logger = logging.getLogger(__name__)
-    logger.info(f"Logging configured for environment: {environment or os.getenv('ENVIRONMENT', 'development')}")
+    logger.debug(f"Logging configured for environment: {environment or os.getenv('ENVIRONMENT', 'development')}")
 
 
 def get_logger(name: str) -> logging.Logger:
