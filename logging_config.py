@@ -11,6 +11,82 @@ from pathlib import Path
 from typing import Dict, Any
 
 
+def _detect_container_environment() -> bool:
+    """
+    Detect if the application is running inside a container.
+    
+    Uses multiple detection methods for reliability:
+    1. Check for /.dockerenv file (Docker-specific)
+    2. Check cgroup information
+    3. Check environment variables
+    4. Check for container-specific mount points
+    
+    Returns:
+        bool: True if running in a container, False otherwise
+    """
+    # Method 1: Check for Docker-specific file
+    if Path("/.dockerenv").exists():
+        return True
+    
+    # Method 2: Check cgroup information
+    try:
+        with open("/proc/1/cgroup", "r") as f:
+            cgroup_content = f.read()
+            if "docker" in cgroup_content or "containerd" in cgroup_content:
+                return True
+    except (FileNotFoundError, PermissionError):
+        # /proc/1/cgroup might not exist on non-Linux systems
+        pass
+    
+    # Method 3: Check environment variables
+    container_env_vars = [
+        "DOCKER_CONTAINER",
+        "KUBERNETES_SERVICE_HOST",
+        "CONTAINER_NAME"
+    ]
+    
+    for env_var in container_env_vars:
+        if os.getenv(env_var):
+            return True
+    
+    # Method 4: Check for container-specific mount points (Linux)
+    import platform
+    if platform.system() == "Linux":
+        try:
+            with open("/proc/mounts", "r") as f:
+                mounts = f.read()
+                if "overlay" in mounts or "aufs" in mounts:
+                    return True
+        except (FileNotFoundError, PermissionError):
+            pass
+    
+    return False
+
+
+from typing import Dict, Any
+
+
+class CleanFormatter(logging.Formatter):
+    """Custom formatter that cleans up logger names for better readability."""
+    
+    LOGGER_NAME_MAPPING = {
+        'uvicorn.error': 'server',
+        'uvicorn.access': 'access',
+        'uvicorn': 'server',
+        'app.services.host_service_manager': 'host_service',
+        'app.services.rag_service': 'rag_service',
+        'app.services.vllm_service': 'vllm_service',
+        'sentence_transformers.SentenceTransformer': 'sentence_transformers',
+        'logging_config': 'config',
+    }
+    
+    def format(self, record):
+        # Create a clean name for display
+        clean_name = self.LOGGER_NAME_MAPPING.get(record.name, record.name)
+        record.clean_name = clean_name
+        return super().format(record)
+
+
 def get_logging_config(environment: str = None) -> Dict[str, Any]:
     """
     Get logging configuration based on environment.
@@ -24,8 +100,16 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
     if environment is None:
         environment = os.getenv('ENVIRONMENT', 'development')
     
+    # Detect execution environment
+    is_containerized = _detect_container_environment()
+    
+    # Set logs directory based on environment
+    if is_containerized:
+        logs_dir = Path('/app/logs')
+    else:
+        logs_dir = Path('./logs')
+    
     # Ensure logs directory exists
-    logs_dir = Path('/app/logs')
     logs_dir.mkdir(exist_ok=True)
     
     # Base configuration
@@ -38,7 +122,8 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'datefmt': '%Y-%m-%d %H:%M:%S'
             },
             'simple': {
-                'format': '%(levelname)s - %(name)s - %(message)s'
+                '()': 'logging_config.CleanFormatter',
+                'format': '%(levelname)s - %(clean_name)s - %(message)s'
             },
             'json': {
                 'format': '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "module": "%(module)s", "function": "%(funcName)s", "line": %(lineno)d, "message": "%(message)s"}',
@@ -64,6 +149,11 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'handlers': ['console'],
                 'propagate': False
             },
+            'uvicorn.error': {
+                'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False
+            },
             'uvicorn.access': {
                 'level': 'INFO',
                 'handlers': ['console'],
@@ -71,6 +161,47 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
             },
             'streamlit': {
                 'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'logging_config': {
+                'level': 'WARNING',  # Hide logging_config setup messages from console
+                'handlers': ['console'],
+                'propagate': False
+            },
+            # Third-party library loggers to reduce verbosity
+            'httpcore': {
+                'level': 'WARNING',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'httpx': {
+                'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'urllib3': {
+                'level': 'WARNING',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'asyncio': {
+                'level': 'WARNING',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'chromadb': {
+                'level': 'WARNING',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'sentence_transformers': {
+                'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False
+            },
+            'app.services.host_service_manager': {
+                'level': 'WARNING',
                 'handlers': ['console'],
                 'propagate': False
             }
@@ -84,7 +215,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'DEBUG',
                 'formatter': 'detailed',
-                'filename': '/app/logs/debug.log',
+                'filename': str(logs_dir / 'debug.log'),
                 'maxBytes': 50 * 1024 * 1024,  # 50MB
                 'backupCount': 5,
                 'encoding': 'utf-8'
@@ -93,7 +224,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'ERROR',
                 'formatter': 'detailed',
-                'filename': '/app/logs/error.log',
+                'filename': str(logs_dir / 'error.log'),
                 'maxBytes': 10 * 1024 * 1024,  # 10MB
                 'backupCount': 3,
                 'encoding': 'utf-8'
@@ -102,17 +233,70 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
         
         # Update console handler for development
         config['handlers']['console'].update({
-            'level': 'DEBUG',
-            'formatter': 'detailed'
+            'level': 'INFO',  # Changed from DEBUG to INFO to reduce console output
+            'formatter': 'simple'  # Changed from detailed to simple for cleaner console output
         })
         
         # Update loggers for development
-        config['loggers']['']['level'] = 'DEBUG'
+        config['loggers']['']['level'] = 'INFO'  # Changed from DEBUG to INFO
         config['loggers']['']['handlers'] = ['console', 'file_debug', 'file_error']
-        config['loggers']['uvicorn']['level'] = 'DEBUG'
+        config['loggers']['uvicorn']['level'] = 'INFO'  # Changed from DEBUG to INFO
         config['loggers']['uvicorn']['handlers'] = ['console', 'file_debug']
-        config['loggers']['uvicorn.access']['level'] = 'DEBUG'
+        config['loggers']['uvicorn.access']['level'] = 'INFO'  # Changed from DEBUG to INFO
         config['loggers']['uvicorn.access']['handlers'] = ['console', 'file_debug']
+        
+        # Add uvicorn.error logger configuration
+        config['loggers']['uvicorn.error'] = {
+            'level': 'INFO',
+            'handlers': ['console', 'file_debug'],
+            'propagate': False
+        }
+        
+        # Hide logging_config setup messages from console in development too
+        config['loggers']['logging_config'] = {
+            'level': 'WARNING',
+            'handlers': ['console', 'file_debug'],
+            'propagate': False
+        }
+        
+        # Add third-party library logger configurations for development
+        config['loggers'].update({
+            'httpcore': {
+                'level': 'WARNING',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'httpx': {
+                'level': 'INFO',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'urllib3': {
+                'level': 'WARNING',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'asyncio': {
+                'level': 'WARNING',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'chromadb': {
+                'level': 'WARNING',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'sentence_transformers': {
+                'level': 'INFO',
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            },
+            'app.services.host_service_manager': {
+                'level': 'WARNING',  # Reduce verbosity of directory creation messages
+                'handlers': ['console', 'file_debug'],
+                'propagate': False
+            }
+        })
         
     elif environment == 'production':
         # Production: Structured JSON logging, error tracking
@@ -121,7 +305,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'INFO',
                 'formatter': 'json',
-                'filename': '/app/logs/application.log',
+                'filename': str(logs_dir / 'application.log'),
                 'maxBytes': 100 * 1024 * 1024,  # 100MB
                 'backupCount': 10,
                 'encoding': 'utf-8'
@@ -130,7 +314,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'ERROR',
                 'formatter': 'json',
-                'filename': '/app/logs/error.log',
+                'filename': str(logs_dir / 'error.log'),
                 'maxBytes': 50 * 1024 * 1024,  # 50MB
                 'backupCount': 5,
                 'encoding': 'utf-8'
@@ -139,7 +323,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'class': 'logging.handlers.RotatingFileHandler',
                 'level': 'INFO',
                 'formatter': 'json',
-                'filename': '/app/logs/access.log',
+                'filename': str(logs_dir / 'access.log'),
                 'maxBytes': 100 * 1024 * 1024,  # 100MB
                 'backupCount': 5,
                 'encoding': 'utf-8'
@@ -188,9 +372,9 @@ def setup_logging(environment: str = None) -> None:
     config = get_logging_config(environment)
     logging.config.dictConfig(config)
     
-    # Log the configuration setup
+    # Log the configuration setup (will be filtered out by console handler)
     logger = logging.getLogger(__name__)
-    logger.info(f"Logging configured for environment: {environment or os.getenv('ENVIRONMENT', 'development')}")
+    logger.debug(f"Logging configured for environment: {environment or os.getenv('ENVIRONMENT', 'development')}")
 
 
 def get_logger(name: str) -> logging.Logger:

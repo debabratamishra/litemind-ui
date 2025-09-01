@@ -380,33 +380,31 @@ class VLLMService:
             return {"status": "error", "message": f"Invalid token: {str(e)}"}
     
     def get_available_models(self) -> Dict[str, List[str]]:
-        """Get list of locally cached models and popular models from HF."""
-        local_models = []
-        popular_models = [
-            "microsoft/DialoGPT-medium",
-            "microsoft/DialoGPT-large", 
-            "google/gemma-2b-it",
-            "google/gemma-7b-it",
-            "meta-llama/Llama-2-7b-chat-hf",
-            "meta-llama/Llama-2-13b-chat-hf",
-            "mistralai/Mistral-7B-Instruct-v0.1",
-            "mistralai/Mistral-7B-Instruct-v0.2",
-            "teknium/OpenHermes-2.5-Mistral-7B",
-            "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-        ]
+        """Get locally cached model repo IDs from Hugging Face cache.
+
+        We derive repo IDs from hub dir entries named like 'models--org--repo'.
+        Only 'models--*' entries are considered. Popular models are omitted.
+        """
+        local_models: List[str] = []
+        try:
+            hub = self.models_cache_dir
+            if hub.exists():
+                for entry in hub.iterdir():
+                    if not entry.is_dir():
+                        continue
+                    name = entry.name
+                    if not name.startswith("models--"):
+                        continue
+                    # Strip 'models--' prefix and map '--' back to '/'
+                    rest = name[len("models--"):]
+                    repo_id = rest.replace("--", "/")
+                    # Basic sanity filter: ensure it looks like 'org/repo'
+                    if "/" in repo_id:
+                        local_models.append(repo_id)
+        except Exception as e:
+            logger.warning(f"Failed to scan HF cache for local models: {e}")
         
-        # Check for locally cached models
-        if self.models_cache_dir.exists():
-            for model_dir in self.models_cache_dir.iterdir():
-                if model_dir.is_dir() and not model_dir.name.startswith('.'):
-                    # Convert cache dir name back to model name
-                    model_name = model_dir.name.replace('--', '/')
-                    local_models.append(model_name)
-        
-        return {
-            "local_models": local_models,
-            "popular_models": popular_models
-        }
+        return {"local_models": sorted(local_models)}
     
     async def download_model(self, model_name: str) -> Dict[str, str]:
         """Download a model from Huggingface Hub.

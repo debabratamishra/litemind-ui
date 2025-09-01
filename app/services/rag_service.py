@@ -73,12 +73,32 @@ def _flatten_metadata(meta, prefix=""):
 
 
 class RAGService:
-    """High-level service for ingesting documents, building indexes, and answering queries.
-    Manages ChromaDB persistence, BM25 keyword indexing, and hybrid retrieval for text and
-    lightweight image references.
-    """
+    """Retrieval-augmented generation service with enhanced document processing capabilities."""
+    
+    # Class-level ChromaDB client management to avoid conflicts
+    _shared_client = None
+    _shared_client_path = None
+    
+    @classmethod
+    def _get_or_create_client(cls, chroma_db_path: str):
+        """Get or create a shared ChromaDB client to avoid conflicts."""
+        if cls._shared_client is None or cls._shared_client_path != chroma_db_path:
+            if cls._shared_client is not None:
+                # Clean up previous client if path changed
+                try:
+                    cls._shared_client.reset()
+                except:
+                    pass
+            
+            cls._shared_client = chromadb.PersistentClient(
+                path=chroma_db_path, 
+                settings=Settings(anonymized_telemetry=False)
+            )
+            cls._shared_client_path = chroma_db_path
+            
+        return cls._shared_client
+    
     def __init__(self):
-        """Initialize storage, embedding models, collections, and in-memory indexes."""
         # Get the appropriate ChromaDB path based on environment
         self.chroma_db_path = self._get_chroma_db_path()
         
@@ -102,7 +122,7 @@ class RAGService:
                 except Exception as clean_error:
                     logger.warning(f"Could not clean ChromaDB directory contents: {clean_error}")
 
-        self.client = chromadb.PersistentClient(path=self.chroma_db_path, settings=Settings(anonymized_telemetry=False))
+        self.client = self._get_or_create_client(self.chroma_db_path)
 
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
@@ -110,7 +130,7 @@ class RAGService:
 
         self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
 
-        self.text_collection = self.client.create_collection(
+        self.text_collection = self.client.get_or_create_collection(
             name="documents_text",
             embedding_function=self.embedding_function
         )
@@ -132,6 +152,9 @@ class RAGService:
         self.image_cache_dir = Path(upload_dir) / "imgcache"
         self.image_cache_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Image cache directory initialized at: {self.image_cache_dir}")
+        
+        # Rebuild indexes from existing collection data
+        self._rebuild_indexes_from_collection()
     
     def _get_chroma_db_path(self) -> str:
         """Get the appropriate ChromaDB path based on execution environment."""
@@ -303,6 +326,48 @@ class RAGService:
                 
         except Exception as e:
             logger.error(f"Error rebuilding BM25 index: {e}")
+
+    def _rebuild_indexes_from_collection(self):
+        """Rebuild all indexes and tracking from existing collection data."""
+        try:
+            # First rebuild the BM25 index which also populates document_chunks and chunk_ids
+            self._rebuild_bm25_index()
+            
+            # Rebuild processed files tracking from metadata
+            all_docs = self.text_collection.get()
+            if all_docs and all_docs['metadatas']:
+                processed_files = {}
+                file_hashes = {}
+                file_paths_set = set()
+                
+                for metadata in all_docs['metadatas']:
+                    doc_id = metadata.get('doc_id')
+                    file_path = metadata.get('file_path')
+                    
+                    if doc_id and file_path:
+                        file_paths_set.add(file_path)
+                        
+                        if doc_id not in processed_files:
+                            # Calculate basic info for this file
+                            chunk_count = sum(1 for m in all_docs['metadatas'] if m.get('doc_id') == doc_id)
+                            processed_files[doc_id] = {
+                                'hash': None,  # We don't store hash in metadata, will calculate if needed
+                                'chunk_count': chunk_count,
+                                'timestamp': 0,  # Unknown timestamp for existing files
+                                'file_path': file_path
+                            }
+                
+                self.processed_files = processed_files
+                self.file_hashes = file_hashes  # We can't rebuild this without recalculating hashes
+                self.file_paths = list(file_paths_set)
+                
+                if processed_files:
+                    logger.info(f"Rebuilt tracking for {len(processed_files)} processed files")
+                    
+        except Exception as e:
+            logger.error(f"Error rebuilding indexes from collection: {e}")
+            # Don't fail completely, just use empty state
+            pass
 
     def get_capabilities(self) -> dict:
         """Report processing capabilities and supported extensions detected at runtime."""
@@ -509,28 +574,184 @@ class RAGService:
         if ext == '.pdf':
             logger.info(f"Using enhanced PDF processing for {path.name}")
             text_chunks = extract_pdf_enhanced(path)
+            text_chunks = self._filter_enhanced_content(text_chunks)
             image_records = []
             table_texts = []
         elif ext in ['.docx', '.doc']:
             logger.info(f"Using enhanced DOCX processing for {path.name}")
             text_chunks = extract_docx_enhanced(path)
+            text_chunks = self._filter_enhanced_content(text_chunks)
             image_records = []
             table_texts = []
         elif ext == '.epub':
             logger.info(f"Using enhanced EPUB processing for {path.name}")
             text_chunks = extract_epub_enhanced(path)
+            text_chunks = self._filter_enhanced_content(text_chunks)
+            image_records = []
+            table_texts = []
+        elif ext in ['.csv', '.tsv']:
+            logger.info(f"Using enhanced CSV processing for {path.name}")
+            from app.ingestion.enhanced_extractors import extract_csv_enhanced
+            text_chunks = extract_csv_enhanced(path)
+            text_chunks = self._filter_enhanced_content(text_chunks)
             image_records = []
             table_texts = []
         else:
             text_chunks, image_records, table_texts = ingest_file(path)
+            # Apply enhanced processing for images
             if image_records:
                 logger.info(f"Processing {len(image_records)} images with enhanced extraction")
                 enhanced_image_content = process_images_enhanced(image_records)
+                # Apply filtering to image content as well
+                enhanced_image_content = self._filter_enhanced_content(enhanced_image_content)
                 text_chunks.extend(enhanced_image_content)
                 image_records.clear()
                 gc.collect()
 
         return text_chunks, image_records, table_texts
+
+    def _filter_enhanced_content(self, text_chunks: List[dict]) -> List[dict]:
+        """Filter out or deprioritize metadata-heavy content to improve RAG relevance."""
+        if not text_chunks:
+            return text_chunks
+            
+        # Define metadata-heavy content types that should be excluded or deprioritized
+        metadata_content_types = {
+            # PDF metadata types
+            'pdf_document_overview',
+            'page_layout_analysis', 
+            'document_structure_analysis',
+            'pdf_document_analysis',
+            'document_metadata',
+            'document_overview',
+            
+            # Image metadata types
+            'image_analysis',
+            'image_reference',
+            'partial_structure',
+            
+            # CSV/Excel metadata types
+            'dataset_overview',
+            'statistical_summary',
+            'column_analysis',
+            'large_dataset_overview',
+            
+            # DOCX metadata types
+            'document_analysis',
+            'docx_metadata',
+            
+            # EPUB metadata types  
+            'epub_metadata',
+            'book_structure',
+            
+            # Generic metadata types
+            'metadata_summary',
+            'file_analysis'
+        }
+        
+        # Define content that should be prioritized (actual document content)
+        priority_content_types = {
+            # PDF content types
+            'pdf_text_body',
+            'pdf_text_header', 
+            'pdf_text_footer',
+            'pdf_headers',
+            'pdf_table_camelot',
+            'pdf_table_pdfplumber',
+            'pdf_content_block',
+            
+            # Image content types
+            'ocr_text',
+            'structured_content',
+            
+            # CSV/Excel content types
+            'data_chunk',
+            'table_content',
+            
+            # DOCX content types
+            'docx_section',
+            'docx_paragraph',
+            'docx_table',
+            'docx_content',
+            
+            # EPUB content types
+            'epub_chapter',
+            'epub_content',
+            'epub_text',
+            
+            # Generic content types
+            'text_content',
+            'main_content'
+        }
+        
+        filtered_chunks = []
+        
+        for chunk in text_chunks:
+            if not isinstance(chunk, dict):
+                # Handle legacy string chunks
+                filtered_chunks.append(chunk)
+                continue
+                
+            content_type = chunk.get('metadata', {}).get('content_type', '')
+            content = chunk.get('content', '')
+            
+            # Skip metadata-heavy content types entirely
+            if content_type.lower() in metadata_content_types:
+                logger.debug(f"Filtering out metadata content type: {content_type}")
+                continue
+                
+            # Also filter based on content patterns (in case content_type is missing)
+            metadata_patterns = [
+                'document metadata',
+                'document statistics', 
+                'document overview',
+                'statistical summary',
+                'column analysis',
+                'dataset overview',
+                'image analysis',
+                'layout analysis',
+                'document analysis',
+                'total pages:',
+                'file size:',
+                'creation date:',
+                'document characteristics:',
+                'layout characteristics:',
+                'page size:',
+                'text blocks:',
+                'word count:',
+                'reading time:',
+                'document type is categorized',
+                'dimensions:',
+                'aspect ratio:',
+                'average brightness:',
+                'color variance:',
+                'unique values:',
+                'missing values:',
+                'data types breakdown:',
+                'rows processed:',
+                'columns (',
+                'processing mode:'
+            ]
+            
+            # Check if content is metadata-heavy
+            content_lower = content.lower()
+            is_metadata_heavy = any(pattern in content_lower for pattern in metadata_patterns)
+            
+            # Skip if it's primarily metadata and short
+            if is_metadata_heavy and len(content) < 1000:  # Allow longer content even if it mentions metadata
+                logger.debug(f"Filtering out metadata-heavy content: {content[:100]}...")
+                continue
+                
+            # Additional filtering for very short non-informative chunks
+            if len(content.strip()) < 50 and content_type not in priority_content_types:
+                logger.debug(f"Filtering out too-short content: {content[:50]}...")
+                continue
+                
+            # Keep the chunk
+            filtered_chunks.append(chunk)
+            
+        logger.info(f"Filtered {len(text_chunks) - len(filtered_chunks)} metadata chunks, keeping {len(filtered_chunks)} content chunks")
+        return filtered_chunks
 
 
 
