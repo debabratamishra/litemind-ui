@@ -24,10 +24,9 @@ class VLLMConfig:
         # Fetch available models
         models_data = self._fetch_models()
         local_models = models_data.get("local_models", [])
-        popular_models = models_data.get("popular_models", [])
         
-        # Model selection
-        selected_model, hf_token = self._render_model_selection(local_models, popular_models)
+        # Model selection (Popular Models removed by request)
+        selected_model, hf_token = self._render_model_selection(local_models)
         
         # Token validation
         hf_token_valid = self._render_token_validation(hf_token)
@@ -48,15 +47,15 @@ class VLLMConfig:
         except Exception as e:
             st.sidebar.error("❌ Could not fetch models")
             logger.error(f"Error fetching vLLM models: {e}")
-            return {"local_models": [], "popular_models": []}
+            return {"local_models": []}
     
-    def _render_model_selection(self, local_models: List[str], popular_models: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    def _render_model_selection(self, local_models: List[str]) -> Tuple[Optional[str], Optional[str]]:
         """Render model selection interface."""
         st.sidebar.subheader("Model Selection")
         
         model_source = st.sidebar.radio(
             "Choose model source:",
-            ["Local Models", "Popular Models", "Custom Model"],
+            ["Local Models", "Custom Model"],
             key="model_source",
         )
 
@@ -65,8 +64,6 @@ class VLLMConfig:
 
         if model_source == "Local Models":
             selected_model = self._render_local_models(local_models)
-        elif model_source == "Popular Models":
-            selected_model, hf_token = self._render_popular_models(popular_models)
         elif model_source == "Custom Model":
             selected_model, hf_token = self._render_custom_model()
 
@@ -81,26 +78,8 @@ class VLLMConfig:
                 key="local_model_select",
             )
         else:
-            st.sidebar.info("No local models found. Choose 'Popular Models' or 'Custom Model' to download.")
+            st.sidebar.info("No local models found. Choose 'Custom Model' to download and cache one.")
             return None
-    
-    def _render_popular_models(self, popular_models: List[str]) -> Tuple[Optional[str], Optional[str]]:
-        """Render popular model selection with token input."""
-        selected_model = st.sidebar.selectbox(
-            "Select popular model:",
-            popular_models,
-            key="popular_model_select",
-        )
-        
-        st.sidebar.markdown("---")
-        hf_token = st.sidebar.text_input(
-            "Huggingface Token",
-            type="password",
-            help="Enter your Huggingface access token if the model requires authentication.",
-            key="hf_token",
-        )
-        
-        return selected_model, hf_token
     
     def _render_custom_model(self) -> Tuple[Optional[str], Optional[str]]:
         """Render custom model input with token."""

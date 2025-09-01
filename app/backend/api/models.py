@@ -41,6 +41,25 @@ async def get_available_models():
 vllm_router = APIRouter(prefix="/api/vllm", tags=["vllm"])
 
 
+@vllm_router.get("/models")
+async def list_vllm_models():
+    """Return available vLLM models.
+
+    - local_models: Models detected in the local Hugging Face cache
+    - popular_models: Kept for compatibility; currently empty as per UI change
+    """
+    try:
+        data = vllm_service.get_available_models()
+        # Drop popular models per request; keep key for compatibility
+        return {
+            "local_models": data.get("local_models", []),
+            "popular_models": []
+        }
+    except Exception as e:
+        logger.error(f"Failed to list vLLM models: {e}")
+        return {"local_models": [], "popular_models": []}
+
+
 @vllm_router.post("/set-token")
 async def set_vllm_token(request: VLLMTokenRequest):
     """Set HuggingFace token for vLLM"""
@@ -71,6 +90,21 @@ async def start_vllm_server(request: VLLMModelRequest):
 async def stop_vllm_server():
     """Stop vLLM server"""
     return await vllm_service.stop_vllm_server()
+
+
+@vllm_router.post("/download-model")
+async def download_vllm_model(request: VLLMModelRequest):
+    """Download a model from Hugging Face Hub into the local cache."""
+    try:
+        result = await vllm_service.download_model(request.model_name)
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("message", "Download failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Download failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @vllm_router.get("/server-status", response_model=VLLMStatusResponse)

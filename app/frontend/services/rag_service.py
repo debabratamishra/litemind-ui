@@ -36,7 +36,7 @@ class RAGService:
             )
             return (
                 response.status_code == 200, 
-                "OK" if response.status_code == 200 else response.text
+                "Configuration Saved" if response.status_code == 200 else response.text
             )
         except requests.RequestException as exc:
             return False, f"Configuration Error: {exc}"

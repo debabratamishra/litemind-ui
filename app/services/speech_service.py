@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class SpeechService:
     """Service for speech-to-text transcription using Whisper."""
 
-    def __init__(self, model_name: str = "openai/whisper-small"):
+    def __init__(self, model_name: str = "openai/whisper-tiny.en"):
         """
         Initialize the speech service with a Whisper model.
 
@@ -58,17 +58,14 @@ class SpeechService:
         """
         try:
             import io, soundfile as sf
-            # Primary attempt: librosa direct load
             try:
                 audio_array, sr = librosa.load(io.BytesIO(audio_data), sr=sample_rate)
             except Exception:
-                # Fallback: write to temp file then load
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
                     tmp.write(audio_data)
                     tmp.flush()
                     audio_array, sr = librosa.load(tmp.name, sr=sample_rate)
 
-            # Ensure float32
             if audio_array.dtype != np.float32:
                 audio_array = audio_array.astype(np.float32)
 

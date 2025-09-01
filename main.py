@@ -697,6 +697,32 @@ async def vllm_server_status():
     }
 
 
+@app.get("/api/vllm/models")
+async def vllm_models():
+    """Return available vLLM models. Popular models removed per UI request."""
+    try:
+        data = vllm_service.get_available_models()
+        return {"local_models": data.get("local_models", []), "popular_models": []}
+    except Exception as e:
+        logger.error(f"Failed to list vLLM models: {e}")
+        return {"local_models": [], "popular_models": []}
+
+
+@app.post("/api/vllm/download-model")
+async def vllm_download_model(request: VLLMModelRequest):
+    """Download a vLLM model into the local Hugging Face cache."""
+    try:
+        result = await vllm_service.download_model(request.model_name)
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("message", "Download failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Download failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Utility functions
 async def process_llm_request(message: str, model: str, temperature: float) -> str:
     """Process single LLM request"""

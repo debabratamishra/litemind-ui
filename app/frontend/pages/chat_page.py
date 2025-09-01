@@ -29,7 +29,7 @@ class ChatPage:
         
         self._display_chat_history()
         
-        user_input = get_voice_input("Ask Anything", "chat")
+        user_input = get_voice_input("Enter your message...", "chat")
         
         if user_input:
             self._process_user_input(user_input, backend_provider)

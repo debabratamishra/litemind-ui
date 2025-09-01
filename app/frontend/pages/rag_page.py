@@ -93,14 +93,14 @@ class RAGPage:
         if not st.session_state.config_saved:
             st.warning("⚠️ Please save your configuration before uploading documents.")
         
-        # File uploader
+        # File uploader (hide accepted types in UI by omitting `type`)
         uploaded_files = st.file_uploader(
             label="Upload Documents",
             label_visibility="collapsed",
-            type=SUPPORTED_EXTENSIONS,
             accept_multiple_files=True,
             help="Upload CSVs, images, or other documents for enhanced processing",
             disabled=not st.session_state.config_saved,
+            key="rag_uploader",
         )
         
         # Upload and process files
@@ -125,9 +125,19 @@ class RAGPage:
     
     def _process_uploaded_files(self, uploaded_files):
         """Process uploaded files with duplicate checking."""
+        # Filter unsupported file types since types are hidden in the uploader UI
+        allowed_suffixes = tuple(f".{ext.lower()}" for ext in SUPPORTED_EXTENSIONS)
+        candidate_files = uploaded_files or []
+        filtered_files = [
+            uf for uf in candidate_files if uf.name.lower().endswith(allowed_suffixes)
+        ]
+        if not filtered_files:
+            st.warning("No compatible files to upload. Please choose different files.")
+            return
+
         # Check for duplicates
         with st.spinner("Checking for duplicate files..."):
-            duplicate_results = rag_service.check_file_duplicates(uploaded_files)
+            duplicate_results = rag_service.check_file_duplicates(filtered_files)
 
         if not duplicate_results or "results" not in duplicate_results:
             st.error("❌ Failed to check for duplicates. Please try again.")
@@ -136,8 +146,8 @@ class RAGPage:
         # Separate duplicates and new files
         dup_flags = {r.get("filename"): r.get("is_duplicate") 
                     for r in duplicate_results.get("results", [])}
-        duplicates = [uf for uf in uploaded_files if dup_flags.get(uf.name)]
-        new_files = [uf for uf in uploaded_files if not dup_flags.get(uf.name)]
+        duplicates = [uf for uf in filtered_files if dup_flags.get(uf.name)]
+        new_files = [uf for uf in filtered_files if not dup_flags.get(uf.name)]
 
         if not new_files:
             st.warning("⚠️ All selected files are duplicates. Nothing to upload.")
@@ -230,7 +240,7 @@ class RAGPage:
     
     def _render_query_section(self):
         """Render the query interface."""
-        st.subheader("🔍 Query Your Knowledge Base")
+        st.subheader("Query Your Knowledge Base")
         
         # Display chat history
         for message in st.session_state.rag_messages:
@@ -239,7 +249,7 @@ class RAGPage:
         
         # Get user input
         rag_input = get_voice_input(
-            "Ask about your documents, data analysis, image content, or any uploaded materials...", 
+            "Ask about your documents...", 
             "rag"
         )
         
@@ -420,8 +430,6 @@ class RAGPage:
         
         # Only show Ollama base model selection when Ollama backend is selected
         if backend_provider == "ollama" and st.session_state.get("backend_available", False):
-            # st.sidebar.markdown("---")
-            st.sidebar.subheader("🦙 Base Model")
             
             available_models = backend_service.get_available_models()
             if available_models:
