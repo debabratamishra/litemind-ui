@@ -3,8 +3,13 @@ import mimetypes
 from pathlib import Path
 from typing import Dict, List, Tuple
 import logging
+import warnings
 from app.ingestion.enhanced_document_processor import extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced
 
+# Suppress pypdf warnings about malformed PDF objects
+logging.getLogger('pypdf._reader').setLevel(logging.ERROR)
+logging.getLogger('pypdf').setLevel(logging.ERROR)
+warnings.filterwarnings('ignore', module='pypdf')
 
 try:
     from unstructured.partition.auto import partition

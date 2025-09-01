@@ -17,6 +17,12 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import pdfplumber
 import camelot
+import warnings
+
+logging.getLogger('pypdf._reader').setLevel(logging.ERROR)
+logging.getLogger('pypdf').setLevel(logging.ERROR)
+
+warnings.filterwarnings('ignore', module='pypdf')
 
 logger = logging.getLogger(__name__)
 

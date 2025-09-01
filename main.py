@@ -455,11 +455,19 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
     results = []
     saved_paths = []
     
-    # Check for duplicates
+    # Save files and check for duplicates
     for up in files:
-        is_duplicate, reason = rag_service._is_file_already_processed("", up.filename)
+        # Save file first
+        dest = UPLOAD_FOLDER / up.filename
+        with open(dest, "wb") as f:
+            f.write(await up.read())
+        
+        # Check for duplicates using the saved file path
+        is_duplicate, reason = rag_service._is_file_already_processed(str(dest), up.filename)
         
         if is_duplicate:
+            # Remove the saved file since it's a duplicate
+            dest.unlink(missing_ok=True)
             results.append({
                 "filename": up.filename,
                 "status": "duplicate",
@@ -468,10 +476,6 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             })
             continue
         
-        # Save file
-        dest = UPLOAD_FOLDER / up.filename
-        with open(dest, "wb") as f:
-            f.write(await up.read())
         saved_paths.append((dest, up.filename))
 
     # Process files
