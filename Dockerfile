@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1 \
     STARTUP_TIMEOUT=60
 
 # Install system dependencies including health check tools and minimal OpenCV requirements
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     wget \
@@ -27,15 +27,21 @@ RUN apt-get update && apt-get install -y \
     libfreetype6 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv (fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/profile
+ENV PATH="/root/.local/bin:${PATH}"
+ENV UV_LINK_MODE=copy
+
 # Create app directory
 WORKDIR /app
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies with health check support
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir requests psutil
+# Install Python dependencies with uv + build cache
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system -r requirements.txt
 
 # Copy application code
 COPY . .

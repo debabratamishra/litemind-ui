@@ -1,0 +1,33 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: true
+
+jobs:
+  syntax-and-basic-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate Python compiles
+        run: |
+          python -m compileall -q app main.py streamlit_app.py || {
+            echo 'Python syntax errors detected.';
+            exit 1;
+          }
+
+      # Add linters (ruff/flake8/mypy) later as desired
