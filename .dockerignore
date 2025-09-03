@@ -1,11 +1,17 @@
 # Git
 .git
 .gitignore
+.github
 
 # Docker
 Dockerfile*
 docker-compose*.yml
 .dockerignore
+
+# Documentation
+*.md
+docs/
+DOCKER*.md
 
 # Python
 __pycache__
@@ -53,12 +59,18 @@ chroma_db/*
 storage/*
 !storage/.gitkeep
 
-# Documentation
-README.md
-*.md
-docs/
+# Version and release files
+version.json
+RELEASE-*.md
 
-# Other
+# Development scripts
+scripts/prepare-release.py
+scripts/version.py
+install.sh
+
+# Local configuration
 .env
 .env.local
 .env.*.local
+.streamlit/secrets.toml
+config.local.*

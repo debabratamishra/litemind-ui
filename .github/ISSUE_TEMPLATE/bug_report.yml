@@ -1,0 +1,103 @@
+name: Bug Report
+description: File a bug report to help us improve
+title: "[BUG] "
+labels: ["bug", "needs-triage"]
+assignees: ["debabratamishra"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+        
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of what the bug is.
+      placeholder: Tell us what you see!
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: deployment-method
+    attributes:
+      label: How are you running LiteMindUI?
+      multiple: false
+      options:
+        - Docker Hub images (docker-compose.hub.yml)
+        - Built from source (docker-compose.yml)
+        - Native installation (pip install)
+        - One-line install script
+    validations:
+      required: true
+      
+  - type: textarea
+    id: steps-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Tell us how to reproduce this behavior
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+      
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: A clear description of what you expected to happen
+    validations:
+      required: true
+      
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Please copy and paste any relevant log output. This will be automatically formatted into code, so no need for backticks.
+      render: shell
+      
+  - type: dropdown
+    id: browsers
+    attributes:
+      label: What browsers are you seeing the problem on?
+      multiple: true
+      options:
+        - Firefox
+        - Chrome
+        - Safari
+        - Microsoft Edge
+        
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What version of LiteMindUI are you running?
+      placeholder: e.g., v0.0.1 or latest
+    validations:
+      required: true
+      
+  - type: textarea
+    id: system-info
+    attributes:
+      label: System Information
+      description: |
+        Provide system information to help debug the issue
+      placeholder: |
+        - OS: [e.g. macOS 14.0, Ubuntu 20.04, Windows 11]
+        - Docker Version: [e.g. 20.10.8]
+        - Python Version: [e.g. 3.12.0]
+    validations:
+      required: true
+      
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our Code of Conduct
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true

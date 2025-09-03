@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: llmwebui-backend-prod
+    container_name: litemindui-backend-prod
     network_mode: host
     volumes:
       # OS-independent cache directories using environment variables (read-only for security)
@@ -76,7 +76,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.streamlit
-    container_name: llmwebui-frontend-prod
+    container_name: litemindui-frontend-prod
     network_mode: host
     volumes:
       - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}:ro

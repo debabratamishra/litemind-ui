@@ -1,9 +1,10 @@
-# LLM WebUI specific
+# LiteMindUI specific
 uploads/
 instance/
 chroma_db/
 storage/
 logs/
+CI_CD.md
 
 # Python
 __pycache__/
@@ -26,12 +27,14 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.pytest_cache/
 
 # Environment files
 .env
 .env.local
 .env.development
 .env.production
+.env.docker
 
 # Database files
 *.db

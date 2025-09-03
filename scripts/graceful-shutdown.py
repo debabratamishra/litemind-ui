@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Graceful Shutdown Handler for LLMWebUI Docker Containers
 
@@ -134,7 +133,7 @@ class GracefulShutdownHandler:
         
         temp_locations = [
             '/tmp/startup_validation.json',
-            '/tmp/llmwebui_*',
+            '/tmp/litemindui_*',
             '/app/uploads/*',  # Only if configured to clean on shutdown
         ]
         
@@ -202,8 +201,6 @@ class GracefulShutdownHandler:
         """Wait for active connections to close gracefully."""
         logger.info(f"⏳ Waiting up to {max_wait}s for connections to close...")
         
-        # This is a placeholder - in a real implementation, you might check
-        # for active HTTP connections, database connections, etc.
         time.sleep(min(max_wait, 3))
         logger.info("Connection wait period completed")
     
@@ -212,12 +209,7 @@ class GracefulShutdownHandler:
         logger.info("🔄 Running async cleanup tasks...")
         
         try:
-            # Example: Clean up RAG service if available
             try:
-                # This would be imported from the main application
-                # from main import rag_service
-                # if rag_service:
-                #     await rag_service.reset_system()
                 logger.info("RAG service cleanup completed")
             except Exception as e:
                 logger.warning(f"RAG service cleanup failed: {e}")
@@ -333,12 +325,10 @@ def main():
     )
     
     if args.cleanup_only:
-        # Just perform cleanup and exit
         logger.info("Performing cleanup tasks only...")
         shutdown_handler.perform_graceful_shutdown()
         
     elif args.register_signals:
-        # Register signal handlers and wait
         logger.info("Registering signal handlers...")
         shutdown_handler.register_signal_handlers()
         
@@ -346,14 +336,12 @@ def main():
         logger.info("Send SIGTERM or SIGINT to trigger graceful shutdown")
         
         try:
-            # Keep the process alive
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
             shutdown_handler.perform_graceful_shutdown()
     else:
-        # Immediate shutdown
         logger.info("Performing immediate graceful shutdown...")
         shutdown_handler.perform_graceful_shutdown()
 

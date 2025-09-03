@@ -1,0 +1,17 @@
+# Code Owners
+# This file defines who owns different parts of the codebase
+# See: https://docs.github.com/en/repositories/managing-files-in-a-repository/managing-files-using-the-web-interface/about-code-owners
+
+# Global owners
+* @debabratamishra
+
+# CI/CD and Docker configurations
+.github/ @debabratamishra
+docker-compose*.yml @debabratamishra
+Dockerfile* @debabratamishra
+scripts/ @debabratamishra
+
+# Release and version management
+version.json @debabratamishra
+RELEASE-*.md @debabratamishra
+CI_CD.md @debabratamishra
