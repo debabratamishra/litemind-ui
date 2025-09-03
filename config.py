@@ -9,7 +9,7 @@ class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key')
     
     # Database configuration - handle containerized paths
-    SQLALCHEMY_DATABASE_URI = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite+aiosqlite:///app/llm_webui.db')
+    SQLALCHEMY_DATABASE_URI = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite+aiosqlite:///app/litemindui.db')
     
     # Service URLs
     OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434')

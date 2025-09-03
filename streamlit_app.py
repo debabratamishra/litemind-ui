@@ -1,6 +1,9 @@
 """
-LLM WebUI - A production-ready Streamlit interface for Large Language Models.
-Supports multiple backends (Ollama, vLLM) with voice input and RAG capabilities.
+LiteMindUI - A production-ready Streamlit interface for Large Language Models.
+
+This application provides an intuitive web interface for interacting with LLMs
+through both Ollama (local models) and vLLM (HuggingFace models) backends.
+It also supports document Q&A through RAG (Retrieval-Augmented Generation).
 """
 import logging
 import streamlit as st
@@ -23,7 +26,7 @@ class StreamlitApp:
         
     def setup_page_config(self):
         st.set_page_config(
-            page_title="LLM WebUI", 
+            page_title="LiteMindUI", 
             layout="wide", 
             initial_sidebar_state="expanded"
         )
@@ -39,13 +42,19 @@ class StreamlitApp:
                 if st.session_state.backend_available else None
             )
         
+        # Initialize page selection with explicit default
         if "selected_page" not in st.session_state:
+            st.session_state.selected_page = "💬 Chat"
+        
+        # Validate selected page is valid
+        valid_pages = ["💬 Chat", "📚 RAG"]
+        if st.session_state.selected_page not in valid_pages:
             st.session_state.selected_page = "💬 Chat"
             
         st.session_state.setdefault("chat_messages", [])
     
     def render_sidebar_header(self):
-        st.sidebar.title("🤖 LLM WebUI")
+        st.sidebar.markdown("# 🤖 LiteMindUI")
         st.sidebar.markdown("---")
         
         self.render_backend_selection()
@@ -85,15 +94,26 @@ class StreamlitApp:
     def render_page_navigation(self):
         st.sidebar.markdown("---")
         
+        # Get current page index, defaulting to Chat (0) if not found
+        page_options = ["💬 Chat", "📚 RAG"]
+        try:
+            current_index = page_options.index(st.session_state.selected_page)
+        except (ValueError, KeyError):
+            current_index = 0
+            st.session_state.selected_page = page_options[0]
+        
+        # Use a callback to handle page changes immediately
+        def on_page_change():
+            if st.session_state.page_selector_new != st.session_state.selected_page:
+                st.session_state.selected_page = st.session_state.page_selector_new
+        
         page = st.sidebar.selectbox(
             "Navigate to:", 
-            ["💬 Chat", "📚 RAG"], 
-            index=0 if st.session_state.selected_page == "💬 Chat" else 1,
-            key="page_selector"
+            page_options,
+            index=current_index,
+            key="page_selector_new",
+            on_change=on_page_change
         )
-        
-        if page != st.session_state.selected_page:
-            st.session_state.selected_page = page
     
     def render_system_status(self):
         st.sidebar.markdown("---")
@@ -112,12 +132,23 @@ class StreamlitApp:
     def run(self):
         self.render_sidebar_header()
         
-        selected_page = st.session_state.selected_page
+        # Ensure we have a valid page selected
+        selected_page = st.session_state.get("selected_page", "💬 Chat")
         
-        if selected_page == "💬 Chat":
-            render_chat_page()
-        elif selected_page == "📚 RAG":
-            render_rag_page()
+        # Route to the appropriate page
+        try:
+            if selected_page == "💬 Chat":
+                render_chat_page()
+            elif selected_page == "📚 RAG":
+                render_rag_page()
+            else:
+                # Fallback to chat if invalid page
+                st.session_state.selected_page = "💬 Chat"
+                render_chat_page()
+        except Exception as e:
+            # Error handling for page rendering
+            st.error(f"Error loading {selected_page}: {str(e)}")
+            st.info("Please try refreshing the page or selecting a different page.")
 
 
 def main():

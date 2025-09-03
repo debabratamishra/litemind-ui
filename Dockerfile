@@ -1,4 +1,4 @@
-# Multi-stage build for LLMWebUI FastAPI Backend
+# Multi-stage build for LiteMindUI FastAPI Backend
 FROM python:3.12-slim as base
 
 # Set environment variables

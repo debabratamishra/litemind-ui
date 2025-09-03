@@ -1,5 +1,5 @@
 """
-LLM WebUI FastAPI Backend
+LiteMindUI FastAPI Backend
 Production-ready API server with chat and RAG capabilities.
 """
 import asyncio
@@ -59,9 +59,7 @@ DEFAULT_RAG_CONFIG = {
     "chunk_size": 500,
 }
 
-# Global service instance
 rag_service = None
-
 
 # Request/Response Models
 class ChatRequestEnhanced(BaseModel):
@@ -88,21 +86,17 @@ class ChatResponse(BaseModel):
     response: str
     model: str
 
-
 class RAGConfigRequest(BaseModel):
     provider: str
     embedding_model: str
     chunk_size: int
 
-
 class STTRequest(BaseModel):
-    audio_data: str  # Base64 encoded
+    audio_data: str
     sample_rate: Optional[int] = 16000
-
 
 class VLLMTokenRequest(BaseModel):
     token: str
-
 
 class VLLMModelRequest(BaseModel):
     model_name: str
@@ -111,7 +105,6 @@ class VLLMModelRequest(BaseModel):
     gpu_memory_utilization: Optional[float] = 0.9
 
 
-# Local embedding function
 class LocalHFEmbeddingFunction:
     """Local HuggingFace embedding function with batching"""
 
@@ -160,15 +153,13 @@ def save_rag_config_local(cfg: Dict) -> None:
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown"""
     app.state.start_time = time.time()
-    logger.info("LLM WebUI API starting up...")
+    logger.info("LiteMindUI API starting up...")
     
-    # Log environment info
     config_info = Config.get_dynamic_config()
     logger.info(f"Environment: {'containerized' if config_info['is_containerized'] else 'native'}")
     logger.info(f"Upload folder: {UPLOAD_FOLDER}")
     logger.info(f"Storage path: {config_info['storage_dir']}")
 
-    # Clear uploads on startup
     try:
         if UPLOAD_FOLDER.exists():
             shutil.rmtree(UPLOAD_FOLDER, ignore_errors=True)
@@ -228,13 +219,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Cleanup failed: {e}")
 
-    logger.info("LLM WebUI API shutting down...")
+    logger.info("LiteMindUI API shutting down...")
 
 
 # FastAPI app
 app = FastAPI(
-    title="LLM WebUI API",
-    description="Production API for LLM WebUI with Chat and RAG capabilities",
+    title="LiteMindUI API",
+    description="Production API for LiteMindUI with Chat and RAG capabilities",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -257,7 +248,7 @@ except Exception:
 # Health endpoints
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "LLM WebUI API"}
+    return {"status": "healthy", "service": "LiteMindUI API"}
 
 
 @app.get("/health/ready")
@@ -425,7 +416,6 @@ async def save_rag_config(request: RAGConfigRequest):
         })
         save_rag_config_local(cfg)
 
-        # Update embedding function
         if request.provider.lower() == "ollama":
             current_config = Config.get_dynamic_config()
             rag_service.embedding_function = OllamaEmbeddingFunction(
@@ -466,7 +456,6 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
         is_duplicate, reason = rag_service._is_file_already_processed(str(dest), up.filename)
         
         if is_duplicate:
-            # Remove the saved file since it's a duplicate
             dest.unlink(missing_ok=True)
             results.append({
                 "filename": up.filename,
@@ -547,7 +536,6 @@ async def check_file_duplicates(files: List[UploadFile] = File(...)):
                 })
                 
             finally:
-                # Clean up temp file
                 if temp_path.exists():
                     temp_path.unlink()
 
@@ -575,7 +563,6 @@ async def reset_rag_system():
                 file_path.unlink()
                 files_removed += 1
 
-        # Reset service
         await rag_service.reset_system()
         
         return {

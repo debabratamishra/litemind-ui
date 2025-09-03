@@ -1,0 +1,79 @@
+# LiteMindUI - Production Docker Compose
+# This compose file uses pre-built images from Docker Hub
+# Version: 0.0.1
+
+version: '3.8'
+
+services:
+  backend:
+    image: debabratamishra/litemindui-backend:latest
+    container_name: litemindui-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Cache directories for model storage
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      - ${HOME}/.ollama:/root/.ollama
+      # Application data persistence
+      - ./uploads:/app/uploads
+      - ./chroma_db:/app/chroma_db
+      - ./storage:/app/storage
+      - ./.streamlit:/app/.streamlit
+      - ./logs:/app/logs
+    environment:
+      - OLLAMA_API_URL=http://host.docker.internal:11434
+      - VLLM_API_URL=http://host.docker.internal:8001
+      - CHROMA_DB_PATH=/app/chroma_db
+      - UPLOAD_FOLDER=/app/uploads
+      - STORAGE_PATH=/app/storage
+      - HF_HOME=/root/.cache/huggingface
+      - OLLAMA_MODELS=/root/.ollama
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      # Performance tuning
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
+      - NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-4}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: debabratamishra/litemindui-frontend:latest
+    container_name: litemindui-frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./.streamlit:/app/.streamlit
+      - ./logs:/app/logs
+    environment:
+      - FASTAPI_URL=http://backend:8000
+      - ENVIRONMENT=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  default:
+    driver: bridge

@@ -80,12 +80,13 @@ class ChatPage:
         
         if reply:
             st.session_state.chat_messages.append({"role": "assistant", "content": reply})
+            # Use rerun sparingly - only when necessary for UI updates
+            st.rerun()
         else:
             error_msg = "❌ No response received."
             st.error(error_msg)
             st.session_state.chat_messages.append({"role": "assistant", "content": "No response."})
-        
-        st.rerun()
+            # Don't rerun on error - let user try again naturally
     
     def _validate_setup(self, backend_provider: str) -> bool:
         if backend_provider == "vllm":
@@ -135,6 +136,9 @@ class ChatPage:
         # Clear chat
         if st.sidebar.button("🗑️ Clear Chat History", type="secondary"):
             st.session_state.chat_messages.clear()
+            # Clear any other chat-related state that might interfere
+            if "last_user_input" in st.session_state:
+                del st.session_state.last_user_input
             st.rerun()
     
     def _render_vllm_model_config(self):

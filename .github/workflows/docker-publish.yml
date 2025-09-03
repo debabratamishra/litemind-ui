@@ -1,0 +1,211 @@
+name: Build and Publish Docker Images
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
+      - develop
+  release:
+    types: [published]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME_BACKEND: debabratamishra/litemindui-backend
+  IMAGE_NAME_FRONTEND: debabratamishra/litemindui-frontend
+  IMAGE_NAME_COMPLETE: debabratamishra/litemindui
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Extract metadata for backend
+      id: meta-backend
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.IMAGE_NAME_BACKEND }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Extract metadata for frontend
+      id: meta-frontend
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.IMAGE_NAME_FRONTEND }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta-backend.outputs.tags }}
+        labels: ${{ steps.meta-backend.outputs.labels }}
+        platforms: linux/amd64,linux/arm64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.streamlit
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta-frontend.outputs.tags }}
+        labels: ${{ steps.meta-frontend.outputs.labels }}
+        platforms: linux/amd64,linux/arm64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  create-compose-release:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Extract version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Create Docker Compose for release
+      run: |
+        cat > docker-compose.release.yml << 'EOF'
+        # LiteMindUI - Production Docker Compose
+        # Version: ${{ steps.version.outputs.VERSION }}
+        
+        version: '3.8'
+        
+        services:
+          backend:
+            image: ${{ env.IMAGE_NAME_BACKEND }}:${{ steps.version.outputs.VERSION }}
+            container_name: litemindui-backend
+            ports:
+              - "8000:8000"
+            volumes:
+              - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+              - ${HOME}/.ollama:/root/.ollama
+              - ./uploads:/app/uploads
+              - ./chroma_db:/app/chroma_db
+              - ./storage:/app/storage
+              - ./.streamlit:/app/.streamlit
+              - ./logs:/app/logs
+            environment:
+              - OLLAMA_API_URL=http://host.docker.internal:11434
+              - VLLM_API_URL=http://host.docker.internal:8001
+              - CHROMA_DB_PATH=/app/chroma_db
+              - UPLOAD_FOLDER=/app/uploads
+              - STORAGE_PATH=/app/storage
+              - HF_HOME=/root/.cache/huggingface
+              - OLLAMA_MODELS=/root/.ollama
+              - ENVIRONMENT=production
+              - LOG_LEVEL=INFO
+            restart: unless-stopped
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+              start_period: 10s
+        
+          frontend:
+            image: ${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.version.outputs.VERSION }}
+            container_name: litemindui-frontend
+            ports:
+              - "8501:8501"
+            volumes:
+              - ./.streamlit:/app/.streamlit
+              - ./logs:/app/logs
+            environment:
+              - FASTAPI_URL=http://backend:8000
+              - ENVIRONMENT=production
+            restart: unless-stopped
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:8501"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+              start_period: 10s
+            depends_on:
+              backend:
+                condition: service_healthy
+        
+        networks:
+          default:
+            driver: bridge
+        EOF
+
+    - name: Upload release assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          docker-compose.release.yml
+        body: |
+          ## 🚀 LiteMindUI Release ${{ steps.version.outputs.VERSION }}
+          
+          ### Quick Start with Docker
+          
+          ```bash
+          # Download the release compose file
+          curl -O https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/docker-compose.release.yml
+          
+          # Start the application
+          docker-compose -f docker-compose.release.yml up -d
+          ```
+          
+          ### Docker Images
+          
+          - **Backend**: `${{ env.IMAGE_NAME_BACKEND }}:${{ steps.version.outputs.VERSION }}`
+          - **Frontend**: `${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.version.outputs.VERSION }}`
+          
+          ### Access Points
+          
+          - Frontend (Streamlit): http://localhost:8501
+          - Backend API: http://localhost:8000
+          - API Documentation: http://localhost:8000/docs
+          
+          ### Prerequisites
+          
+          - Docker and Docker Compose
+          - Ollama running locally (optional, for local LLM support)
+          
+          ---
+          
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ github.event.release.target_commitish }}...v${{ steps.version.outputs.VERSION }}
