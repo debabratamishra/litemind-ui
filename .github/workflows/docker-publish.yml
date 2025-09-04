@@ -16,9 +16,9 @@ concurrency:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME_BACKEND: debabratamishra/litemindui-backend
-  IMAGE_NAME_FRONTEND: debabratamishra/litemindui-frontend
-  IMAGE_NAME_COMPLETE: debabratamishra/litemindui
+  IMAGE_NAME_BACKEND: debabratamishra1/litemindui-backend
+  IMAGE_NAME_FRONTEND: debabratamishra1/litemindui-frontend
+  IMAGE_NAME_COMPLETE: debabratamishra1/litemindui
 
 jobs:
   build-and-push:
