@@ -7,6 +7,8 @@ It also supports document Q&A through RAG (Retrieval-Augmented Generation).
 """
 import logging
 import streamlit as st
+from pathlib import Path
+import os
 
 from app.frontend.services.backend_service import backend_service
 from app.frontend.components.vllm_config import setup_vllm_backend
@@ -23,6 +25,18 @@ class StreamlitApp:
     def __init__(self):
         self.setup_page_config()
         self.initialize_session_state()
+    
+    @staticmethod
+    def _detect_docker_environment() -> bool:
+        """Detect if running inside a Docker container."""
+        # Check for common container indicators
+        container_indicators = [
+            Path('/.dockerenv').exists(),
+            Path('/proc/1/cgroup').exists() and 'docker' in Path('/proc/1/cgroup').read_text(errors='ignore'),
+            os.getenv('CONTAINER') is not None,
+            os.getenv('DOCKER_CONTAINER') is not None
+        ]
+        return any(container_indicators)
         
     def setup_page_config(self):
         st.set_page_config(
@@ -41,6 +55,10 @@ class StreamlitApp:
                 backend_service.get_processing_capabilities() 
                 if st.session_state.backend_available else None
             )
+        
+        # Check if running in Docker
+        if "is_docker_deployment" not in st.session_state:
+            st.session_state.is_docker_deployment = self._detect_docker_environment()
         
         # Initialize page selection with explicit default
         if "selected_page" not in st.session_state:
@@ -64,30 +82,43 @@ class StreamlitApp:
     def render_backend_selection(self):
         st.sidebar.subheader("⚙️ Backend Provider")
         
+        # Check if running in Docker environment
+        is_docker = st.session_state.get("is_docker_deployment", False)
+        
         if st.session_state.backend_available:
-            backend_provider = st.sidebar.radio(
-                "Select LLM Backend:",
-                ["ollama", "vllm"],
-                format_func=lambda x: "🦙 Ollama" if x == "ollama" else "⚡ vLLM",
-                key="backend_provider",
-                help="Choose between Ollama (local) or vLLM (Huggingface) backend"
-            )
-            
-            # Handle backend switching
-            if "current_backend" not in st.session_state:
-                st.session_state.current_backend = backend_provider
-            elif st.session_state.current_backend != backend_provider:
-                st.session_state.current_backend = backend_provider
-                if "vllm_model" in st.session_state:
-                    del st.session_state.vllm_model
-                st.rerun()
+            # If Docker deployment, only show Ollama option
+            if is_docker:
+                st.sidebar.info("🦙 Ollama Backend")
+                st.sidebar.warning("⚠️ vLLM is not supported with Docker installation yet. It will be added shortly.")
+                backend_provider = "ollama"
+                # Force current backend to ollama in Docker
+                st.session_state.current_backend = "ollama"
+            else:
+                # Native deployment, show both options
+                backend_provider = st.sidebar.radio(
+                    "Select LLM Backend:",
+                    ["ollama", "vllm"],
+                    format_func=lambda x: "🦙 Ollama" if x == "ollama" else "⚡ vLLM",
+                    key="backend_provider",
+                    help="Choose between Ollama (local) or vLLM (Huggingface) backend"
+                )
+                
+                # Handle backend switching
+                if "current_backend" not in st.session_state:
+                    st.session_state.current_backend = backend_provider
+                elif st.session_state.current_backend != backend_provider:
+                    st.session_state.current_backend = backend_provider
+                    if "vllm_model" in st.session_state:
+                        del st.session_state.vllm_model
+                    st.rerun()
         else:
             backend_provider = "ollama"
             st.sidebar.info("🔴 FastAPI backend required for vLLM support")
         
-        # Show vLLM configuration if selected
+        # Show vLLM configuration if selected and not in Docker
         if (st.session_state.backend_available and 
-            st.session_state.current_backend == "vllm"):
+            st.session_state.current_backend == "vllm" and
+            not is_docker):
             st.sidebar.markdown("---")
             setup_vllm_backend()
     
@@ -119,10 +150,15 @@ class StreamlitApp:
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔧 System Status")
         
+        # Show Docker deployment status
+        is_docker = st.session_state.get("is_docker_deployment", False)
+        if is_docker:
+            st.sidebar.info("🐳 Docker Deployment")
+        
         if st.session_state.backend_available:
             st.sidebar.success("✅ FastAPI Backend Connected")
             backend_provider = st.session_state.get("current_backend", "ollama")
-            if backend_provider == "vllm":
+            if backend_provider == "vllm" and not is_docker:
                 st.sidebar.info("⚡ vLLM Mode Active")
             else:
                 st.sidebar.info("🦙 Ollama Mode Active")

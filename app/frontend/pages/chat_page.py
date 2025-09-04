@@ -89,6 +89,13 @@ class ChatPage:
             # Don't rerun on error - let user try again naturally
     
     def _validate_setup(self, backend_provider: str) -> bool:
+        is_docker = st.session_state.get("is_docker_deployment", False)
+        
+        # Prevent vLLM usage in Docker
+        if backend_provider == "vllm" and is_docker:
+            st.error("❌ vLLM is not supported with Docker installation yet. Please use Ollama backend.")
+            return False
+        
         if backend_provider == "vllm":
             vllm_model = st.session_state.get("vllm_model")
             if not vllm_model:
@@ -119,9 +126,13 @@ class ChatPage:
         st.sidebar.subheader("💬 Chat Configuration")
         
         backend_provider = st.session_state.get("current_backend", "ollama")
+        is_docker = st.session_state.get("is_docker_deployment", False)
         
-        # Model selection
-        if backend_provider == "vllm":
+        # Model selection - only show if not vLLM in Docker
+        if backend_provider == "vllm" and is_docker:
+            st.sidebar.warning("⚠️ vLLM not supported in Docker deployment")
+            st.sidebar.info("Please use Ollama backend instead")
+        elif backend_provider == "vllm":
             self._render_vllm_model_config()
         else:
             self._render_ollama_model_config()

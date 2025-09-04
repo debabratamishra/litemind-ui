@@ -259,8 +259,13 @@ class RAGPage:
     def _process_rag_query(self, query: str):
         """Process RAG query and generate response."""
         backend_provider = st.session_state.get("current_backend", "ollama")
+        is_docker = st.session_state.get("is_docker_deployment", False)
         
-        # Validate setup
+        # Validate setup - prevent vLLM usage in Docker
+        if backend_provider == "vllm" and is_docker:
+            st.error("❌ vLLM is not supported with Docker installation yet. Please use Ollama backend.")
+            return
+        
         if backend_provider == "vllm" and not st.session_state.get("vllm_model"):
             st.error("❌ Please configure and load a vLLM model first")
             return
@@ -427,9 +432,14 @@ class RAGPage:
     def _render_sidebar_base_model_selection(self):
         """Render base model selection for RAG in sidebar."""
         backend_provider = st.session_state.get("current_backend", "ollama")
+        is_docker = st.session_state.get("is_docker_deployment", False)
         
+        # Handle vLLM in Docker deployment
+        if backend_provider == "vllm" and is_docker:
+            st.sidebar.warning("⚠️ vLLM not supported in Docker deployment")
+            st.sidebar.info("Please use Ollama backend for RAG operations")
         # Only show Ollama base model selection when Ollama backend is selected
-        if backend_provider == "ollama" and st.session_state.get("backend_available", False):
+        elif backend_provider == "ollama" and st.session_state.get("backend_available", False):
             
             available_models = backend_service.get_available_models()
             if available_models:

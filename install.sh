@@ -42,6 +42,40 @@ check_dependencies() {
     echo -e "${GREEN}✅ Docker and Docker Compose are installed${NC}"
 }
 
+detect_compose_cmd() {
+    # Prefer docker-compose binary if present, otherwise fallback to `docker compose` plugin
+    if command -v docker-compose &> /dev/null; then
+        COMPOSE_CMD="docker-compose"
+    elif command -v docker &> /dev/null && docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    else
+        echo -e "${RED}❌ Neither 'docker-compose' nor 'docker compose' is available. Please install Docker Compose or enable the Docker Compose CLI plugin.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✅ Using compose command: ${COMPOSE_CMD}${NC}"
+}
+
+maybe_set_default_platform() {
+    arch=$(uname -m || true)
+    # Detect Apple Silicon / arm64 hosts and set default platform to amd64 to allow emulation
+    if [[ "$arch" == "arm64" || "$arch" == "aarch64" ]]; then
+        echo -e "${YELLOW}⚠️  Detected arm64 host. Setting DOCKER_DEFAULT_PLATFORM=linux/amd64 to pull amd64 images via emulation.${NC}"
+        export DOCKER_DEFAULT_PLATFORM="linux/amd64"
+    fi
+}
+
+platform_guidance() {
+    osname=$(uname -s || echo "unknown")
+    case "$osname" in
+        MINGW*|MSYS*|CYGWIN*|Windows_NT)
+            echo -e "${YELLOW}Note: On Windows, run this installer from WSL2 (recommended) or Git Bash which provides bash. If running on plain PowerShell/cmd, use WSL or install Git Bash.${NC}"
+            ;;
+        *)
+            # no-op for Linux/macOS
+            ;;
+    esac
+}
+
 download_files() {
     echo -e "${YELLOW}📥 Downloading configuration files...${NC}"
     
@@ -177,6 +211,9 @@ main() {
     
     print_banner
     check_dependencies
+    detect_compose_cmd
+    maybe_set_default_platform
+    platform_guidance
     download_files
     run_setup
     start_services

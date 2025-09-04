@@ -56,117 +56,157 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 
 ---
 
-## 📋 Prerequisites
+### � Installation
 
-**For Ollama Backend:**
-- Python 3.12+ (Should support earlier versions, but tested with 3.12+)
-- Ollama - Running locally on `localhost:11434`
-- UV Package Manager - For dependency management
-
-**For vLLM Backend (Optional):**
-- Hugging Face account and access token
-- Compatible GPU (recommended for better performance)
-- FastAPI backend running (automatically configured)
-
----
-
-## 🛠 Installation
+The instructions below are tested against this repository: https://github.com/debabratamishra/litemind-ui and Docker images pushed to Docker Hub under the user `debabratamishra1` (https://hub.docker.com/u/debabratamishra1).
 
 ### Option 1: Quick Install (Recommended)
 
-**One-Line Install with Docker Hub Images:**
+One-line installer (downloads pre-built Docker images and starts services):
+
+> **📝 Note:** Docker deployment currently supports Ollama backend only. vLLM backend support will be added in a future release.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/debabratamishra/litemindui/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/install.sh | bash
 ```
 
-This will:
-- Download and start pre-built Docker images from Docker Hub
-- Set up the necessary configuration files
-- Start both frontend and backend services
-- Guide you through the setup process
+What this does:
+- Downloads and starts pre-built Docker images from Docker Hub (user: `debabratamishra1`)
+- Writes basic configuration files if missing
+- Starts frontend and backend services using docker-compose
 
-**Manual Docker Hub Installation:**
+If you prefer to inspect the compose file before starting, see Option 1 (manual) below.
+
+**Manual Docker Hub Installation**
 
 ```bash
 # Download the production compose file
-curl -O https://raw.githubusercontent.com/debabratamishra/litemindui/main/docker-compose.hub.yml
+curl -O https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/docker-compose.hub.yml
 
-# Create necessary directories
+# Create required directories (only needed once)
 mkdir -p uploads chroma_db storage .streamlit logs
 
-# Start with Docker Hub images
+# Start services with the provided compose file
 docker-compose -f docker-compose.hub.yml up -d
 ```
 
-**Available Docker Images:**
-- **Backend**: [`debabratamishra/litemindui-backend:latest`](https://hub.docker.com/r/debabratamishra1/litemindui-backend)
-- **Frontend**: [`debabratamishra/litemindui-frontend:latest`](https://hub.docker.com/r/debabratamishra1/litemindui-frontend)
+Available Docker images (hosted on Docker Hub under `debabratamishra1`):
+- Backend: https://hub.docker.com/r/debabratamishra1/litemindui-backend
+- Frontend: https://hub.docker.com/r/debabratamishra1/litemindui-frontend
 
 ### Option 2: Docker Build from Source
 
-**Quick Start with Docker:**
+Quick start (build and run locally with Docker):
 
-1. **Clone the repository**
+> **📝 Note:** Docker deployment currently supports Ollama backend only. vLLM backend support will be added in a future release.
+
+1. Clone the repository
+
 ```bash
-git clone https://github.com/debabratamishra/litemindui
-cd litemindui
+git clone https://github.com/debabratamishra/litemind-ui
+cd litemind-ui
 ```
 
-2. **Setup Docker environment**
+2. Setup Docker environment
+
 ```bash
 make setup
 # or manually: ./scripts/docker-setup.sh
 ```
 
-3. **Start the application**
+3. Start the application
+
 ```bash
 make up
 # or: docker-compose up -d
 ```
 
-4. **Access the application**
+4. Access the application
+
 - Frontend (Streamlit): http://localhost:8501
 - Backend API: http://localhost:8000
 - API Documentation: http://localhost:8000/docs
 
-**Prerequisites for Docker:**
+Prerequisites for Docker:
 - Docker and Docker Compose installed
-- Ollama running on host system (`localhost:11434`)
+- Ollama running on host system (if you plan to use local Ollama models) at `http://localhost:11434`
 - At least 4GB RAM (8GB+ recommended)
 
-**Volume Mounts & Host Integration:**
-- Automatically mounts HuggingFace cache (`~/.cache/huggingface`)
-- Mounts Ollama cache (`~/.ollama`) for model persistence
-- Preserves uploaded documents and vector database
-- Manages vLLM processes on host system
+See `DOCKER.md` for advanced configuration and troubleshooting.
 
-📖 **For detailed Docker setup, troubleshooting, and advanced configuration, see [DOCKER.md](DOCKER.md).**
+Make commands for Docker Hub images (already provided in the Makefile):
 
-**Docker Hub vs Build from Source:**
-- **Docker Hub (Recommended)**: Pre-built images, faster deployment, automatic updates
-- **Build from Source**: Latest development features, customizable builds, development mode
-
-**Make Commands for Docker Hub:**
 ```bash
 make hub-up      # Start with Docker Hub images
 make hub-down    # Stop Docker Hub services
 make version     # Show version management options
 ```
 
-**Common Docker Issues:**
-- Ollama connection problems → Check if Ollama is running on `localhost:11434`
-- Permission errors → Run `chmod 755 ~/.cache/huggingface ~/.ollama`
-- Port conflicts → Use `lsof -i :8000 :8501` to check port usage
-- Build failures → Run `make clean && make setup && make up`
+### Option 3: Native (Local Python) Installation
 
-### Option 3: Native Installation
+Use this if you prefer to run services locally without Docker. These instructions assume Python 3.12+ and a virtual environment.
 
-1. **Clone the repository**
+1. Clone the repository
 
 ```bash
-git clone https://github.com/debabratamishra/litemindui
-cd litemindui
+git clone https://github.com/debabratamishra/litemind-ui
+cd litemind-ui
+```
+
+2. Create and activate a virtual environment, then install dependencies
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+3. Create required directories
+
+```bash
+mkdir -p uploads .streamlit
+```
+
+Environment variables you may want to set (examples):
+
+```bash
+export OLLAMA_BASE_URL="http://localhost:11434"
+export UPLOAD_FOLDER="./uploads"
+```
+
+Notes:
+- Running the full stack natively requires additional setup (Ollama, model files, vLLM/GPU drivers) and is intended for development.
+- For most users, the Docker-based Quick Install is the simplest way to get started.
+
+### Platform notes
+
+Quick notes for different host platforms:
+
+- macOS (Apple Silicon / M1/M2): Docker will run amd64 images under emulation which can be slower. The installer now auto-sets DOCKER_DEFAULT_PLATFORM=linux/amd64 for arm64 hosts. If you prefer, set it manually before running the installer:
+
+```bash
+export DOCKER_DEFAULT_PLATFORM=linux/amd64
+curl -fsSL https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/install.sh | bash
+```
+
+- macOS (Intel) and Linux (Ubuntu): The quick-install should work as-is provided Docker and docker-compose (or the Docker Compose CLI plugin) are installed.
+
+- Windows: Run the installer inside WSL2 (recommended) or Git Bash. Plain PowerShell/cmd doesn't provide bash by default. Example using WSL2:
+
+```powershell
+wsl
+# inside WSL shell
+curl -fsSL https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/install.sh | bash
+```
+
+If you run into platform/architecture errors during image pull, try pulling manually and inspecting logs:
+
+```bash
+docker-compose -f docker-compose.hub.yml pull
+docker-compose -f docker-compose.hub.yml up -d
+docker-compose -f docker-compose.hub.yml logs -f
+```
 ```
 
 2. **Install dependencies**

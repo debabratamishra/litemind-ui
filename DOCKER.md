@@ -2,6 +2,8 @@
 
 This guide covers how to run LLMWebUI using Docker containers while maintaining integration with host system services like Ollama and vLLM.
 
+> **📝 Note:** vLLM backend is currently not supported in Docker deployments. Only Ollama backend is available when running in Docker. vLLM support for Docker will be added in a future release.
+
 ## Quick Start
 
 1. **Setup the environment:**
@@ -49,7 +51,8 @@ This guide covers how to run LLMWebUI using Docker containers while maintaining 
 - **Requirements:**
   - Conda environment named `llm_ui`
   - GPU support (recommended)
-- **Management:** Controlled by the containerized application
+- **Docker Support:** Currently not supported in Docker deployments (coming soon)
+- **Management:** Controlled by the containerized application (native deployments only)
 
 #### Host Service Dependencies
 

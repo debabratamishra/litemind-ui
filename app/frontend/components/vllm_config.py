@@ -5,6 +5,8 @@ import logging
 import time
 import streamlit as st
 from typing import List, Optional, Tuple
+from pathlib import Path
+import os
 
 from ..services.backend_service import backend_service
 
@@ -17,9 +19,29 @@ class VLLMConfig:
     def __init__(self):
         self.backend_service = backend_service
     
+    @staticmethod
+    def _detect_docker_environment() -> bool:
+        """Detect if running inside a Docker container."""
+        # Check for common container indicators
+        container_indicators = [
+            Path('/.dockerenv').exists(),
+            Path('/proc/1/cgroup').exists() and 'docker' in Path('/proc/1/cgroup').read_text(errors='ignore'),
+            os.getenv('CONTAINER') is not None,
+            os.getenv('DOCKER_CONTAINER') is not None
+        ]
+        return any(container_indicators)
+    
     def render_config(self) -> Tuple[bool, Optional[str]]:
         """Render vLLM configuration and return (token_valid, token)."""
         st.sidebar.subheader("🤗 vLLM Configuration")
+        
+        # Check if running in Docker and show warning
+        is_docker = st.session_state.get("is_docker_deployment", self._detect_docker_environment())
+        if is_docker:
+            st.sidebar.error("❌ vLLM is not supported with Docker installation yet")
+            st.sidebar.info("🔄 This feature will be added shortly")
+            st.sidebar.info("💡 Please use Ollama backend for now")
+            return False, None
         
         # Fetch available models
         models_data = self._fetch_models()
