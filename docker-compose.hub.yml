@@ -6,7 +6,7 @@ version: '3.8'
 
 services:
   backend:
-    image: debabratamishra/litemindui-backend:latest
+    image: debabratamishra1/litemindui-backend:latest
     container_name: litemindui-backend
     ports:
       - "8000:8000"
@@ -48,7 +48,7 @@ services:
         max-file: "3"
 
   frontend:
-    image: debabratamishra/litemindui-frontend:latest
+    image: debabratamishra1/litemindui-frontend:latest
     container_name: litemindui-frontend
     ports:
       - "8501:8501"

@@ -6,8 +6,8 @@ This is the first release of LiteMindUI application.
 
 ## 🐳 Docker Images
 
-- **Backend**: `debabratamishra/litemindui-backend:0.0.1`
-- **Frontend**: `debabratamishra/litemindui-frontend:0.0.1`
+- **Backend**: `debabratamishra1/litemindui-backend:0.0.1`
+- **Frontend**: `debabratamishra1/litemindui-frontend:0.0.1`
 
 ## 📦 Quick Start
 
