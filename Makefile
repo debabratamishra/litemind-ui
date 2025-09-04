@@ -1,6 +1,6 @@
 # LiteMindUI Docker Makefile
 
-.PHONY: help setup build up down logs clean health dev prod hub-up hub-down version tag-release
+.PHONY: help setup build up down logs clean health dev prod hub-up hub-down version tag-release test-docker-local create-docker-repos
 
 # Default target
 help:
@@ -19,6 +19,8 @@ help:
 	@echo "  restart   - Restart services"
 	@echo "  version   - Show current version and version commands"
 	@echo "  tag-release - Create a new release tag"
+	@echo "  test-docker-local - Test Docker build and push locally"
+	@echo "  create-docker-repos - Create required Docker Hub repositories"
 
 # Setup directories and environment
 setup:
@@ -116,3 +118,13 @@ status:
 	@docker-compose ps 2>/dev/null || echo "No services running with default compose file"
 	@docker-compose -f docker-compose.dev.yml ps 2>/dev/null || echo "No development services running"
 	@docker-compose -f docker-compose.prod.yml ps 2>/dev/null || echo "No production services running"
+
+# Test Docker build and push locally
+test-docker-local:
+	@echo "🧪 Testing Docker build and push locally..."
+	@python3 scripts/test-docker-publish.py
+
+# Create Docker Hub repositories
+create-docker-repos:
+	@echo "🐳 Creating Docker Hub repositories..."
+	@python3 scripts/create-docker-repos.py
