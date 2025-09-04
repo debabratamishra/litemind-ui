@@ -6,6 +6,7 @@ version: '3.8'
 
 services:
   backend:
+    platform: "linux/amd64"
     image: debabratamishra1/litemindui-backend:latest
     container_name: litemindui-backend
     ports:
@@ -48,6 +49,7 @@ services:
         max-file: "3"
 
   frontend:
+    platform: "linux/amd64"
     image: debabratamishra1/litemindui-frontend:latest
     container_name: litemindui-frontend
     ports:
