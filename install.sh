@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-REPO_NAME="litemindui"
+REPO_NAME="litemind-ui"
 COMPOSE_FILE="docker-compose.hub.yml"
 SETUP_SCRIPT="scripts/docker-setup.sh"
 
@@ -50,7 +50,7 @@ download_files() {
     cd "$REPO_NAME"
     
     # Download docker-compose file
-    if ! curl -fsSL "https://raw.githubusercontent.com/debabratamishra/litemindui/main/docker-compose.hub.yml" -o "$COMPOSE_FILE"; then
+    if ! curl -fsSL "https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/docker-compose.hub.yml" -o "$COMPOSE_FILE"; then
         echo -e "${RED}❌ Failed to download docker-compose file${NC}"
         exit 1
     fi
@@ -157,8 +157,8 @@ show_next_steps() {
     echo "4. For vLLM support, configure your HuggingFace token in the settings"
     echo ""
     echo "Need help?"
-    echo "  • Documentation: https://github.com/debabratamishra/litemindui"
-    echo "  • Issues: https://github.com/debabratamishra/litemindui/issues"
+    echo "  • Documentation: https://github.com/debabratamishra/litemind-ui"
+    echo "  • Issues: https://github.com/debabratamishra/litemind-ui/issues"
     echo -e "${NC}"
 }
 
