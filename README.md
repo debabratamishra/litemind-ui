@@ -4,10 +4,8 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-00A971.svg)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-FF4B4B.svg)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-Available-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/debabratamishra/litemindui-backend)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-Available-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/debabratamishra1)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Release](https://img.shields.io/github/v/release/debabratamishra/litemindui?include_prereleases)](https://github.com/debabratamishra/litemindui/releases)
 
 A robust, production-ready web interface for Large Language Models (LLMs) featuring a hybrid architecture with FastAPI backend and Streamlit frontend. Built for developers, researchers, and AI enthusiasts who need a comprehensive platform for LLM interaction, document processing, and API integration.
 
@@ -102,8 +100,8 @@ docker-compose -f docker-compose.hub.yml up -d
 ```
 
 **Available Docker Images:**
-- **Backend**: [`debabratamishra/litemindui-backend:latest`](https://hub.docker.com/r/debabratamishra/litemindui-backend)
-- **Frontend**: [`debabratamishra/litemindui-frontend:latest`](https://hub.docker.com/r/debabratamishra/litemindui-frontend)
+- **Backend**: [`debabratamishra/litemindui-backend:latest`](https://hub.docker.com/r/debabratamishra1/litemindui-backend)
+- **Frontend**: [`debabratamishra/litemindui-frontend:latest`](https://hub.docker.com/r/debabratamishra1/litemindui-frontend)
 
 ### Option 2: Docker Build from Source
 
