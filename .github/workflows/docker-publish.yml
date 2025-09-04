@@ -43,6 +43,13 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
+    - name: Verify Docker Hub login
+      if: github.event_name != 'pull_request'
+      run: |
+        echo "Testing Docker Hub authentication..."
+        docker info
+        echo "Docker login successful for user: ${{ secrets.DOCKER_USERNAME }}"
+
     - name: Extract metadata for backend
       id: meta-backend
       uses: docker/metadata-action@v5
