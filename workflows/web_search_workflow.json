@@ -1,0 +1,71 @@
+{
+  "name": "Web Search Tool",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-node",
+      "name": "When Called",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.duckduckgo.com/",
+        "options": {
+          "qs": {
+            "q": "={{$json.query}}",
+            "format": "json",
+            "no_html": "1",
+            "skip_disambig": "1"
+          }
+        }
+      },
+      "id": "http-search",
+      "name": "DuckDuckGo Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [300, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process the search results\nconst data = $input.all()[0].json;\n\n// Extract useful information\nconst results = [];\n\nif (data.RelatedTopics && Array.isArray(data.RelatedTopics)) {\n  for (let i = 0; i < Math.min(data.RelatedTopics.length, 5); i++) {\n    const topic = data.RelatedTopics[i];\n    if (topic.Text && topic.FirstURL) {\n      results.push({\n        title: topic.Text.substring(0, 100),\n        url: topic.FirstURL,\n        snippet: topic.Text\n      });\n    }\n  }\n}\n\nreturn {\n  json: {\n    query: $input.all()[0].json.query || '',\n    abstract: data.Abstract || '',\n    results: results,\n    source: 'DuckDuckGo',\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "process-results",
+      "name": "Process Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 200]
+    }
+  ],
+  "connections": {
+    "When Called": {
+      "main": [
+        [
+          {
+            "node": "DuckDuckGo Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DuckDuckGo Search": {
+      "main": [
+        [
+          {
+            "node": "Process Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1"
+}

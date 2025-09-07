@@ -27,6 +27,7 @@ from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service
 from app.services.vllm_service import vllm_service
+from app.services.n8n_service import n8n_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
 from sentence_transformers import SentenceTransformer
@@ -237,6 +238,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include API routers
+from app.backend.api.n8n_workflows import router as n8n_router
+from app.backend.api.simple_tools import router as simple_tools_router
+app.include_router(n8n_router)
+app.include_router(simple_tools_router)
 
 # Templates
 try:

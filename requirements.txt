@@ -30,3 +30,5 @@ transformers
 torch
 librosa
 soundfile
+websockets
+aiofiles

@@ -14,6 +14,7 @@ from app.frontend.services.backend_service import backend_service
 from app.frontend.components.vllm_config import setup_vllm_backend
 from app.frontend.pages.chat_page import render_chat_page
 from app.frontend.pages.rag_page import render_rag_page
+from app.frontend.pages.workflows_page import render_workflows_page
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ class StreamlitApp:
             st.session_state.selected_page = "💬 Chat"
         
         # Validate selected page is valid
-        valid_pages = ["💬 Chat", "📚 RAG"]
+        valid_pages = ["💬 Chat", "📚 RAG", "🔧 Workflows"]
         if st.session_state.selected_page not in valid_pages:
             st.session_state.selected_page = "💬 Chat"
             
@@ -126,7 +127,7 @@ class StreamlitApp:
         st.sidebar.markdown("---")
         
         # Get current page index, defaulting to Chat (0) if not found
-        page_options = ["💬 Chat", "📚 RAG"]
+        page_options = ["💬 Chat", "📚 RAG", "🔧 Workflows"]
         try:
             current_index = page_options.index(st.session_state.selected_page)
         except (ValueError, KeyError):
@@ -177,6 +178,8 @@ class StreamlitApp:
                 render_chat_page()
             elif selected_page == "📚 RAG":
                 render_rag_page()
+            elif selected_page == "🔧 Workflows":
+                render_workflows_page()
             else:
                 # Fallback to chat if invalid page
                 st.session_state.selected_page = "💬 Chat"
