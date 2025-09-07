@@ -611,17 +611,40 @@ async def rag_query(request: RAGQueryRequestEnhanced):
 
             return StreamingResponse(event_generator(), media_type="text/plain")
         else:
-            # Ollama RAG
+            # Ollama RAG - check if multi-agent is requested
             async def event_generator():
-                async for chunk in rag_service.query(
-                    request.query, request.system_prompt, request.messages,
-                    request.n_results, request.use_hybrid_search, request.model
-                ):
-                    yield chunk + "\n"
+                if request.use_multi_agent:
+                    # Use CrewAI multi-agent orchestration
+                    logger.info("Using CrewAI multi-agent orchestration")
+                    from app.services.rag_service import CrewAIRAGOrchestrator
+                    
+                    orchestrator = CrewAIRAGOrchestrator(
+                        rag_service=rag_service,
+                        model_name=request.model or "gemma3n:e2b"
+                    )
+                    
+                    async for chunk in orchestrator.query(
+                        user_query=request.query,
+                        system_prompt=request.system_prompt,
+                        messages=request.messages,
+                        n_results=request.n_results,
+                        use_hybrid_search=request.use_hybrid_search,
+                        model=request.model
+                    ):
+                        yield chunk + "\n"
+                else:
+                    # Use regular RAG
+                    logger.info("Using standard RAG without multi-agent orchestration")
+                    async for chunk in rag_service.query(
+                        request.query, request.system_prompt, request.messages,
+                        request.n_results, request.use_hybrid_search, request.model
+                    ):
+                        yield chunk + "\n"
 
             return StreamingResponse(event_generator(), media_type="text/plain")
 
     except Exception as e:
+        logger.error(f"RAG query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

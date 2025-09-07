@@ -1003,6 +1003,7 @@ class RAGService:
         async for chunk in stream_ollama(llm_messages, model=model_name):
             yield chunk
 
+
 class CrewAIRAGOrchestrator:
     """Coordinates refined querying and answer composition using an Ollama-backed model."""
     def __init__(self, rag_service: RAGService, model_name="gemma3n:e2b"):
@@ -1032,6 +1033,19 @@ class CrewAIRAGOrchestrator:
             backstory="Synthesises context into helpful replies.",
             llm=self.ollama_llm
         )
+
+    def _get_ollama_url(self) -> str:
+        """Get the appropriate Ollama URL based on execution environment."""
+        try:
+            from app.services.host_service_manager import host_service_manager
+            url = host_service_manager.environment_config.ollama_url
+            logger.debug(f"Using Ollama URL from host service manager: {url}")
+            return url
+        except ImportError:
+            logger.warning("Host service manager not available, using fallback config")
+            url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+            logger.debug(f"Using fallback Ollama URL: {url}")
+            return url
 
     async def _get_context_length(self, model_name: str) -> int:
         """Query Ollama for the model's context length; fall back to a sensible default."""
@@ -1073,7 +1087,7 @@ class CrewAIRAGOrchestrator:
         
         return response
 
-    def simple_chunk_text(self, text: str, chunk_size: int):
+    def chunk_text(self, text: str, chunk_size: int):
         """Simple character-based chunking without overlap (used for specific cases)."""
         if not text or not text.strip():
             return []
