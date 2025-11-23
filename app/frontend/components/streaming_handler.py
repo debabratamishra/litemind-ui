@@ -99,6 +99,51 @@ class StreamingHandler:
         
         return None
     
+    def stream_web_search_response(
+        self,
+        message: str,
+        model: str,
+        temperature: float = 0.7,
+        backend: str = "ollama",
+        hf_token: Optional[str] = None,
+        placeholder: Optional[Any] = None,
+        use_fastapi: bool = True
+    ) -> Optional[str]:
+        """Stream a web search response with raw LLM output (no formatting)."""
+        
+        try:
+            if not use_fastapi:
+                # Fallback to local Ollama chat if FastAPI not available
+                logger.warning("Web search requires FastAPI backend. Falling back to local chat.")
+                return chat_service.stream_local_ollama_chat(
+                    message=message,
+                    model=model,
+                    temperature=temperature
+                )
+            
+            # FastAPI web search streaming
+            response = chat_service.stream_web_search_chat(
+                message=message,
+                model=model,
+                temperature=temperature,
+                backend=backend,
+                hf_token=hf_token
+            )
+            
+            # Use raw text processing for web search (no formatting)
+            return self._process_streaming_response_raw(response, placeholder)
+            
+        except requests.Timeout:
+            logger.error("Web search API timed out while streaming.")
+            if placeholder:
+                placeholder.error("❌ Web search API timed out. Falling back to standard chat.")
+        except requests.RequestException as exc:
+            logger.error(f"Web search API Error: {exc}")
+            if placeholder:
+                placeholder.error(f"❌ Web search API Error: {exc}")
+        
+        return None
+    
     def _process_streaming_response(
         self, 
         response: requests.Response, 
@@ -121,6 +166,32 @@ class StreamingHandler:
             buf += chunk
             if segregator is not None:
                 segregator.feed(chunk)
+
+        return buf
+    
+    def _process_streaming_response_raw(
+        self, 
+        response: requests.Response, 
+        placeholder: Optional[Any]
+    ) -> str:
+        """Process streaming response with raw text output (no formatting)."""
+        buf = ""
+
+        for line in response.iter_lines(decode_unicode=True, chunk_size=1):
+            if not line:
+                continue
+            if line.startswith("data:"):
+                payload = line[5:].lstrip()
+                if payload.strip() in ("[DONE]", ""):
+                    continue
+                line = payload
+
+            chunk = line + "\n"
+            buf += chunk
+            
+            # Display raw text without any processing
+            if placeholder is not None:
+                placeholder.text(buf)
 
         return buf
 

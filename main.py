@@ -31,6 +31,9 @@ from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
 from sentence_transformers import SentenceTransformer
 
+# Import API routers
+from app.backend.api import chat as chat_api
+
 try:
     import torch
 except ImportError:
@@ -238,6 +241,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include API routers
+app.include_router(chat_api.router)
+
 # Templates
 try:
     templates = Jinja2Templates(directory="app/templates")
@@ -304,72 +310,13 @@ async def get_available_models():
         raise HTTPException(status_code=500, detail=f"Could not fetch models: {str(e)}")
 
 
-# Chat endpoints
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequestEnhanced):
-    """Single chat message processing"""
-    logger.info(f"Chat request - Backend: {request.backend}, Model: {request.model}")
-    
-    try:
-        if request.backend == "vllm":
-            if request.hf_token:
-                token_result = vllm_service.set_hf_token(request.hf_token)
-                if token_result["status"] == "error":
-                    raise HTTPException(status_code=400, detail=token_result["message"])
-            
-            if not await vllm_service.is_server_running():
-                raise HTTPException(status_code=400, detail="vLLM server is not running")
-            
-            messages = [{"role": "user", "content": request.message}]
-            response_text = ""
-            async for chunk in vllm_service.stream_vllm_chat(
-                messages=messages, model=request.model, temperature=request.temperature
-            ):
-                response_text += chunk
-            
-            return ChatResponse(response=response_text, model=request.model)
-        else:
-            response = await process_llm_request(request.message, request.model, request.temperature)
-            return ChatResponse(response=response, model=request.model)
-            
-    except Exception as e:
-        logger.error(f"Chat endpoint error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequestEnhanced):
-    """Stream chat responses"""
-    logger.info(f"Streaming chat - Backend: {request.backend}, Model: {request.model}")
-    
-    async def event_generator():
-        try:
-            if request.backend == "vllm":
-                if request.hf_token:
-                    token_result = vllm_service.set_hf_token(request.hf_token)
-                    if token_result["status"] == "error":
-                        yield f"Error: {token_result['message']}\n"
-                        return
-                
-                if not await vllm_service.is_server_running():
-                    yield "Error: vLLM server is not running\n"
-                    return
-                
-                messages = [{"role": "user", "content": request.message}]
-                async for chunk in vllm_service.stream_vllm_chat(
-                    messages=messages, model=request.model, temperature=request.temperature
-                ):
-                    yield chunk + "\n"
-            else:
-                messages = [{"role": "user", "content": request.message}]
-                async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature):
-                    yield chunk + "\n"
-                    
-        except Exception as e:
-            logger.error(f"Chat streaming error: {e}")
-            yield f"Error: {str(e)}\n"
-
-    return StreamingResponse(event_generator(), media_type="text/plain")
+# NOTE: Chat endpoints have been moved to app/backend/api/chat.py
+# They are included via router above to support web search functionality
+# The following endpoints are now available via the router:
+#   - POST /api/chat/ (single message)
+#   - POST /api/chat/stream (streaming)
+#   - POST /api/chat/web-search (web search with streaming)
+#   - GET  /api/chat/serp-status (SerpAPI token status)
 
 
 # RAG endpoints

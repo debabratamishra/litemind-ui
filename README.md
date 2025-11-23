@@ -37,6 +37,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 - ⚡ **High-Performance API** - Async FastAPI backend for scalable LLM processing
 - 🧠 **Dual Backend Support** - Seamlessly switch between Ollama (local) and vLLM (Hugging Face) backends
 - 📚 **RAG Integration** - Upload documents (PDFs, DOCX, TXT) with enhanced extraction and query with context-aware responses
+- 🔍 **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
 - 🔄 **Auto-Failover** - Intelligent backend detection with graceful fallbacks
 - 🤖 **Multi-Model Support** - Access to popular models through vLLM or local Ollama models
 
@@ -231,6 +232,8 @@ mkdir -p uploads .streamlit
 | `/models` | GET | Available Ollama models |
 | `/api/chat` | POST | Process chat messages (supports both Ollama and vLLM backends) |
 | `/api/chat/stream` | POST | Streaming chat responses (supports both backends) |
+| `/api/chat/web-search` | POST | Process chat with optional web search integration |
+| `/api/chat/serp-status` | GET | Check SerpAPI token configuration status |
 | `/api/rag/upload` | POST | Upload documents for RAG processing |
 | `/api/rag/query` | POST | Query uploaded documents with context-aware responses |
 | `/api/rag/documents` | GET | List uploaded documents |
@@ -246,7 +249,8 @@ mkdir -p uploads .streamlit
 3. **Configure Models:** 
    - For Ollama: Select from locally installed models
    - For vLLM: Choose from popular models or enter custom model names
-4. Enter your message and receive AI responses
+4. **Optional Web Search:** Enable the web search toggle to enhance responses with real-time internet data
+5. Enter your message and receive AI responses
 
 ### Document Q\&A (RAG)
 
@@ -315,6 +319,59 @@ port = 8501
 export OLLAMA_BASE_URL="http://localhost:11434"
 export UPLOAD_FOLDER="./uploads"
 ```
+
+### Web Search Configuration (Optional)
+
+LiteMindUI supports optional web search integration powered by SerpAPI. When enabled, the system can retrieve real-time information from the internet and synthesize it with your local LLM.
+
+#### Setting up SerpAPI
+
+1. **Get your API key:**
+   - Visit [https://serpapi.com/](https://serpapi.com/)
+   - Sign up for a free account (100 searches/month on free tier)
+   - Navigate to your dashboard to find your API key
+
+2. **Configure the API key:**
+   
+   Add to your `.env` file:
+   ```bash
+   SERP_API_KEY=your-serpapi-key-here
+   ```
+   
+   Or export as environment variable:
+   ```bash
+   export SERP_API_KEY="your-serpapi-key-here"
+   ```
+
+3. **Optional settings:**
+   ```bash
+   # Maximum number of search results to retrieve (default: 10)
+   WEB_SEARCH_MAX_RESULTS=10
+   
+   # Timeout for web search requests in seconds (default: 30)
+   WEB_SEARCH_TIMEOUT=30
+   ```
+
+#### Using Web Search
+
+1. Navigate to the **Chat** tab in the UI
+2. Look for the **Web Search** toggle in the prompt area
+3. Enable the toggle before submitting your query
+4. The system will:
+   - Retrieve top 10 search results from the web
+   - Synthesize the information using your selected LLM
+   - Display a comprehensive response with web context
+
+**Status Indicators:**
+- The sidebar displays your SerpAPI token status (valid/missing/invalid)
+- During search: "Searching web..." status message
+- During synthesis: "Synthesizing results..." status message
+
+**Fallback Behavior:**
+- If the SerpAPI token is missing or invalid, the system automatically falls back to local LLM processing
+- An error message will be displayed: "SerpAPI token is required to perform Web search. Defaulting to local results"
+
+**Note:** Web search is currently available in the Chat interface. RAG integration is planned for a future release.
 
 ## 🎯 Advanced Features
 

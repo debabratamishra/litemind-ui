@@ -8,6 +8,7 @@ sentence-transformers
 ollama
 rank-bm25
 crewai
+google-search-results
 huggingface-hub
 httpx
 requests
