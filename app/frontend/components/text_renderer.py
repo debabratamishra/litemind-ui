@@ -1,13 +1,20 @@
 """
 Text rendering components for LLM responses with reasoning support.
 """
+import html
 import re
 import streamlit as st
 from typing import Optional, Any
 
 from ..utils.text_processing import (
-    unescape_text, clean_text_formatting, clean_markdown_text, 
-    sanitize_links, extract_thinking_content
+    unescape_text,
+    clean_text_formatting,
+    clean_markdown_text,
+    sanitize_links,
+    extract_thinking_content,
+    normalize_plain_text_spacing,
+    format_web_search_response,
+    fix_streaming_token_spacing,
 )
 
 
@@ -242,3 +249,84 @@ text_renderer = TextRenderer()
 def render_llm_text(text: str) -> None:
     """Render LLM text with reasoning support."""
     text_renderer.render_llm_text(text)
+
+
+class PlainTextRenderer:
+    """Render plain text blocks without applying markdown cleanups."""
+
+    _BLOCK_STYLE = (
+        "background: rgba(255, 255, 255, 0.01);"
+        "padding: 0.5rem 0;"
+        "white-space: pre-wrap;"
+        "font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, sans-serif;"
+        "font-size: 1rem;"
+        "line-height: 1.6;"
+    )
+
+    def render(self, text: str, placeholder: Optional[Any] = None, normalize: bool = True) -> None:
+        target = placeholder if placeholder is not None else st
+        html_block = self._build_html_block(text, normalize)
+        target.markdown(html_block, unsafe_allow_html=True)
+
+    def _build_html_block(self, text: str, normalize: bool) -> str:
+        processed = normalize_plain_text_spacing(unescape_text(text)) if normalize else unescape_text(text)
+        sanitized = html.escape(processed)
+        return f"<div style=\"{self._BLOCK_STYLE}\">{sanitized}</div>"
+
+
+class WebSearchRenderer:
+    """Render web search responses with proper formatting for sources and citations."""
+    
+    def __init__(self):
+        self._accumulated_text = ""
+    
+    def render(self, text: str, placeholder: Optional[Any] = None) -> None:
+        """Render web search response with markdown formatting."""
+        target = placeholder if placeholder is not None else st
+        
+        # Process the text for web search formatting
+        processed = unescape_text(text)
+        processed = format_web_search_response(processed)
+        
+        # Render as markdown to support links
+        target.markdown(processed)
+    
+    def render_streaming(self, chunk: str, placeholder: Optional[Any] = None) -> str:
+        """Handle streaming rendering with proper token accumulation.
+        
+        Returns the accumulated text for storage.
+        """
+        # Use intelligent token joining
+        self._accumulated_text = fix_streaming_token_spacing(
+            self._accumulated_text, 
+            chunk
+        )
+        
+        # Format and render
+        if placeholder is not None:
+            display_text = format_web_search_response(self._accumulated_text)
+            placeholder.markdown(display_text)
+        
+        return self._accumulated_text
+    
+    def reset(self):
+        """Reset the accumulated text for a new response."""
+        self._accumulated_text = ""
+    
+    def get_final_text(self) -> str:
+        """Get the final formatted text."""
+        return format_web_search_response(self._accumulated_text)
+
+
+plain_text_renderer = PlainTextRenderer()
+web_search_renderer = WebSearchRenderer()
+
+
+def render_plain_text(text: str) -> None:
+    """Render stored plain text responses in the chat history."""
+    plain_text_renderer.render(text)
+
+
+def render_web_search_text(text: str) -> None:
+    """Render web search response text with proper formatting."""
+    web_search_renderer.render(text)

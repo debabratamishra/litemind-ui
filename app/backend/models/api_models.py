@@ -11,6 +11,7 @@ class ChatRequestEnhanced(BaseModel):
     temperature: Optional[float] = 0.7
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
+    use_web_search: Optional[bool] = False
 
 
 class RAGQueryRequestEnhanced(BaseModel):
@@ -105,3 +106,26 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     path: Optional[str] = None
+
+
+class WebSearchRequest(BaseModel):
+    query: str
+    num_results: Optional[int] = 10
+
+
+class WebSearchResult(BaseModel):
+    title: str
+    link: str
+    snippet: str
+    position: int
+
+
+class WebSearchResponse(BaseModel):
+    query: str
+    results: List[WebSearchResult]
+    total_results: int
+
+
+class SerpTokenStatus(BaseModel):
+    status: str
+    message: str

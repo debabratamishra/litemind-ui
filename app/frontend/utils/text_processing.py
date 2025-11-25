@@ -3,7 +3,29 @@ Text processing and formatting utilities.
 """
 import json
 import re
-from typing import Tuple
+from typing import Tuple, Set
+
+
+def _load_common_words() -> Set[str]:
+    manual = {
+        'temperatures', 'information', 'conditions', 'performance', 'requirements',
+        'available', 'different', 'important', 'following', 'including',
+        'experience', 'development', 'government', 'environment', 'management',
+        'international', 'community', 'university', 'organization', 'relationship',
+        'opportunity', 'significant', 'particularly', 'understanding', 'responsibilities',
+    }
+
+    try:
+        from wordfreq import top_n_list
+
+        words = set(w.lower() for w in top_n_list("en", 20000))
+        long_words = {w for w in words if len(w) >= 6}
+        return long_words.union(manual)
+    except Exception:
+        return manual
+
+
+COMMON_WORDS = _load_common_words()
 
 
 def unescape_text(s: str) -> str:
@@ -172,3 +194,367 @@ def clean_markdown_text(text: str) -> str:
     text = re.sub(r'\n{4,}', '\n\n\n', text)
     
     return text.strip()
+
+
+def normalize_plain_text_spacing(text: str) -> str:
+    """Normalize whitespace for plain text responses without forcing markdown."""
+    if not isinstance(text, str) or not text:
+        return "" if text is None else str(text)
+
+    normalized = text.replace('\r', '')
+    normalized = re.sub(r'[ \t]+\n', '\n', normalized)
+    normalized = re.sub(r'\n[ \t]+', '\n', normalized)
+    normalized = re.sub(r'\n{3,}', '\n\n', normalized)
+    normalized = re.sub(r'[ \t]{2,}', ' ', normalized)
+
+    # Tidy spacing around punctuation and digits
+    normalized = re.sub(r'\s+([,.;:!?%])', r'\1', normalized)
+    normalized = re.sub(r'\(\s+', '(', normalized)
+    normalized = re.sub(r'\s+\)', ')', normalized)
+    normalized = re.sub(r'\[\s+', '[', normalized)
+    normalized = re.sub(r'\s+\]', ']', normalized)
+    normalized = re.sub(r'(?<=\d)\s+(?=\d)', '', normalized)
+    normalized = re.sub(r'(?<=\d)\s+(?=%)', '', normalized)
+    normalized = re.sub(r'(?<=\w)\s*-\s*(?=\w)', '-', normalized)
+    normalized = re.sub(r"\s+'", "'", normalized)
+    normalized = re.sub(r"'\s+(?=[a-z])", "'", normalized)
+
+    return normalized.strip()
+
+
+def format_web_search_response(text: str) -> str:
+    """Format web search response text for proper display.
+    
+    This function handles:
+    - Fixing token spacing issues from streaming
+    - Formatting source citations properly
+    - Converting URLs to clickable markdown links
+    - Cleaning up concatenated text issues
+    """
+    if not isinstance(text, str) or not text:
+        return "" if text is None else str(text)
+    
+    # First, normalize basic spacing
+    text = text.replace('\r', '')
+    
+    # Fix single characters separated by newlines (streaming artifact)
+    # Pattern like "C\nh\na\nn\ng\ne" -> "Change"
+    text = re.sub(r'(?<=[A-Za-z])\n(?=[A-Za-z](?:\n|[^A-Za-z]))', '', text)
+    # Also fix single chars separated by newlines in sequence
+    while re.search(r'([A-Za-z])\n([A-Za-z])\n', text):
+        text = re.sub(r'([A-Za-z])\n([A-Za-z])\n', r'\1\2\n', text)
+    text = re.sub(r'([A-Za-z])\n([A-Za-z])(?=[^a-zA-Z\n]|$)', r'\1\2', text)
+    
+    # Fix spaces inside words - common streaming issue
+    # But be careful not to join different words
+    
+    def fix_spaced_letters(match):
+        """Join spaced single letters into a word."""
+        return match.group(0).replace(' ', '')
+    
+    # FIRST: Handle word + space + spaced_letters sequence (at least 4 total single-spaced letters)
+    # "Comm o n w e a l t h" -> join "Comm" with "onwealth" -> "Commonwealth"
+    # This must run BEFORE the all-single-letters pattern to capture the word prefix
+    def fix_word_then_spaced(match):
+        word = match.group(1)
+        spaced = match.group(2).replace(' ', '')
+        return word + spaced
+    
+    # Match word (2+ chars) + space + at least 4 single letters separated by spaces
+    text = re.sub(r'(\w{2,})\s+([a-zA-Z](?:\s+[a-zA-Z]){3,})\b', fix_word_then_spaced, text)
+    
+    # SECOND: Handle sequences of single letters separated by spaces (no word prefix)
+    # "C o m m o n" should become "Common"
+    # Only apply if we have 4+ consecutive single letters with spaces (to avoid "is a test")
+    text = re.sub(r'\b([a-zA-Z])((?:\s[a-zA-Z]){3,})\b', fix_spaced_letters, text)
+    
+    # Fix: "CB A" -> "CBA" (single uppercase letters that should be together, like stock ticker)
+    text = re.sub(r'\b([A-Z]{1,2})\s+([A-Z])\b', r'\1\2', text)
+    
+    # Fix apostrophe spacing: "here' s" -> "here's", "don' t" -> "don't"
+    text = re.sub(r"(\w+)'\s+([a-z])", r"\1'\2", text)
+    
+    # Fix degree/unit spacing: "27 ° C" -> "27°C", "100 % " -> "100%"
+    text = re.sub(r'(\d+)\s*°\s*([CFcf])', r'\1°\2', text)
+    text = re.sub(r'(\d+)\s*°', r'\1°', text)
+    
+    # Fix "Temper atures" -> "Temperatures" (space in middle of word before lowercase continuation)
+    # This catches cases where a word got split mid-stream
+    text = re.sub(r'([A-Z][a-z]+)\s+([a-z]{3,})', lambda m: m.group(1) + m.group(2) if m.group(1).lower() + m.group(2) in COMMON_WORDS else m.group(0), text)
+    
+    # Fix "S south" duplicated direction words
+    text = re.sub(r'\bS\s+south', 'south', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bN\s+north', 'north', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bE\s+east', 'east', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bW\s+west', 'west', text, flags=re.IGNORECASE)
+    
+    # Fix "ASX: CB A" -> "ASX:CBA" (stock symbols with spaces)
+    text = re.sub(r'([A-Z]{2,}):\s*([A-Z])\s+([A-Z])\s*([A-Z])?', 
+                  lambda m: f"{m.group(1)}:{m.group(2)}{m.group(3)}{m.group(4) or ''}", text)
+    
+    # Fix spaces between consecutive digits: "3,1 4 1.2 0" -> "3,141.20"
+    # This is critical for numbers that got split during streaming
+    for _ in range(5):
+        text = re.sub(r'(\d)\s+(\d)', r'\1\2', text)
+    
+    # Fix common token spacing issues (spaces before punctuation)
+    text = re.sub(r'\s+([,.;:!?%])', r'\1', text)
+    text = re.sub(r'\$\s+', '$', text)  # Fix "$ 178" -> "$178"
+    text = re.sub(r'Rs\s+', 'Rs ', text)  # Keep "Rs " with single space
+    
+    # Fix decimal numbers with spaces: "178. 88" -> "178.88"
+    text = re.sub(r'(\d+)\.\s+(\d+)', r'\1.\2', text)
+    
+    # Fix numbers with commas and spaces: "1, 000" -> "1,000"
+    text = re.sub(r'(\d+),\s+(\d+)', r'\1,\2', text)
+    
+    # Fix time formatting: "4: 00" -> "4:00"
+    text = re.sub(r'(\d+):\s+(\d+)', r'\1:\2', text)
+    
+    # Fix percentage spacing: "- 2. 17 %" -> "-2.17%"
+    text = re.sub(r'-\s*(\d)', r'-\1', text)  # Fix "- 2" -> "-2"
+    text = re.sub(r'(\d)\s*%', r'\1%', text)  # Fix "17 %" -> "17%"
+    
+    # Fix hyphenated words with spaces: "5- day" -> "5-day", "1- month" -> "1-month"
+    text = re.sub(r'(\d+)-\s+(\w)', r'\1-\2', text)
+    text = re.sub(r'(\w)-\s+(\w)', r'\1-\2', text)
+    
+    # Fix plus sign spacing: "+ 2" -> "+2"
+    text = re.sub(r'\+\s+(\d)', r'+\1', text)
+    
+    # Fix spacing around brackets for citations
+    text = re.sub(r'\[\s*(\d+)\s*\]', r'[\1]', text)
+    
+    # Fix double spaces
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    
+    # Fix newline issues
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Format the Sources section
+    text = _format_sources_section(text)
+    
+    return text.strip()
+
+
+def _format_sources_section(text: str) -> str:
+    """Format the Sources section with proper markdown links and structure."""
+    # Find the Sources section - handle both with and without newline after "Sources:"
+    sources_match = re.search(r'(Sources?:\s*)', text, re.IGNORECASE)
+    if not sources_match:
+        return text
+    
+    sources_start = sources_match.start()
+    before_sources = text[:sources_start]
+    sources_section = text[sources_start:]
+    
+    # Clean up stray ** markers before the Sources section
+    before_sources = re.sub(r'\n\*\*\s*$', '\n', before_sources)
+    before_sources = before_sources.rstrip() + '\n'
+    
+    # Clean up duplicate [Link] patterns that may occur from double processing
+    # Pattern: "- [Link]( (domain) - [Link](" or similar duplicates
+    sources_section = re.sub(
+        r'\s*-\s*\[Link\]\([^)]*\)\s*\(\s*\([^)]+\)\s*-\s*\[Link\]\([^)]*\)\s*-\s*Link\s*',
+        ' - Link ',
+        sources_section
+    )
+    # Clean simpler duplicates: "[Link]( (domain.com) - [Link]( (domain.com) - Link"
+    sources_section = re.sub(
+        r'\[Link\]\(\s*\([^)]+\)\s*-\s*\[Link\]\(\s*\([^)]+\)\s*-\s*Link',
+        'Link',
+        sources_section
+    )
+    # Remove malformed [Link]( patterns without proper URLs
+    sources_section = re.sub(r'\[Link\]\(\s*\(', '(', sources_section)
+    # Clean up "- [Link]( (domain) -" patterns
+    sources_section = re.sub(r'-\s*\[Link\]\(\s*\(([^)]+)\)\s*-', r'(\1) -', sources_section)
+    
+    # Fix malformed URLs with spaces
+    sources_section = re.sub(
+        r'(https?)\s*:\s*/\s*/\s*',
+        r'\1://',
+        sources_section
+    )
+    sources_section = re.sub(r'\s*\.\s*(?=com|org|net|edu|gov|io|co)', '.', sources_section)
+    sources_section = re.sub(r'(?<=\w)\.\s+(?=com|org|net|edu|gov|io|co)', '.', sources_section)
+    
+    # Split sources that are all on one line: "[1] ... [2] ..." -> "[1] ...\n[2] ..."
+    # Add newline before each [N] citation except the first one after "Sources:"
+    sources_section = re.sub(r'\s+\[(\d+)\]', r'\n[\1]', sources_section)
+    
+    # Ensure "Sources:" is followed by newline
+    sources_section = re.sub(r'^(Sources?:)\s*', r'\1\n', sources_section, flags=re.IGNORECASE)
+    
+    # Format each source line properly
+    lines = sources_section.split('\n')
+    formatted_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue  # Skip empty lines, we'll add proper spacing
+        
+        # Check if this is the "Sources:" header (with or without ** markers)
+        if re.match(r'^\*?\*?\s*Sources?:?\s*\*?\*?$', line, re.IGNORECASE):
+            formatted_lines.append('\n**Sources:**\n')
+            continue
+        
+        # Skip standalone ** markers (artifact from bad formatting)
+        if line == '**':
+            continue
+        
+        # Check if this is a source line starting with [N]
+        source_match = re.match(r'^\[(\d+)\]\s*(.+)$', line)
+        if source_match:
+            formatted_lines.append(_format_single_source(line))
+        else:
+            formatted_lines.append(line)
+    
+    return before_sources + '\n'.join(formatted_lines)
+
+
+def _format_single_source(source_line: str) -> str:
+    """Format a single source citation line.
+    
+    Format:
+    [N] Title (domain) - Link
+        Description text here...
+    
+    (blank line before next citation)
+    """
+    # Extract the citation number
+    match = re.match(r'^\[(\d+)\]\s*(.+)$', source_line)
+    if not match:
+        return source_line
+    
+    num = match.group(1)
+    rest = match.group(2)
+    
+    # Clean up any duplicate [Link] patterns first
+    rest = re.sub(r'\s*-\s*\[Link\]\(\s*\([^)]+\)\s*-\s*\[Link\]\(\s*\([^)]+\)\s*-\s*Link\s*', ' - Link ', rest)
+    rest = re.sub(r'\[Link\]\(\s*\(', '(', rest)
+    rest = re.sub(r'\)\s*-\s*\[Link\]\(\s*\(', ') - (', rest)
+    rest = re.sub(r'\[Link\]\(\s*$', '', rest)
+    
+    # Fix any single-character-per-line issues in rest
+    rest = re.sub(r'(?<=[A-Za-z])\n(?=[A-Za-z])', '', rest)
+    while re.search(r'([A-Za-z])\n([A-Za-z])\n', rest):
+        rest = re.sub(r'([A-Za-z])\n([A-Za-z])\n', r'\1\2\n', rest)
+    rest = re.sub(r'([A-Za-z])\n([A-Za-z])(?=[^a-zA-Z\n]|$)', r'\1\2', rest)
+    
+    # Check if already has a proper markdown link [Link](url) - skip reformatting
+    if re.search(r'\[Link\]\(https?://[^)]+\)', rest):
+        return f"\n[{num}] {rest}\n"
+    
+    # Try to extract URL from the line
+    url_match = re.search(r'(https?://[^\s<>"\[\]]+)', rest)
+    
+    if url_match:
+        url = url_match.group(1).rstrip('.,;:!?)')
+        url = re.sub(r'\s+', '', url)
+        
+        title_part = rest[:url_match.start()].strip()
+        title_part = re.sub(r'[—–\-]+\s*$', '', title_part).strip()
+        title_part = re.sub(r'\([^)]+\)\s*$', '', title_part).strip()
+        
+        domain_match = re.match(r'https?://(?:www\.)?([^/]+)', url)
+        domain = domain_match.group(1) if domain_match else ''
+        
+        after_url = rest[url_match.end():].strip()
+        after_url = re.sub(r'^[—–\-]+\s*', '', after_url).strip()
+        
+        if title_part:
+            if after_url:
+                return f"\n[{num}] **{title_part}** ({domain}) - [Link]({url})\n    *{after_url}*\n"
+            return f"\n[{num}] **{title_part}** ({domain}) - [Link]({url})\n"
+        else:
+            return f"\n[{num}] [{domain}]({url})\n"
+    
+    # Handle format without full URL: "Title (domain.com) - Link Description"
+    domain_patterns = re.findall(r'\(([a-zA-Z][a-zA-Z0-9\-\.]*\.(com|org|net|edu|gov|io|co|in|uk|de|fr|jp|au|ca|info|biz))\)', rest)
+    if domain_patterns:
+        domain = domain_patterns[0][0]
+        
+        domain_pos = rest.find(f'({domain})')
+        if domain_pos > 0:
+            title_part = rest[:domain_pos].strip()
+            title_part = re.sub(r'\s*\([A-Z]+\.[A-Z]+\)\s*', ' ', title_part).strip()
+            title_part = re.sub(r'[—–\-]+\s*$', '', title_part).strip()
+            title_part = re.sub(r'^\*\*(.+)\*\*$', r'\1', title_part)
+            
+            after_domain = rest[domain_pos + len(f'({domain})'):].strip()
+            after_domain = re.sub(r'^[—–\-]+\s*\[?Link\]?\(?\s*', '', after_domain, flags=re.IGNORECASE).strip()
+            after_domain = re.sub(r'^\([^)]+\)\s*-\s*\[?Link\]?\(?\s*', '', after_domain).strip()
+            
+            if title_part:
+                if after_domain:
+                    # Put description on new line, italicized and indented
+                    return f"\n[{num}] **{title_part}** ({domain}) - Link\n    *{after_domain}*\n"
+                return f"\n[{num}] **{title_part}** ({domain})\n"
+            else:
+                return f"\n[{num}] {domain}\n"
+    
+    # Fallback: just return the line as-is but on a new line
+    return f"\n[{num}] {rest}\n"
+
+
+def fix_streaming_token_spacing(accumulated: str, new_chunk: str) -> str:
+    """Intelligently join streaming tokens to avoid spacing issues.
+    
+    This function handles the common issue where streaming LLM responses
+    produce individual tokens that get joined with incorrect spacing.
+    """
+    if not accumulated:
+        return new_chunk
+    
+    if not new_chunk:
+        return accumulated
+    
+    # Characters that should NOT have a space before them
+    no_space_before = set('.,;:!?%)]}\'"\n')
+    # Characters that should NOT have a space after them
+    no_space_after = set('([{$\n+-')
+    
+    last_char = accumulated[-1] if accumulated else ''
+    first_char = new_chunk[0] if new_chunk else ''
+    
+    # Determine if we need a space
+    needs_space = True
+    
+    # Don't add space if accumulated ends with space or newline
+    if last_char in ' \n\t':
+        needs_space = False
+    # Don't add space if new chunk starts with space or newline
+    elif first_char in ' \n\t':
+        needs_space = False
+    # Don't add space before punctuation
+    elif first_char in no_space_before:
+        needs_space = False
+    # Don't add space after certain characters
+    elif last_char in no_space_after:
+        needs_space = False
+    # Don't add space between digits (for numbers like 178.88)
+    elif last_char.isdigit() and first_char in '.,:%':
+        needs_space = False
+    elif last_char in '.,' and first_char.isdigit():
+        needs_space = False
+    # Don't add space for contractions
+    elif first_char == "'":
+        needs_space = False
+    # Don't add space after opening brackets
+    elif last_char in '([{':
+        needs_space = False
+    # Don't add space before closing brackets
+    elif first_char in ')]}':
+        needs_space = False
+    # Don't add space before hyphen for negative numbers or hyphenated words
+    elif first_char == '-' and (accumulated.rstrip()[-1:].isalpha() or accumulated.rstrip()[-1:].isdigit()):
+        needs_space = False
+    # Don't add space between hyphen and following character
+    elif last_char == '-':
+        needs_space = False
+    
+    if needs_space:
+        return accumulated + ' ' + new_chunk
+    return accumulated + new_chunk

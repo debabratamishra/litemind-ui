@@ -85,6 +85,35 @@ class ChatService:
             return acc
 
         return asyncio.run(_inner())
+    
+    def stream_web_search_chat(
+        self,
+        message: str,
+        model: str = "default",
+        temperature: float = 0.7,
+        backend: str = "ollama",
+        hf_token: Optional[str] = None
+    ) -> requests.Response:
+        """Stream a web search chat response from the backend."""
+        payload = {
+            "message": message,
+            "model": model,
+            "temperature": temperature,
+            "backend": backend,
+            "use_web_search": True
+        }
+        
+        if backend == "vllm" and hf_token:
+            payload["hf_token"] = hf_token
+        
+        response = requests.post(
+            f"{self.base_url}/api/chat/web-search",
+            json=payload,
+            stream=True,
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+        )
+        response.raise_for_status()
+        return response
 
 
 # Singleton instance

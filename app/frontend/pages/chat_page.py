@@ -6,8 +6,9 @@ import streamlit as st
 from typing import Dict, List
 
 from ..components.voice_input import get_voice_input
-from ..components.text_renderer import render_llm_text
+from ..components.text_renderer import render_llm_text, render_plain_text, render_web_search_text
 from ..components.streaming_handler import streaming_handler
+from ..components.web_search_toggle import WebSearchToggle
 from ..services.backend_service import backend_service
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,47 @@ class ChatPage:
     
     def __init__(self):
         self.backend_available = st.session_state.get("backend_available", False)
+        self.web_search_toggle = WebSearchToggle()
+        self._initialize_session_state()
+    
+    def _initialize_session_state(self):
+        """Initialize session state variables for web search"""
+        if "web_search_enabled" not in st.session_state:
+            st.session_state.web_search_enabled = False
+        
+        if "serp_api_token_status" not in st.session_state:
+            st.session_state.serp_api_token_status = None
+    
+    def _render_web_search_toggle(self) -> bool:
+        """
+        Render web search toggle in prompt area.
+        
+        Returns:
+            bool: Current toggle state
+        """
+        return self.web_search_toggle.render()
+    
+    def _get_web_search_status(self) -> Dict[str, bool]:
+        """
+        Check if web search is enabled and token is valid.
+        
+        Returns:
+            dict: Dictionary with 'enabled' and 'token_valid' keys
+        """
+        web_search_enabled = st.session_state.get("web_search_enabled", False)
+        
+        if not web_search_enabled:
+            return {"enabled": False, "token_valid": False}
+        
+        # Get token status
+        token_status = st.session_state.get("serp_api_token_status")
+        if token_status is None:
+            token_status = self.web_search_toggle.get_token_status()
+            st.session_state.serp_api_token_status = token_status
+        
+        token_valid = token_status.get("status") == "valid"
+        
+        return {"enabled": True, "token_valid": token_valid}
         
     def render(self):
         st.title("💬 LLM Chat Interface")
@@ -29,6 +71,9 @@ class ChatPage:
         
         self._display_chat_history()
         
+        # Render web search toggle before voice input
+        self._render_web_search_toggle()
+        
         user_input = get_voice_input("Enter your message...", "chat")
         
         if user_input:
@@ -38,7 +83,13 @@ class ChatPage:
         if st.session_state.chat_messages:
             for msg in st.session_state.chat_messages:
                 with st.chat_message(msg["role"]):
-                    render_llm_text(msg["content"])
+                    msg_format = msg.get("format", "")
+                    if msg_format == "web_search":
+                        render_web_search_text(msg["content"])
+                    elif msg_format == "plain":
+                        render_plain_text(msg["content"])
+                    else:
+                        render_llm_text(msg["content"])
         else:
             st.markdown(
                 """
@@ -62,24 +113,51 @@ class ChatPage:
         with st.chat_message("user"):
             render_llm_text(user_input)
         
+        # Check web search status
+        web_search_status = self._get_web_search_status()
+        use_web_search = web_search_status["enabled"] and web_search_status["token_valid"]
+        
         # Generate response
         with st.chat_message("assistant"):
             out = st.empty()
-            status_text = self._get_status_text(backend_provider, config.get("model", "default"))
             
-            with st.spinner(status_text):
-                reply = streaming_handler.stream_chat_response(
-                    message=user_input,
-                    model=config["model"],
-                    temperature=config["temperature"],
-                    backend=backend_provider,
-                    hf_token=config.get("hf_token"),
-                    placeholder=out,
-                    use_fastapi=self.backend_available
-                )
+            # Route to web search endpoint if enabled and token valid
+            if use_web_search:
+                status_text = "Searching web..."
+                
+                with st.spinner(status_text):
+                    reply = streaming_handler.stream_web_search_response(
+                        message=user_input,
+                        model=config["model"],
+                        temperature=config["temperature"],
+                        backend=backend_provider,
+                        hf_token=config.get("hf_token"),
+                        placeholder=out,
+                        use_fastapi=self.backend_available
+                    )
+            else:
+                # Display error message if web search enabled but token invalid
+                if web_search_status["enabled"] and not web_search_status["token_valid"]:
+                    st.warning("⚠️ SerpAPI token is required to perform Web search. Defaulting to local results")
+                
+                status_text = self._get_status_text(backend_provider, config.get("model", "default"))
+                
+                with st.spinner(status_text):
+                    reply = streaming_handler.stream_chat_response(
+                        message=user_input,
+                        model=config["model"],
+                        temperature=config["temperature"],
+                        backend=backend_provider,
+                        hf_token=config.get("hf_token"),
+                        placeholder=out,
+                        use_fastapi=self.backend_available
+                    )
         
         if reply:
-            st.session_state.chat_messages.append({"role": "assistant", "content": reply})
+            assistant_message = {"role": "assistant", "content": reply}
+            if use_web_search:
+                assistant_message["format"] = "web_search"
+            st.session_state.chat_messages.append(assistant_message)
             # Use rerun sparingly - only when necessary for UI updates
             st.rerun()
         else:
@@ -116,7 +194,21 @@ class ChatPage:
         
         return config
     
-    def _get_status_text(self, backend_provider: str, model: str) -> str:
+    def _get_status_text(self, backend_provider: str, model: str, web_search_active: bool = False) -> str:
+        """
+        Get status text for the spinner.
+        
+        Args:
+            backend_provider: The backend provider (ollama, vllm)
+            model: The model name
+            web_search_active: Whether web search is active
+            
+        Returns:
+            str: Status text to display
+        """
+        if web_search_active:
+            return "Searching web..."
+        
         if backend_provider == "vllm":
             return f"Thinking (vLLM - {model})..."
         return "Thinking..."
