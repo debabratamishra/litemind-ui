@@ -6,7 +6,7 @@ import streamlit as st
 from typing import Dict, List
 
 from ..components.voice_input import get_voice_input
-from ..components.text_renderer import render_llm_text
+from ..components.text_renderer import render_llm_text, render_plain_text, render_web_search_text
 from ..components.streaming_handler import streaming_handler
 from ..components.web_search_toggle import WebSearchToggle
 from ..services.backend_service import backend_service
@@ -83,7 +83,13 @@ class ChatPage:
         if st.session_state.chat_messages:
             for msg in st.session_state.chat_messages:
                 with st.chat_message(msg["role"]):
-                    render_llm_text(msg["content"])
+                    msg_format = msg.get("format", "")
+                    if msg_format == "web_search":
+                        render_web_search_text(msg["content"])
+                    elif msg_format == "plain":
+                        render_plain_text(msg["content"])
+                    else:
+                        render_llm_text(msg["content"])
         else:
             st.markdown(
                 """
@@ -148,7 +154,10 @@ class ChatPage:
                     )
         
         if reply:
-            st.session_state.chat_messages.append({"role": "assistant", "content": reply})
+            assistant_message = {"role": "assistant", "content": reply}
+            if use_web_search:
+                assistant_message["format"] = "web_search"
+            st.session_state.chat_messages.append(assistant_message)
             # Use rerun sparingly - only when necessary for UI updates
             st.rerun()
         else:

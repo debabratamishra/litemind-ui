@@ -5,9 +5,10 @@ import logging
 import requests
 from typing import Optional, Any
 
-from .text_renderer import StreamingRenderer
+from .text_renderer import StreamingRenderer, plain_text_renderer, web_search_renderer
 from ..services.chat_service import chat_service
 from ..services.rag_service import rag_service
+from ..utils.text_processing import normalize_plain_text_spacing, format_web_search_response
 
 logger = logging.getLogger(__name__)
 
@@ -174,26 +175,34 @@ class StreamingHandler:
         response: requests.Response, 
         placeholder: Optional[Any]
     ) -> str:
-        """Process streaming response with raw text output (no formatting)."""
-        buf = ""
-
+        """Process streaming response for web search with proper formatting."""
+        # Reset the web search renderer for new response
+        web_search_renderer.reset()
+        
         for line in response.iter_lines(decode_unicode=True, chunk_size=1):
-            if not line:
+            if line is None:
                 continue
+
             if line.startswith("data:"):
                 payload = line[5:].lstrip()
                 if payload.strip() in ("[DONE]", ""):
                     continue
                 line = payload
 
-            chunk = line + "\n"
-            buf += chunk
-            
-            # Display raw text without any processing
-            if placeholder is not None:
-                placeholder.text(buf)
+            # Handle empty lines as newlines
+            if line == "":
+                chunk = "\n"
+            else:
+                chunk = line
 
-        return buf
+            # Use the web search renderer for streaming
+            if placeholder is not None:
+                web_search_renderer.render_streaming(chunk, placeholder=placeholder)
+            else:
+                web_search_renderer.render_streaming(chunk, placeholder=None)
+
+        # Return the final formatted text
+        return web_search_renderer.get_final_text()
 
 
 # Global streaming handler

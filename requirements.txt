@@ -31,3 +31,4 @@ transformers
 torch
 librosa
 soundfile
+wordfreq

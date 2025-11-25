@@ -1,12 +1,9 @@
 """Web search orchestrator using CrewAI agents.
-
-This module provides a two-agent system for web search and synthesis:
-- Serper Agent: Retrieves search results via WebSearchService
-- Synthesizer Agent: Processes results and generates responses using Base LLM
 """
 import os
 import logging
 from typing import List, Dict, Optional, AsyncGenerator
+from urllib.parse import urlparse
 from crewai import Agent, LLM
 import asyncio
 from dotenv import load_dotenv
@@ -69,10 +66,10 @@ class WebSearchOrchestrator:
             role="Query Optimization Expert",
             goal="Transform user queries into optimal search queries that will retrieve the most relevant results",
             backstory=(
-                "You are an expert in search query optimization with years of experience in information retrieval. "
-                "You understand how to refine ambiguous or complex questions into clear, focused search queries. "
-                "You identify key terms, remove unnecessary words, and structure queries for maximum relevance. "
-                "You consider search engine behavior and user intent to create queries that yield the best results."
+                """You are an expert in search query optimization with years of experience in information retrieval.
+                You understand how to refine ambiguous or complex questions into clear, focused search queries.
+                You identify key terms, remove unnecessary words and numbers, and structure queries for maximum relevance.
+                You consider search engine behavior and user intent to create queries that yield the best results."""
             ),
             llm=self.llm,
             verbose=False,
@@ -84,10 +81,10 @@ class WebSearchOrchestrator:
             role="Web Search Specialist",
             goal="Retrieve relevant and accurate web search results using optimized queries",
             backstory=(
-                "You are an expert web search specialist with deep knowledge of information retrieval. "
-                "Your mission is to find the most relevant and up-to-date information from the web "
-                "by executing precise search queries. You work with optimized queries to ensure "
-                "the best possible results that directly address user needs."
+                """You are an expert web search specialist with deep knowledge of information retrieval.
+                Your mission is to find the most relevant and up-to-date information from the web
+                by executing precise search queries. You work with optimized queries to ensure
+                the best possible results that directly address user needs."""
             ),
             llm=self.llm,
             verbose=False,
@@ -99,8 +96,42 @@ class WebSearchOrchestrator:
             role="Information Synthesizer",
             goal="Answer questions based on web search results",
             backstory=(
-                "You synthesize information from web search results to answer user questions. "
-                "You cite sources using [1], [2], etc."
+                """
+                You are a synthesizer agent who prepares the final response for the user.
+                Synthesize information from the provided web search results to produce clear,
+                concise, and accurate answers that cite the sources used.
+
+                Formatting rules:
+                - Write in plain text only. Do NOT use markdown, bullets, emojis, or other markup.
+                - Use inline citations next to claims using [1], [2], etc.
+                - At the end of the answer include a 'Sources:' section listing each source on its own line.
+                - Each source line must include a numeric label, a short title, the domain, and the full URL
+                  (include the http:// or https:// so the URL is clickable in most clients).
+                - After the source line, include a 1-2 sentence summary or snippet indented on the next line.
+                - Only include sources that were actually used to support the answer.
+
+                Example 1 (single source):
+                Answer:
+                Paris is the capital of France [1].
+
+                Sources:
+                [1] Paris - Wikipedia — en.wikipedia.org — https://en.wikipedia.org/wiki/Paris
+                    Summary: Paris is the capital and most populous city of France.
+
+                Example 2 (multiple sources):
+                Answer:
+                Vitamin D can be obtained from sun exposure and certain foods [1][2].
+
+                Sources:
+                [1] Vitamin D - NIH — nih.gov — https://ods.od.nih.gov/factsheets/VitaminD-Consumer/
+                    Summary: NIH overview of Vitamin D sources and recommendations.
+                [2] Dietary sources of vitamin D — example.edu — https://example.edu/diet-vitamin-d
+                    Summary: Lists foods that contain vitamin D and typical amounts.
+
+                Other guidance:
+                - Prefer authoritative, up-to-date sources. If a claim is uncertain, state the uncertainty and cite sources.
+                - Keep the answer concise; use the Sources section to provide provenance and links.
+                """
             ),
             llm=self.llm,
             verbose=False,
@@ -282,6 +313,10 @@ class WebSearchOrchestrator:
             logger.info("Streaming synthesis response from Base LLM")
             async for chunk in self._stream_from_ollama(synthesis_prompt):
                 yield chunk
+
+            citation_block = self._build_citation_block(search_results)
+            if citation_block:
+                yield "\n\nSources:\n" + citation_block
                 
         except Exception as e:
             logger.error(f"Synthesis failed: {e}", exc_info=True)
@@ -314,6 +349,47 @@ class WebSearchOrchestrator:
             )
         
         return "".join(context_parts)
+
+    def _build_citation_block(self, search_results: List[Dict[str, any]]) -> str:
+        """Create a clean, well-formatted citation block from search results.
+        
+        Format each source as:
+        [N] **Title** (domain) - [Link](url)
+            *Brief description/snippet*
+        """
+        if not search_results:
+            return ""
+
+        lines = []
+        for result in search_results:
+            link = (result.get("link") or "").strip()
+            title = result.get("title", "Source").strip()
+            position = result.get("position", "?")
+            snippet = result.get("snippet", "").strip()
+            
+            if not link:
+                continue
+
+            # Extract domain from URL
+            domain = urlparse(link).netloc or link
+            # Remove www. prefix for cleaner display
+            if domain.startswith("www."):
+                domain = domain[4:]
+            
+            # Build the citation line with markdown formatting
+            # Format: [N] **Title** (domain) - [Link](url)
+            citation_line = f"[{position}] **{title}** ({domain}) - [Link]({link})"
+            
+            # Add snippet as italicized text on next line if available
+            if snippet:
+                # Truncate long snippets
+                if len(snippet) > 200:
+                    snippet = snippet[:197] + "..."
+                citation_line += f"\n    *{snippet}*"
+            
+            lines.append(citation_line)
+
+        return "\n\n".join(lines)
     
     def _build_conversation_context(self, conversation_history: List[Dict[str, str]]) -> str:
         """Build conversation context from message history.
@@ -368,11 +444,24 @@ class WebSearchOrchestrator:
         prompt_parts.append(search_context)
         prompt_parts.append("\n---\n")
         
-        # Simple, minimal prompt - request plain text output
+        # Detailed prompt for natural synthesis with proper citation placement
         prompt_parts.append(
             f"Using the search results above, answer this question: {query}\n\n"
-            f"Important: Write in plain text only. Do not use any markdown formatting (no *, **, #, bullets, etc.). "
-            f"Write naturally as if speaking. Cite sources using [1], [2], etc.\n\n"
+            f"IMPORTANT INSTRUCTIONS:\n"
+            f"1. Write complete, natural sentences. Do NOT start sentences with citation numbers.\n"
+            f"2. Place citation numbers [1], [2], etc. at the END of the sentence or claim they support.\n"
+            f"3. Write in plain text only - no markdown (no *, **, #, bullets).\n"
+            f"4. Synthesize information into your own words - do not just quote the sources.\n"
+            f"5. Be specific with facts and figures rather than vague references.\n\n"
+            f"CORRECT citation style:\n"
+            f"- \"The weather will be partly cloudy with temperatures around 25°C [3].\"\n"
+            f"- \"Rain is expected on Tuesday and Wednesday [1][4].\"\n\n"
+            f"- \"The stock price was up 0.04% relative to the opening price today [5]\n\n"
+            f"INCORRECT citation style (do NOT do this):\n"
+            f"- \"[2] and [7] both mention...\" (Never start with citations)\n"
+            f"- \"According to [3]...\" (Avoid this pattern)\n\n"
+            f"- \"[5] indicates that the stock price was up 0.04% relative to the opening price today [5]\" (Avoid this pattern)\n\n"
+            f"- \"[5] and [6] both indicate positive price projections.\"\n\n (Never start with citations)\n"
             f"Answer:"
         )
         
