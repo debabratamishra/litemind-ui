@@ -3,12 +3,18 @@ name: Build and Publish Docker Images
 on:
   push:
     branches:
-      - main
       - develop
     tags:
       - 'v*.*.*'
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      skip_push:
+        description: 'Skip pushing to registry (build only)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: docker-images-${{ github.ref }}

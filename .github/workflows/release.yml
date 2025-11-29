@@ -1,0 +1,203 @@
+name: Create Release on Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+# Also allow manual trigger for flexibility
+workflow_dispatch:
+  inputs:
+    bump_type:
+      description: 'Version bump type'
+      required: true
+      default: 'patch'
+      type: choice
+      options:
+        - patch
+        - minor
+        - major
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    # Only run if PR was merged (not just closed)
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine version bump type
+        id: bump-type
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+          else
+            # Check PR labels for version bump type
+            LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+            
+            if echo "$LABELS" | grep -q "major"; then
+              echo "type=major" >> $GITHUB_OUTPUT
+            elif echo "$LABELS" | grep -q "minor"; then
+              echo "type=minor" >> $GITHUB_OUTPUT
+            else
+              echo "type=patch" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+          echo "Bump type: $(cat $GITHUB_OUTPUT | grep type | cut -d= -f2)"
+
+      - name: Get current version and calculate new version
+        id: version
+        run: |
+          # Read current version from version.json
+          CURRENT_VERSION=$(jq -r '.version' version.json)
+          MAJOR=$(jq -r '.major' version.json)
+          MINOR=$(jq -r '.minor' version.json)
+          PATCH=$(jq -r '.patch' version.json)
+          
+          echo "Current version: $CURRENT_VERSION"
+          
+          BUMP_TYPE="${{ steps.bump-type.outputs.type }}"
+          
+          case $BUMP_TYPE in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          
+          echo "New version: $NEW_VERSION"
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+
+      - name: Update version.json
+        run: |
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          
+          jq --arg version "${{ steps.version.outputs.new }}" \
+             --argjson major ${{ steps.version.outputs.major }} \
+             --argjson minor ${{ steps.version.outputs.minor }} \
+             --argjson patch ${{ steps.version.outputs.patch }} \
+             --arg build_date "$BUILD_DATE" \
+             --arg git_commit "$GIT_COMMIT" \
+             '.version = $version | .major = $major | .minor = $minor | .patch = $patch | .build_date = $build_date | .git_commit = $git_commit' \
+             version.json > version.json.tmp && mv version.json.tmp version.json
+          
+          echo "Updated version.json:"
+          cat version.json
+
+      - name: Commit version update
+        run: |
+          git add version.json
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new }} [skip ci]"
+          git push
+
+      - name: Create and push tag
+        run: |
+          git tag -a "v${{ steps.version.outputs.new }}" -m "Release v${{ steps.version.outputs.new }}"
+          git push origin "v${{ steps.version.outputs.new }}"
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -z "$PREV_TAG" ]; then
+            # First release - get all commits
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --max-count=50)
+            COMPARE_URL=""
+          else
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)")
+            COMPARE_URL="**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v${{ steps.version.outputs.new }}"
+          fi
+          
+          # Escape special characters for GitHub output
+          CHANGELOG="${CHANGELOG//'%'/'%25'}"
+          CHANGELOG="${CHANGELOG//$'\n'/'%0A'}"
+          CHANGELOG="${CHANGELOG//$'\r'/'%0D'}"
+          
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "compare_url=$COMPARE_URL" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.new }}
+          name: Release v${{ steps.version.outputs.new }}
+          body: |
+            ## 🚀 LiteMindUI v${{ steps.version.outputs.new }}
+            
+            ### 📋 Changes
+            
+            ${{ steps.release-notes.outputs.changelog }}
+            
+            ### 🐳 Docker Images
+            
+            Pull the latest images:
+            ```bash
+            docker pull debabratamishra1/litemindui-backend:${{ steps.version.outputs.new }}
+            docker pull debabratamishra1/litemindui-frontend:${{ steps.version.outputs.new }}
+            ```
+            
+            Or use the `latest` tag:
+            ```bash
+            docker pull debabratamishra1/litemindui-backend:latest
+            docker pull debabratamishra1/litemindui-frontend:latest
+            ```
+            
+            ### 📦 Quick Start
+            
+            ```bash
+            # Clone and start
+            git clone https://github.com/${{ github.repository }}.git
+            cd litemind-ui
+            docker-compose up -d
+            ```
+            
+            ### 🌐 Access Points
+            
+            - **Frontend (Streamlit)**: http://localhost:8501
+            - **Backend API**: http://localhost:8000
+            - **API Documentation**: http://localhost:8000/docs
+            
+            ---
+            
+            ${{ steps.release-notes.outputs.compare_url }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
