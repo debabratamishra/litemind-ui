@@ -37,11 +37,11 @@ ENV UV_LINK_MODE=copy
 WORKDIR /app
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY requirements-backend.txt .
 
-# Install Python dependencies with uv + build cache
+# Install Python dependencies with uv (use CPU-only PyTorch to save space)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -r requirements.txt
+    uv pip install --system -r requirements-backend.txt
 
 # Copy application code
 COPY . .

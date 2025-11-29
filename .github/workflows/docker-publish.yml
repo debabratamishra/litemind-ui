@@ -23,17 +23,44 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
 
     steps:
+    - name: Free up disk space
+      run: |
+        echo "🧹 Freeing up disk space..."
+        echo "Before cleanup:"
+        df -h /
+        
+        # Remove unnecessary large packages
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/share/swift
+        
+        # Clean apt cache
+        sudo apt-get clean
+        sudo rm -rf /var/lib/apt/lists/*
+        
+        # Clean Docker
+        docker system prune -af --volumes || true
+        
+        echo "After cleanup:"
+        df -h /
+
     - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: |
+          image=moby/buildkit:latest
 
     - name: Log in to Docker Hub
       if: github.event_name != 'pull_request'
@@ -128,7 +155,15 @@ jobs:
         provenance: false
         sbom: false
         cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-to: type=gha,mode=min
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
+
+    - name: Clean up after backend build
+      run: |
+        echo "🧹 Cleaning up after backend build..."
+        docker system prune -f || true
+        df -h /
 
     - name: Build and push frontend image
       uses: docker/build-push-action@v5
@@ -142,7 +177,9 @@ jobs:
         provenance: false
         sbom: false
         cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-to: type=gha,mode=min
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
 
   create-compose-release:
     needs: build-and-push

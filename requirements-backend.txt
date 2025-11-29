@@ -1,0 +1,39 @@
+# FastAPI Backend Dependencies
+fastapi
+uvicorn
+python-multipart
+jinja2
+pydantic
+httpx
+requests
+python-dotenv
+psutil
+
+# RAG and ML Dependencies
+chromadb
+sentence-transformers
+ollama
+rank-bm25
+huggingface-hub
+transformers
+numpy
+
+# PyTorch CPU-only (significantly smaller than full PyTorch)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+# Document Processing
+PyMuPDF
+pdfplumber
+python-docx
+beautifulsoup4
+camelot-py
+Pillow
+opencv-python-headless
+easyocr
+pandas
+nltk
+
+# Web Search
+crewai
+google-search-results
