@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
     GRACEFUL_SHUTDOWN_ENABLED=true \
     STARTUP_TIMEOUT=60
 
-# Install system dependencies including health check tools and minimal OpenCV requirements
+# Install system dependencies including health check tools, OpenCV requirements, and TTS
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
@@ -25,6 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libfontconfig1 \
     libfreetype6 \
+    espeak \
+    espeak-ng \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)
@@ -47,8 +49,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY . .
 
 # Create necessary directories with proper permissions
-RUN mkdir -p /app/uploads /app/chroma_db /app/storage /app/.streamlit /app/logs \
-    && chmod 755 /app/uploads /app/chroma_db /app/storage /app/.streamlit /app/logs
+RUN mkdir -p /app/uploads /app/chroma_db /app/storage /app/.streamlit /app/logs /tmp/litemind_tts_cache \
+    && chmod 755 /app/uploads /app/chroma_db /app/storage /app/.streamlit /app/logs /tmp/litemind_tts_cache
 
 # Make scripts executable
 RUN chmod +x /app/scripts/*.py /app/scripts/*.sh

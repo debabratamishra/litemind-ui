@@ -9,6 +9,7 @@ from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text, render_plain_text, render_web_search_text
 from ..components.streaming_handler import streaming_handler
 from ..components.web_search_toggle import WebSearchToggle
+from ..components.tts_playback import check_tts_available
 from ..services.backend_service import backend_service
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,9 @@ class ChatPage:
     
     def _display_chat_history(self):
         if st.session_state.chat_messages:
-            for msg in st.session_state.chat_messages:
+            tts_available = check_tts_available() if st.session_state.get("tts_enabled", True) else False
+            
+            for idx, msg in enumerate(st.session_state.chat_messages):
                 with st.chat_message(msg["role"]):
                     msg_format = msg.get("format", "")
                     if msg_format == "web_search":
@@ -90,6 +93,10 @@ class ChatPage:
                         render_plain_text(msg["content"])
                     else:
                         render_llm_text(msg["content"])
+                    
+                    # Add TTS play button for assistant messages
+                    if msg["role"] == "assistant" and tts_available:
+                        self._render_tts_button(msg["content"], idx)
         else:
             st.markdown(
                 """
@@ -99,6 +106,93 @@ class ChatPage:
                 """,
                 unsafe_allow_html=True,
             )
+    
+    def _render_tts_button(self, text: str, message_index: int):
+        """Render TTS play button for a message."""
+        import io
+        import requests
+        from ..config import FASTAPI_URL
+        
+        audio_key = f"chat_tts_audio_{message_index}"
+        show_key = f"chat_tts_show_{message_index}"
+        
+        # Initialize state
+        if audio_key not in st.session_state:
+            st.session_state[audio_key] = None
+        if show_key not in st.session_state:
+            st.session_state[show_key] = False
+        
+        # If audio is loaded, show player
+        if st.session_state[show_key] and st.session_state[audio_key]:
+            try:
+                audio_bytes = st.session_state[audio_key]
+                logger.info(f"Rendering audio player: {len(audio_bytes) if audio_bytes else 0} bytes")
+                
+                # Create columns for player and close button
+                col1, col2 = st.columns([15, 1])
+                with col1:
+                    # Use BytesIO wrapper for audio bytes
+                    if isinstance(audio_bytes, bytes):
+                        audio_io = io.BytesIO(audio_bytes)
+                        st.audio(audio_io, format="audio/mpeg")
+                    else:
+                        st.audio(audio_bytes, format="audio/mpeg")
+                with col2:
+                    if st.button("✕", key=f"chat_close_{message_index}", help="Close"):
+                        st.session_state[show_key] = False
+                        st.rerun()
+            except Exception as e:
+                logger.error(f"Audio player error: {type(e).__name__}: {e}")
+                st.error(f"Audio playback error: {e}")
+        else:
+            # Show play button
+            if st.button("🗣️", key=f"chat_play_{message_index}", help="Read aloud"):
+                with st.spinner("Generating audio..."):
+                    try:
+                        response = requests.post(
+                            f"{FASTAPI_URL}/api/tts/synthesize",
+                            json={"text": text, "use_cache": True},
+                            timeout=60
+                        )
+                        logger.info(f"TTS response: status={response.status_code}, size={len(response.content)}, content_type={response.headers.get('content-type')}")
+                        
+                        if response.status_code == 200 and len(response.content) > 0:
+                            # Check if it's actually audio and not an error JSON
+                            content_type = response.headers.get('content-type', '')
+                            if 'audio' in content_type:
+                                st.session_state[audio_key] = response.content
+                                st.session_state[show_key] = True
+                                logger.info(f"Audio saved to session state, triggering rerun")
+                                st.rerun()
+                            else:
+                                # Might be an error response
+                                try:
+                                    error_data = response.json()
+                                    logger.error(f"TTS returned non-audio response: {error_data}")
+                                    st.error(f"TTS Error: {error_data.get('detail', 'Unknown error')}")
+                                except:
+                                    # Not JSON, treat as audio anyway
+                                    st.session_state[audio_key] = response.content
+                                    st.session_state[show_key] = True
+                                    st.rerun()
+                        else:
+                            error_msg = f"Status: {response.status_code}"
+                            try:
+                                error_data = response.json()
+                                error_msg = error_data.get('detail', error_msg)
+                            except:
+                                pass
+                            logger.error(f"TTS failed: {error_msg}")
+                            st.error(f"Failed to generate audio: {error_msg}")
+                    except requests.exceptions.Timeout:
+                        logger.error("TTS request timed out")
+                        st.error("Audio generation timed out. Try a shorter message.")
+                    except requests.exceptions.ConnectionError as e:
+                        logger.error(f"TTS connection error: {e}")
+                        st.error("Cannot connect to backend. Is the server running?")
+                    except Exception as e:
+                        logger.error(f"TTS failed: {type(e).__name__}: {e}")
+                        st.error(f"Audio generation failed: {str(e)}")
     
     def _process_user_input(self, user_input: str, backend_provider: str):
         # Validate setup

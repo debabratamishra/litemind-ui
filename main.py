@@ -3,6 +3,7 @@ LiteMindUI FastAPI Backend
 Production-ready API server with chat and RAG capabilities.
 """
 import asyncio
+import io
 import json
 import logging
 import os
@@ -19,13 +20,14 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service
+from app.services.tts_service import get_tts_service
 from app.services.vllm_service import vllm_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
@@ -97,6 +99,13 @@ class RAGConfigRequest(BaseModel):
 class STTRequest(BaseModel):
     audio_data: str
     sample_rate: Optional[int] = 16000
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    use_cache: Optional[bool] = True
+
 
 class VLLMTokenRequest(BaseModel):
     token: str
@@ -614,6 +623,77 @@ async def transcribe_audio(request: STTRequest):
     except Exception as e:
         logger.error(f"STT error: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+# Text-to-Speech endpoints
+@app.post("/api/tts/synthesize")
+async def synthesize_speech(request: TTSRequest):
+    """Convert text to speech audio."""
+    try:
+        logger.info(f"TTS request received: text_length={len(request.text) if request.text else 0}")
+        tts_service = get_tts_service()
+        
+        if not tts_service.is_available():
+            logger.error("TTS service not available")
+            raise HTTPException(
+                status_code=503, 
+                detail="TTS service not available. Please check if required packages are installed."
+            )
+        
+        logger.info(f"TTS service status: {tts_service.get_status()}")
+        
+        audio_data, content_type = await tts_service.synthesize(
+            request.text, 
+            request.voice, 
+            request.use_cache
+        )
+        
+        if not audio_data:
+            logger.error("TTS synthesis returned no audio data")
+            raise HTTPException(status_code=500, detail="Failed to generate speech audio")
+        
+        logger.info(f"TTS synthesis successful: {len(audio_data)} bytes, type={content_type}")
+        
+        # Return audio as a regular Response with proper headers
+        return Response(
+            content=audio_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": "inline; filename=speech.mp3",
+                "Content-Length": str(len(audio_data)),
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"TTS error: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Speech synthesis failed: {str(e)}")
+
+
+@app.get("/api/tts/voices")
+async def get_tts_voices():
+    """Get list of available TTS voices."""
+    try:
+        tts_service = get_tts_service()
+        return {
+            "voices": tts_service.get_available_voices(),
+            "default": "en-US-AriaNeural"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get TTS voices: {e}")
+        return {"voices": [], "default": None}
+
+
+@app.get("/api/tts/status")
+async def get_tts_status():
+    """Get TTS service status."""
+    try:
+        tts_service = get_tts_service()
+        return tts_service.get_status()
+    except Exception as e:
+        logger.error(f"Failed to get TTS status: {e}")
+        return {"available": False, "error": str(e)}
 
 
 # vLLM endpoints

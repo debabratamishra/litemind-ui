@@ -37,3 +37,7 @@ nltk
 # Web Search
 crewai
 google-search-results
+
+# Text-to-Speech
+edge-tts
+pyttsx3

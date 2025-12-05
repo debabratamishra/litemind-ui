@@ -32,3 +32,5 @@ torch
 librosa
 soundfile
 wordfreq
+edge-tts
+pyttsx3
