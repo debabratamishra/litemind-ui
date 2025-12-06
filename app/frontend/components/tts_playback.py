@@ -1,10 +1,24 @@
 """
 Text-to-Speech playback component for Streamlit.
 
-Provides a play button that converts LLM response text to speech audio.
+DEPRECATED: This module is kept for backward compatibility.
+Please use `tts_player.py` instead for new code:
+
+    from app.frontend.components.tts_player import (
+        TTSPlayer,
+        render_tts_button,
+        is_tts_available
+    )
+
+The new unified TTSPlayer provides:
+- Single implementation (no code duplication)
+- Consistent behavior across Chat and RAG pages
+- Better error handling and logging
+- Simplified API
 """
 import base64
 import logging
+import warnings
 from typing import Optional
 
 import requests
@@ -13,6 +27,13 @@ import streamlit as st
 from ..config import FASTAPI_URL
 
 logger = logging.getLogger(__name__)
+
+# Emit deprecation warning when module is imported
+warnings.warn(
+    "tts_playback module is deprecated. Use tts_player instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 class TTSPlayback:
