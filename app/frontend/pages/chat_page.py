@@ -9,6 +9,7 @@ from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text, render_plain_text, render_web_search_text
 from ..components.streaming_handler import streaming_handler
 from ..components.web_search_toggle import WebSearchToggle
+from ..components.tts_player import render_tts_button
 from ..services.backend_service import backend_service
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ class ChatPage:
     
     def _display_chat_history(self):
         if st.session_state.chat_messages:
-            for msg in st.session_state.chat_messages:
+            for idx, msg in enumerate(st.session_state.chat_messages):
                 with st.chat_message(msg["role"]):
                     msg_format = msg.get("format", "")
                     if msg_format == "web_search":
@@ -90,6 +91,10 @@ class ChatPage:
                         render_plain_text(msg["content"])
                     else:
                         render_llm_text(msg["content"])
+                    
+                    # Add TTS play button for assistant messages (always show)
+                    if msg["role"] == "assistant":
+                        render_tts_button(msg["content"], "chat", idx)
         else:
             st.markdown(
                 """

@@ -38,6 +38,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 - 🧠 **Dual Backend Support** - Seamlessly switch between Ollama (local) and vLLM (Hugging Face) backends
 - 📚 **RAG Integration** - Upload documents (PDFs, DOCX, TXT) with enhanced extraction and query with context-aware responses
 - 🔍 **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
+- 🗣️ **Text-to-Speech** - Listen to AI responses with built-in TTS powered by Edge TTS (no API key required)
 - 🔄 **Auto-Failover** - Intelligent backend detection with graceful fallbacks
 - 🤖 **Multi-Model Support** - Access to popular models through vLLM or local Ollama models
 
@@ -237,6 +238,9 @@ mkdir -p uploads .streamlit
 | `/api/rag/upload` | POST | Upload documents for RAG processing |
 | `/api/rag/query` | POST | Query uploaded documents with context-aware responses |
 | `/api/rag/documents` | GET | List uploaded documents |
+| `/api/tts/synthesize` | POST | Convert text to speech audio (MP3) |
+| `/api/tts/voices` | GET | List available TTS voices |
+| `/api/tts/status` | GET | Check TTS service availability |
 | `/api/vllm/models` | GET | Available vLLM models and configuration |
 | `/api/vllm/set-token` | POST | Configure Hugging Face access token |
 
@@ -251,6 +255,22 @@ mkdir -p uploads .streamlit
    - For vLLM: Choose from popular models or enter custom model names
 4. **Optional Web Search:** Enable the web search toggle to enhance responses with real-time internet data
 5. Enter your message and receive AI responses
+6. **Listen to Responses:** Click the 🗣️ button next to any AI response to hear it read aloud
+
+### Text-to-Speech (TTS)
+
+LiteMindUI includes built-in text-to-speech functionality powered by Edge TTS:
+
+- **No API Key Required** - Uses Microsoft's Edge TTS service (free, no setup needed)
+- **Multiple Voices** - Choose from various voices (default: `en-US-AriaNeural`)
+- **Works Everywhere** - Available in both Chat and RAG interfaces
+- **Caching** - Audio is cached to avoid re-synthesizing the same text
+
+To use TTS:
+1. Get a response from the AI in Chat or RAG mode
+2. Click the 🗣️ button next to the response
+3. Audio will be generated and played automatically
+4. Click ✕ to close the audio player
 
 ### Document Q\&A (RAG)
 

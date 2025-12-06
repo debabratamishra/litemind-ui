@@ -8,9 +8,10 @@ from typing import Dict, Optional, Any
 from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text
 from ..components.streaming_handler import streaming_handler
+from ..components.tts_player import is_tts_available, render_tts_button
 from ..services.backend_service import backend_service
 from ..services.rag_service import rag_service
-from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS
+from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS, FASTAPI_URL
 
 logger = logging.getLogger(__name__)
 
@@ -240,12 +241,39 @@ class RAGPage:
     
     def _render_query_section(self):
         """Render the query interface."""
+        import io
         st.subheader("Query Your Knowledge Base")
         
         # Display chat history
-        for message in st.session_state.rag_messages:
+        for idx, message in enumerate(st.session_state.rag_messages):
             with st.chat_message(message["role"]):
                 render_llm_text(message["content"])
+                
+                # Add TTS play button for assistant messages
+                if message["role"] == "assistant":
+                    audio_key = f"rag_tts_audio_{idx}"
+                    show_key = f"rag_tts_show_{idx}"
+                    error_key = f"rag_tts_error_{idx}"
+                    
+                    # Show audio player if audio is available
+                    if st.session_state.get(show_key) and st.session_state.get(audio_key):
+                        col1, col2 = st.columns([15, 1])
+                        with col1:
+                            audio_bytes = st.session_state[audio_key]
+                            st.audio(io.BytesIO(audio_bytes), format="audio/mpeg")
+                        with col2:
+                            if st.button("✕", key=f"rag_close_{idx}", help="Close"):
+                                st.session_state[show_key] = False
+                                st.rerun()
+                    else:
+                        # Show error if any
+                        if st.session_state.get(error_key):
+                            st.error(st.session_state[error_key])
+                            del st.session_state[error_key]
+                        
+                        # Show play button
+                        if st.button("🗣️ Read Aloud", key=f"rag_tts_{idx}", help="Read this response aloud"):
+                            self._generate_tts(message["content"], idx)
         
         # Get user input
         rag_input = get_voice_input(
@@ -255,6 +283,28 @@ class RAGPage:
         
         if rag_input:
             self._process_rag_query(rag_input)
+    
+    def _generate_tts(self, text: str, idx: int):
+        """Generate TTS audio for the given text."""
+        import requests
+        from ..config import FASTAPI_URL
+        
+        with st.spinner("Generating audio..."):
+            try:
+                response = requests.post(
+                    f"{FASTAPI_URL}/api/tts/synthesize",
+                    json={"text": text, "use_cache": True},
+                    timeout=60
+                )
+                if response.status_code == 200 and 'audio' in response.headers.get('content-type', ''):
+                    st.session_state[f"rag_tts_audio_{idx}"] = response.content
+                    st.session_state[f"rag_tts_show_{idx}"] = True
+                    st.rerun()
+                else:
+                    st.error("Failed to generate audio. Please try again.")
+            except Exception as e:
+                logger.error(f"TTS error: {e}")
+                st.error(f"TTS error: {e}")
     
     def _process_rag_query(self, query: str):
         """Process RAG query and generate response."""
@@ -303,6 +353,8 @@ class RAGPage:
 
         if response_text:
             st.session_state.rag_messages.append({"role": "assistant", "content": response_text})
+            # Rerun to show TTS button in the message history
+            st.rerun()
         else:
             err = "❌ No response received. Please check your query and try again."
             st.error(err)
@@ -510,6 +562,21 @@ class RAGPage:
             key="rag_hide_reasoning"
         )
         st.session_state.hide_reasoning = hide_reasoning
+        
+        # TTS Configuration
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🗣️ Text-to-Speech")
+        
+        tts_available = is_tts_available()
+        if tts_available:
+            st.sidebar.success("✅ TTS service available")
+        else:
+            st.sidebar.warning("⚠️ TTS service not available")
+            if st.sidebar.button("🔄 Retry TTS Connection", key="rag_retry_tts"):
+                # Clear cached status to force re-check
+                if "tts_service_available" in st.session_state:
+                    del st.session_state["tts_service_available"]
+                st.rerun()
     
     def _render_sidebar_system_prompt(self):
         """Render system prompt configuration in sidebar."""
