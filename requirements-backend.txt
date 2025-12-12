@@ -41,3 +41,6 @@ google-search-results
 # Text-to-Speech
 edge-tts
 pyttsx3
+
+# Speech-to-Text (low-latency CPU)
+faster-whisper

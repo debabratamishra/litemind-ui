@@ -6,6 +6,7 @@ an open-source Whisper model from Hugging Face.
 """
 
 import logging
+import os
 import tempfile
 from typing import Optional
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 class SpeechService:
     """Service for speech-to-text transcription using Whisper."""
 
-    def __init__(self, model_name: str = "openai/whisper-tiny.en"):
+    def __init__(self, model_name: str = "openai/whisper-base.en"):
         """
         Initialize the speech service with a Whisper model.
 
@@ -27,20 +28,43 @@ class SpeechService:
             model_name: Hugging Face model name for Whisper
         """
         self.model_name = model_name
+        self.backend = os.getenv("STT_BACKEND", "transformers").strip().lower()
         self.pipe = None
+        self._fw_model = None
         self._load_model()
 
     def _load_model(self):
         """Load the Whisper model pipeline."""
         try:
-            logger.info(f"Loading Whisper model: {self.model_name}")
+            if self.backend in {"faster-whisper", "fastwhisper", "fast-whisper"}:
+                from faster_whisper import WhisperModel  # type: ignore
+
+                fw_model = os.getenv("FASTWHISPER_MODEL", "base.en").strip()
+                fw_device = os.getenv("FASTWHISPER_DEVICE", "cpu").strip().lower()
+                fw_compute_type = os.getenv("FASTWHISPER_COMPUTE_TYPE", "int8").strip().lower()
+
+                logger.info(
+                    "Loading faster-whisper model: model=%s device=%s compute_type=%s",
+                    fw_model,
+                    fw_device,
+                    fw_compute_type,
+                )
+                self._fw_model = WhisperModel(fw_model, device=fw_device, compute_type=fw_compute_type)
+                self.pipe = None
+                self.backend = "faster-whisper"
+                logger.info("faster-whisper model loaded successfully")
+                return
+
+            logger.info(f"Loading transformers Whisper model: {self.model_name}")
             self.pipe = pipeline(
                 "automatic-speech-recognition",
                 model=self.model_name,
                 device=0 if torch.cuda.is_available() else -1,
                 torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             )
-            logger.info("Whisper model loaded successfully")
+            self._fw_model = None
+            self.backend = "transformers"
+            logger.info("Transformers Whisper model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
             raise
@@ -57,7 +81,7 @@ class SpeechService:
             Transcribed text or None if transcription fails
         """
         try:
-            import io, soundfile as sf
+            import io
             try:
                 audio_array, sr = librosa.load(io.BytesIO(audio_data), sr=sample_rate)
             except Exception:
@@ -69,9 +93,26 @@ class SpeechService:
             if audio_array.dtype != np.float32:
                 audio_array = audio_array.astype(np.float32)
 
-            # Whisper pipeline accepts raw array
-            result = self.pipe(audio_array)
-            text = (result.get("text") or "").strip()
+            # faster-whisper path
+            if self.backend == "faster-whisper" and self._fw_model is not None:
+                language = os.getenv("FASTWHISPER_LANGUAGE", "en").strip() or None
+                vad_filter = os.getenv("FASTWHISPER_VAD", "1").strip() not in {"0", "false", "False"}
+                beam_size = int(os.getenv("FASTWHISPER_BEAM_SIZE", "1"))
+
+                segments, _info = self._fw_model.transcribe(
+                    audio_array,
+                    language=language,
+                    vad_filter=vad_filter,
+                    beam_size=beam_size,
+                )
+                text = "".join((seg.text or "") for seg in segments).strip()
+            else:
+                # transformers pipeline accepts raw array
+                if self.pipe is None:
+                    raise RuntimeError("SpeechService pipeline not initialized")
+                result = self.pipe(audio_array)
+                text = (result.get("text") or "").strip()
+
             if not text:
                 logger.warning("Transcription returned empty text")
                 return None
@@ -93,12 +134,26 @@ class SpeechService:
             Transcribed text or None if transcription fails
         """
         try:
-            # Load audio file
-            audio_array, sample_rate = librosa.load(file_path, sr=16000)
+            if self.backend == "faster-whisper" and self._fw_model is not None:
+                language = os.getenv("FASTWHISPER_LANGUAGE", "en").strip() or None
+                vad_filter = os.getenv("FASTWHISPER_VAD", "1").strip() not in {"0", "false", "False"}
+                beam_size = int(os.getenv("FASTWHISPER_BEAM_SIZE", "1"))
+                segments, _info = self._fw_model.transcribe(
+                    file_path,
+                    language=language,
+                    vad_filter=vad_filter,
+                    beam_size=beam_size,
+                )
+                text = "".join((seg.text or "") for seg in segments).strip()
+            else:
+                # Load audio file
+                audio_array, _sample_rate = librosa.load(file_path, sr=16000)
+                if self.pipe is None:
+                    raise RuntimeError("SpeechService pipeline not initialized")
 
-            # Transcribe
-            result = self.pipe(audio_array)
-            text = result["text"].strip()
+                # Transcribe
+                result = self.pipe(audio_array)
+                text = (result.get("text") or "").strip()
 
             logger.info(f"File transcription successful: {len(text)} characters")
             return text

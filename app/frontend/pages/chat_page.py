@@ -63,17 +63,21 @@ class ChatPage:
         return {"enabled": True, "token_valid": token_valid}
         
     def render(self):
-        st.title("💬 LLM Chat Interface")
+        realtime_active = st.session_state.get("realtime_voice_mode_chat", False)
+
+        if not realtime_active:
+            st.title("💬 LLM Chat Interface")
         
         if "chat_messages" not in st.session_state:
             st.session_state.chat_messages = []
         
         backend_provider = st.session_state.get("current_backend", "ollama")
         
-        self._display_chat_history()
-        
-        # Render web search toggle before voice input
-        self._render_web_search_toggle()
+        if not realtime_active:
+            self._display_chat_history()
+            
+            # Render web search toggle before voice input
+            self._render_web_search_toggle()
         
         user_input = get_voice_input("Enter your message...", "chat")
         

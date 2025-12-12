@@ -1,11 +1,17 @@
 # Streamlit Frontend Dependencies
 streamlit
 streamlit-audiorecorder
+streamlit-webrtc
+av
+webrtcvad
 httpx
 requests
 python-dotenv
 pydantic
 psutil
+
+# Pipecat (best-in-class VAD + turn detection for barge-in)
+pipecat-ai[silero,local-smart-turn-v3]
 
 # Audio Processing (for voice input)
 librosa
