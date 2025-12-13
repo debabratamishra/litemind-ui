@@ -66,5 +66,8 @@ Thumbs.db
 # Cache directories
 .cache/
 
+# UV - Note: uv.lock should be committed for reproducible builds
+# .python-version should be committed too
+
 #Scripts
 scripts/test-docker-publish.py

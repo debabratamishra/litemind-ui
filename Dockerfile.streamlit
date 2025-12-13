@@ -21,15 +21,19 @@ ENV UV_LINK_MODE=copy
 # Create app directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements-frontend.txt .
+# Copy pyproject.toml and .python-version first for better caching
+COPY pyproject.toml .python-version ./
 
-# Install Python dependencies with uv
+# Install only frontend dependencies (not backend, not dev)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -r requirements-frontend.txt
+    uv sync --frozen --no-dev --only-group frontend --no-install-project
 
 # Copy application code
 COPY . .
+
+# Install the project itself
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --only-group frontend
 
 # Create necessary directories
 RUN mkdir -p /app/.streamlit

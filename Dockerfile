@@ -38,15 +38,19 @@ ENV UV_LINK_MODE=copy
 # Create app directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements-backend.txt .
+# Copy pyproject.toml and .python-version first for better caching
+COPY pyproject.toml .python-version ./
 
-# Install Python dependencies with uv (use CPU-only PyTorch to save space)
+# Install only backend dependencies (not frontend, not dev)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -r requirements-backend.txt
+    uv sync --frozen --no-dev --only-group backend --no-install-project
 
 # Copy application code
 COPY . .
+
+# Install the project itself
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --only-group backend
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/uploads /app/chroma_db /app/storage /app/.streamlit /app/logs /tmp/litemind_tts_cache \
