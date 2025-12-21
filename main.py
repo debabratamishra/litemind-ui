@@ -26,8 +26,8 @@ from pydantic import BaseModel
 
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
-from app.services.speech_service import get_speech_service
-from app.services.tts_service import get_tts_service
+from app.services.speech_service import get_speech_service, preload_stt_model
+from app.services.tts_service import get_tts_service, preload_tts_model
 from app.services.vllm_service import vllm_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
@@ -216,6 +216,36 @@ async def lifespan(app: FastAPI):
         logger.info(f"Thread optimization applied: {cpu_threads} threads")
     except Exception as e:
         logger.warning(f"Thread tuning failed: {e}")
+
+    # Preload speech models for reduced latency
+    # This runs in background to not block startup
+    preload_enabled = os.getenv("PRELOAD_SPEECH_MODELS", "1").strip().lower() not in {"0", "false", "no"}
+    if preload_enabled:
+        logger.info("Preloading speech models in background...")
+        
+        def preload_models():
+            try:
+                # Preload STT (Whisper) model
+                logger.info("Preloading STT model...")
+                preload_stt_model()
+                logger.info("STT model preloaded successfully")
+            except Exception as e:
+                logger.warning(f"Failed to preload STT model: {e}")
+            
+            try:
+                # Preload TTS (Kokoro) model
+                logger.info("Preloading TTS model...")
+                preload_tts_model()
+                logger.info("TTS model preloaded successfully")
+            except Exception as e:
+                logger.warning(f"Failed to preload TTS model: {e}")
+        
+        # Run preloading in a background thread to not block startup
+        import threading
+        preload_thread = threading.Thread(target=preload_models, daemon=True)
+        preload_thread.start()
+    else:
+        logger.info("Speech model preloading disabled (PRELOAD_SPEECH_MODELS=0)")
 
     logger.info("Services initialized successfully")
 
@@ -693,6 +723,63 @@ async def get_tts_status():
         return tts_service.get_status()
     except Exception as e:
         logger.error(f"Failed to get TTS status: {e}")
+        return {"available": False, "error": str(e)}
+
+
+@app.post("/api/tts/synthesize-chunk")
+async def synthesize_chunk(request: TTSRequest):
+    """
+    Synthesize a single text chunk to speech.
+    
+    This endpoint is optimized for streaming scenarios where you want to
+    synthesize text sentence by sentence as it arrives from the LLM.
+    """
+    try:
+        tts_service = get_tts_service()
+        
+        if not tts_service.is_available():
+            raise HTTPException(status_code=503, detail="TTS service not available")
+        
+        # Use synchronous chunk synthesis for lower latency
+        loop = asyncio.get_running_loop()
+        audio_data = await loop.run_in_executor(
+            None, 
+            tts_service.synthesize_text_chunk, 
+            request.text, 
+            request.voice
+        )
+        
+        if not audio_data:
+            raise HTTPException(status_code=500, detail="Failed to generate speech audio")
+        
+        # Determine content type based on audio format
+        content_type = "audio/wav"  # Kokoro outputs WAV
+        if audio_data[:4] != b'RIFF':
+            content_type = "audio/mpeg"  # Edge TTS outputs MP3
+        
+        return Response(
+            content=audio_data,
+            media_type=content_type,
+            headers={
+                "Content-Length": str(len(audio_data)),
+                "Cache-Control": "no-cache"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"TTS chunk error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stt/status")
+async def get_stt_status():
+    """Get STT service status."""
+    try:
+        speech_service = get_speech_service()
+        return speech_service.get_status()
+    except Exception as e:
+        logger.error(f"Failed to get STT status: {e}")
         return {"available": False, "error": str(e)}
 
 

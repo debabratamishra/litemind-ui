@@ -3,6 +3,11 @@ Speech-to-Text service using Hugging Face Whisper model.
 
 This module provides functionality to transcribe audio files to text using
 an open-source Whisper model from Hugging Face.
+
+Features:
+- Model preloading: Load models at startup for reduced latency
+- Multiple backends: transformers pipeline or faster-whisper
+- Configurable via environment variables
 """
 
 import logging
@@ -17,24 +22,32 @@ from transformers import pipeline
 
 logger = logging.getLogger(__name__)
 
+
 class SpeechService:
     """Service for speech-to-text transcription using Whisper."""
 
-    def __init__(self, model_name: str = "openai/whisper-base.en"):
+    def __init__(self, model_name: str = "openai/whisper-base.en", preload: bool = False):
         """
         Initialize the speech service with a Whisper model.
 
         Args:
             model_name: Hugging Face model name for Whisper
+            preload: If True, load the model immediately during init
         """
         self.model_name = model_name
         self.backend = os.getenv("STT_BACKEND", "transformers").strip().lower()
         self.pipe = None
         self._fw_model = None
-        self._load_model()
+        self._model_loaded = False
+        
+        if preload:
+            self._load_model()
 
     def _load_model(self):
         """Load the Whisper model pipeline."""
+        if self._model_loaded:
+            return
+            
         try:
             if self.backend in {"faster-whisper", "fastwhisper", "fast-whisper"}:
                 from faster_whisper import WhisperModel  # type: ignore
@@ -52,6 +65,7 @@ class SpeechService:
                 self._fw_model = WhisperModel(fw_model, device=fw_device, compute_type=fw_compute_type)
                 self.pipe = None
                 self.backend = "faster-whisper"
+                self._model_loaded = True
                 logger.info("faster-whisper model loaded successfully")
                 return
 
@@ -64,10 +78,30 @@ class SpeechService:
             )
             self._fw_model = None
             self.backend = "transformers"
+            self._model_loaded = True
             logger.info("Transformers Whisper model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
             raise
+
+    def preload(self):
+        """
+        Public method to preload the model.
+        Call during application startup to reduce first-request latency.
+        """
+        if not self._model_loaded:
+            logger.info("Preloading speech-to-text model...")
+            self._load_model()
+            logger.info("Speech-to-text model preloaded successfully")
+
+    def is_model_loaded(self) -> bool:
+        """Check if the STT model is loaded in memory."""
+        return self._model_loaded
+
+    def _ensure_model_loaded(self):
+        """Ensure the model is loaded before transcription."""
+        if not self._model_loaded:
+            self._load_model()
 
     def transcribe_audio(self, audio_data: bytes, sample_rate: int = 16000) -> Optional[str]:
         """
@@ -80,6 +114,8 @@ class SpeechService:
         Returns:
             Transcribed text or None if transcription fails
         """
+        self._ensure_model_loaded()
+        
         try:
             import io
             try:
@@ -133,6 +169,8 @@ class SpeechService:
         Returns:
             Transcribed text or None if transcription fails
         """
+        self._ensure_model_loaded()
+        
         try:
             if self.backend == "faster-whisper" and self._fw_model is not None:
                 language = os.getenv("FASTWHISPER_LANGUAGE", "en").strip() or None
@@ -162,13 +200,35 @@ class SpeechService:
             logger.error(f"File transcription failed: {e}")
             return None
 
+    def get_status(self) -> dict:
+        """Get speech service status."""
+        return {
+            "available": True,
+            "model_loaded": self._model_loaded,
+            "backend": self.backend,
+            "model_name": self.model_name,
+        }
+
 
 # Global instance
 _speech_service: Optional[SpeechService] = None
 
-def get_speech_service() -> SpeechService:
-    """Get or create the global speech service instance."""
+
+def get_speech_service(preload: bool = False) -> SpeechService:
+    """
+    Get or create the global speech service instance.
+    
+    Args:
+        preload: If True and creating new instance, preload the model
+    """
     global _speech_service
     if _speech_service is None:
-        _speech_service = SpeechService()
+        _speech_service = SpeechService(preload=preload)
     return _speech_service
+
+
+def preload_stt_model():
+    """Preload STT model. Call during application startup."""
+    service = get_speech_service()
+    service.preload()
+    logger.info("STT model preloaded")

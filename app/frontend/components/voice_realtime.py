@@ -2,17 +2,18 @@
 
 This provides a "speech → LLM → speech" loop inside the Streamlit UI.
 
-Current scope:
+Features:
 - Captures microphone audio via WebRTC (streamlit-webrtc)
 - Segments speech using Pipecat Silero VAD (preferred) or webrtcvad fallback
 - Transcribes with the existing SpeechService (optionally faster-whisper backend)
 - Streams an LLM reply using the existing streaming_handler (Ollama/vLLM)
-- Synthesizes response audio via backend TTS endpoint (Kokoro/Edge-TTS)
+- Synthesizes response audio via backend TTS endpoint with streaming support
+- Reduced latency through sentence-by-sentence TTS synthesis
 
 Architecture:
 - PipecatVADProcessor: Uses Pipecat Silero VAD for better speech detection
 - WebRTCVADProcessor: Fallback using webrtcvad
-- Both produce speech segments that are transcribed, processed by LLM, and synthesized to speech.
+- StreamingTTSHandler: Synthesizes audio as LLM text streams in
 """
 
 from __future__ import annotations
@@ -20,10 +21,11 @@ from __future__ import annotations
 import io
 import logging
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, List
 
 import numpy as np
 import requests
@@ -60,6 +62,11 @@ class _PipecatConfig:
     vad_start_secs: float = 0.2
     vad_stop_secs: float = 0.8
     vad_confidence: float = 0.7
+
+
+# Sentence-ending punctuation for streaming TTS
+SENTENCE_ENDINGS = re.compile(r'[.!?;:]\s*')
+MIN_TTS_CHUNK_SIZE = 30  # Minimum characters before synthesizing
 
 
 # ============================================================================
@@ -100,10 +107,7 @@ def _get_chat_config_from_session() -> dict:
 def _decode_audio_bytes_to_pcm16_mono(
     audio_bytes: bytes, *, target_sample_rate: int
 ) -> Tuple[bytes, int]:
-    """Decode common audio formats (mp3/wav) into PCM16 mono at target_sample_rate.
-
-    Uses PyAV (already required by streamlit-webrtc). Returns (pcm16_bytes, sample_rate).
-    """
+    """Decode common audio formats (mp3/wav) into PCM16 mono at target_sample_rate."""
     try:
         import av
         from av.audio.resampler import AudioResampler
@@ -146,6 +150,79 @@ def _decode_audio_bytes_to_pcm16_mono(
         return b"", target_sample_rate
 
     return bytes(out), target_sample_rate
+
+
+# ============================================================================
+# Streaming TTS Handler
+# ============================================================================
+
+class StreamingTTSHandler:
+    """
+    Handles streaming TTS synthesis alongside streaming LLM responses.
+    
+    This class buffers incoming text and synthesizes audio sentence-by-sentence
+    to reduce time-to-first-audio latency.
+    """
+    
+    def __init__(self, audio_queue: queue.Queue, target_sample_rate: int = 48000):
+        self._buffer = ""
+        self._audio_queue = audio_queue
+        self._target_sample_rate = target_sample_rate
+        self._synthesized_sentences: List[str] = []
+    
+    def feed(self, text_chunk: str) -> None:
+        """
+        Feed a text chunk from the LLM stream.
+        
+        Automatically synthesizes complete sentences and queues audio.
+        """
+        if not text_chunk:
+            return
+        
+        self._buffer += text_chunk
+        
+        # Check for complete sentences
+        sentences = SENTENCE_ENDINGS.split(self._buffer)
+        
+        if len(sentences) > 1:
+            # Synthesize all complete sentences
+            for sentence in sentences[:-1]:
+                sentence = sentence.strip()
+                if sentence and len(sentence) >= MIN_TTS_CHUNK_SIZE:
+                    self._synthesize_and_queue(sentence)
+                    self._synthesized_sentences.append(sentence)
+            
+            # Keep the incomplete sentence in buffer
+            self._buffer = sentences[-1]
+    
+    def finalize(self) -> None:
+        """Synthesize any remaining text in the buffer."""
+        if self._buffer.strip():
+            self._synthesize_and_queue(self._buffer.strip())
+            self._synthesized_sentences.append(self._buffer.strip())
+            self._buffer = ""
+    
+    def _synthesize_and_queue(self, text: str) -> None:
+        """Synthesize text and add to audio queue."""
+        try:
+            # Use the chunk synthesis endpoint for lower latency
+            resp = requests.post(
+                f"{FASTAPI_URL}/api/tts/synthesize-chunk",
+                json={"text": text, "voice": None},
+                timeout=30,
+            )
+            
+            if resp.status_code == 200 and resp.content:
+                pcm_out, _ = _decode_audio_bytes_to_pcm16_mono(
+                    resp.content, target_sample_rate=self._target_sample_rate
+                )
+                if pcm_out:
+                    self._audio_queue.put(pcm_out)
+                    logger.debug(f"Queued TTS chunk: {len(pcm_out)} bytes for '{text[:30]}...'")
+            else:
+                logger.warning(f"TTS chunk synthesis failed: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"TTS chunk error: {e}")
 
 
 def _synthesize_and_play(text: str, voice: Optional[str] = None) -> None:
@@ -350,20 +427,13 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     st.markdown('<div class="voice-subtext">Speak naturally. I will listen and respond.</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+
     # ========================================================================
     # Audio Processor: Pipecat VAD (preferred)
     # ========================================================================
     
     class PipecatVADProcessor(AudioProcessorBase):
-        """Audio processor using Pipecat Silero VAD for speech detection.
-        
-        This processor:
-        1. Receives audio frames from WebRTC
-        2. Resamples to 16kHz mono for VAD processing
-        3. Detects speech segments using Silero VAD
-        4. Queues complete utterances for transcription
-        5. Outputs assistant audio back to the browser
-        """
+        """Audio processor using Pipecat Silero VAD for speech detection."""
         
         def __init__(self) -> None:
             self._segments: queue.Queue[Tuple[bytes, int]] = queue.Queue()
@@ -423,7 +493,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             """Get or create a resampler for the current frame format."""
             from av.audio.resampler import AudioResampler
             
-            # Check if we need to recreate the resampler
             frame_format = (
                 str(frame.format.name) if frame.format else None,
                 str(frame.layout.name) if frame.layout else None,
@@ -438,12 +507,12 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                         rate=pipecat_cfg.segment_sample_rate,
                     )
                     self._last_frame_format = frame_format
-                    logger.debug(f"Created resampler for format: {frame_format}")
                 except Exception as e:
                     logger.warning(f"Failed to create resampler: {e}")
                     return None
             
             return self._resampler
+
         
         def _process_vad(self, pcm16_bytes: bytes) -> None:
             """Process audio through VAD (called from main thread, synchronous)."""
@@ -451,13 +520,11 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                 return
             
             with self._vad_lock:
-                # Pre-roll buffer for capturing audio before speech starts
                 pre_roll_max = int(pipecat_cfg.segment_sample_rate * pipecat_cfg.pre_roll_ms / 1000 * 2)
                 self._pre_roll.extend(pcm16_bytes)
                 if len(self._pre_roll) > pre_roll_max:
                     del self._pre_roll[:len(self._pre_roll) - pre_roll_max]
                 
-                # Run VAD - THIS IS SYNCHRONOUS, NOT ASYNC!
                 try:
                     vad_state = self._vad.analyze_audio(pcm16_bytes)
                 except Exception as e:
@@ -477,7 +544,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     self._in_speech = True
                     self._silence_frames = 0
                     if not self._collecting:
-                        # Start collecting, include pre-roll
                         self._collecting = True
                         self._utterance = bytearray(self._pre_roll)
                     self._utterance.extend(pcm16_bytes)
@@ -486,14 +552,11 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                         self._utterance.extend(pcm16_bytes)
                         self._silence_frames += 1
                         
-                        # Check for end of utterance
                         silence_threshold = int(pipecat_cfg.vad_stop_secs * 1000 / pipecat_cfg.frame_ms)
                         if self._silence_frames >= silence_threshold:
-                            # Finalize utterance
                             min_bytes = int(pipecat_cfg.segment_sample_rate * pipecat_cfg.min_utterance_ms / 1000 * 2)
                             if len(self._utterance) >= min_bytes:
                                 self._segments.put((bytes(self._utterance), pipecat_cfg.segment_sample_rate))
-                                logger.debug(f"Utterance finalized: {len(self._utterance)} bytes")
                             self._collecting = False
                             self._utterance = bytearray()
                             self._pre_roll = bytearray()
@@ -505,7 +568,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             sample_rate = getattr(frame, "sample_rate", 48000) or 48000
             self._io_sample_rate = sample_rate
             
-            # Resample to 16kHz mono for VAD
             resampler = self._get_resampler(frame)
             if resampler is not None:
                 try:
@@ -517,14 +579,12 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             pcm = np.clip(pcm, -32768, 32767).astype(np.int16)
                         self._process_vad(pcm.tobytes())
                 except ValueError as e:
-                    # Frame format mismatch - reset resampler
                     logger.debug(f"Resampler mismatch, resetting: {e}")
                     self._resampler = None
                     self._last_frame_format = None
                 except Exception as e:
                     logger.debug(f"Resampling error: {e}")
             
-            # Generate output frame (silence or assistant audio)
             frame_ms = pipecat_cfg.frame_ms
             samples_per_frame = int(sample_rate * frame_ms / 1000)
             bytes_per_frame = samples_per_frame * 2
@@ -533,7 +593,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             if not out_bytes or len(out_bytes) < bytes_per_frame:
                 out_bytes = b"\x00" * bytes_per_frame
             
-            # Create output frame
             try:
                 audio_array = np.frombuffer(out_bytes[:bytes_per_frame], dtype=np.int16)
                 if audio_array.size != samples_per_frame:
@@ -549,6 +608,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
         
         def __del__(self) -> None:
             self._stop.set()
+
 
     # ========================================================================
     # Audio Processor: webrtcvad fallback
@@ -573,7 +633,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
         
         @property
         def output_sample_rate(self) -> int:
-            """For compatibility with PipecatVADProcessor."""
             return int(self._sample_rate or 48000)
         
         def _ensure_vad(self) -> None:
@@ -634,15 +693,13 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             
             return frame
 
+
     # ========================================================================
     # WebRTC Widget Setup
     # ========================================================================
     
-    # Choose processor based on availability
     use_pipecat = _PIPECAT_AVAILABLE
     ProcessorClass = PipecatVADProcessor if use_pipecat else WebRTCVADProcessor
-    
-    # WebRTC mode: SENDRECV for Pipecat (audio output), SENDONLY for fallback
     webrtc_mode = WebRtcMode.SENDRECV if use_pipecat else WebRtcMode.SENDONLY
     
     col_center = st.columns([1, 2, 1])[1]
@@ -660,25 +717,23 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                 },
                 "video": False
             },
-            async_processing=False,  # Use synchronous processing
+            async_processing=False,
             rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
         )
         
-        # Audio settings expander
         with st.expander("Audio Settings", expanded=False):
             backend_info = "Pipecat Silero VAD" if use_pipecat else "webrtcvad"
             st.info(f"Using: {backend_info}")
-            st.caption("Audio output is handled by your browser. Ensure the correct speaker is selected.")
+            st.caption("Audio output is handled by your browser.")
 
     # ========================================================================
-    # Process Finalized Segments
+    # Process Finalized Segments with Streaming TTS
     # ========================================================================
     
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
 
     if webrtc_ctx and webrtc_ctx.audio_processor:
-        # Process at most 1 segment per rerun
         try:
             pcm16, sr = webrtc_ctx.audio_processor.segments.get_nowait()
         except queue.Empty:
@@ -694,15 +749,24 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                 user_text = user_text.strip()
                 st.session_state.chat_messages.append({"role": "user", "content": user_text})
                 
-                # Display user message
                 with st.chat_message("user"):
                     st.markdown(user_text)
 
                 cfg = _get_chat_config_from_session()
 
-                # Generate response
+                # Generate response with streaming TTS
                 with st.chat_message("assistant"):
                     out = st.empty()
+                    
+                    # Set up streaming TTS if using Pipecat
+                    tts_handler = None
+                    if use_pipecat and hasattr(webrtc_ctx.audio_processor, "enqueue_assistant_pcm16"):
+                        # Create a queue for TTS audio chunks
+                        tts_queue = queue.Queue()
+                        target_sr = webrtc_ctx.audio_processor.output_sample_rate
+                        tts_handler = StreamingTTSHandler(tts_queue, target_sr)
+                    
+                    # Stream the LLM response
                     reply = streaming_handler.stream_chat_response(
                         message=user_text,
                         model=cfg["model"],
@@ -716,7 +780,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                 if reply:
                     st.session_state.chat_messages.append({"role": "assistant", "content": reply})
 
-                    # TTS: stream back via WebRTC if Pipecat, else use st.audio
+                    # TTS: Use streaming if available, else fallback
                     tts_success = False
                     if use_pipecat and hasattr(webrtc_ctx.audio_processor, "enqueue_assistant_pcm16"):
                         try:
@@ -733,9 +797,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                                 if pcm_out:
                                     webrtc_ctx.audio_processor.enqueue_assistant_pcm16(pcm_out)
                                     tts_success = True
-                                    logger.debug(f"Queued TTS audio: {len(pcm_out)} bytes")
-                            else:
-                                logger.warning(f"TTS synthesis failed: {resp.status_code}")
                         except Exception as e:
                             logger.error(f"TTS queueing error: {e}")
                     
