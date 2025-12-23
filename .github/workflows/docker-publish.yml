@@ -193,6 +193,8 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout repository
@@ -274,6 +276,7 @@ jobs:
       with:
         files: |
           docker-compose.release.yml
+        token: ${{ secrets.RELEASE_PAT }}
         body: |
           ## 🚀 LiteMindUI Release ${{ steps.version.outputs.VERSION }}
           
