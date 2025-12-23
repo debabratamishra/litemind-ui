@@ -1,9 +1,9 @@
 """
-Chat interface for LLM conversations with voice input support.
+Chat interface for LLM conversations with voice input support and conversation memory.
 """
 import logging
 import streamlit as st
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text, render_plain_text, render_web_search_text
@@ -11,25 +11,31 @@ from ..components.streaming_handler import streaming_handler
 from ..components.web_search_toggle import WebSearchToggle
 from ..components.tts_player import render_tts_button
 from ..services.backend_service import backend_service
+from ..utils.memory_manager import ChatMemoryManager, display_memory_stats_sidebar
 
 logger = logging.getLogger(__name__)
 
 
 class ChatPage:
-    """Chat interface controller"""
+    """Chat interface controller with conversation memory support"""
     
     def __init__(self):
         self.backend_available = st.session_state.get("backend_available", False)
         self.web_search_toggle = WebSearchToggle()
+        self.memory_manager = ChatMemoryManager()
         self._initialize_session_state()
     
     def _initialize_session_state(self):
-        """Initialize session state variables for web search"""
+        """Initialize session state variables for web search and memory"""
         if "web_search_enabled" not in st.session_state:
             st.session_state.web_search_enabled = False
         
         if "serp_api_token_status" not in st.session_state:
             st.session_state.serp_api_token_status = None
+        
+        # Initialize memory-related session state
+        if "chat_memory_enabled" not in st.session_state:
+            st.session_state.chat_memory_enabled = True
     
     def _render_web_search_toggle(self) -> bool:
         """
@@ -61,24 +67,70 @@ class ChatPage:
         token_valid = token_status.get("status") == "valid"
         
         return {"enabled": True, "token_valid": token_valid}
+    
+    def _get_conversation_context(self) -> tuple[List[Dict[str, str]], Optional[str]]:
+        """
+        Get conversation history and summary for API calls.
+        
+        Returns:
+            Tuple of (conversation_history, conversation_summary)
+        """
+        if not st.session_state.get("chat_memory_enabled", True):
+            return [], None
+        
+        # Get history excluding the most recent user message (which we're about to send)
+        history = self.memory_manager.get_history_for_api(exclude_last=1)
+        summary = self.memory_manager.summary
+        
+        return history, summary
         
     def render(self):
-        st.title("💬 LLM Chat Interface")
+        realtime_active = st.session_state.get("realtime_voice_mode_chat", False)
+
+        if not realtime_active:
+            st.title("💬 LLM Chat Interface")
+            
+            # Display memory indicator if memory is enabled
+            if st.session_state.get("chat_memory_enabled", True):
+                stats = self.memory_manager.get_stats()
+                if stats.total_messages > 0:
+                    self._render_memory_indicator(stats)
         
         if "chat_messages" not in st.session_state:
             st.session_state.chat_messages = []
         
         backend_provider = st.session_state.get("current_backend", "ollama")
         
-        self._display_chat_history()
-        
-        # Render web search toggle before voice input
-        self._render_web_search_toggle()
+        if not realtime_active:
+            self._display_chat_history()
+            
+            # Render web search toggle before voice input
+            self._render_web_search_toggle()
         
         user_input = get_voice_input("Enter your message...", "chat")
         
         if user_input:
             self._process_user_input(user_input, backend_provider)
+    
+    def _render_memory_indicator(self, stats):
+        """Render a visual memory usage indicator."""
+        # Choose color based on usage
+        if stats.usage_percentage < 50:
+            color = "#4CAF50"  # green
+        elif stats.usage_percentage < 75:
+            color = "#FF9800"  # orange
+        else:
+            color = "#f44336"  # red
+        
+        summary_indicator = "📝" if stats.has_summary else ""
+        
+        st.markdown(
+            f"""<div style="font-size: 0.75em; color: #888; padding: 4px 0;">
+            <span style="color: {color};">●</span> 
+            Context: {stats.usage_percentage:.0f}% ({stats.total_messages} messages) {summary_indicator}
+            </div>""",
+            unsafe_allow_html=True
+        )
     
     def _display_chat_history(self):
         if st.session_state.chat_messages:
@@ -112,6 +164,9 @@ class ChatPage:
         
         config = self._get_chat_config(backend_provider)
         
+        # Get conversation context BEFORE adding the new message
+        conversation_history, conversation_summary = self._get_conversation_context()
+        
         # Add user message
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
         
@@ -138,7 +193,10 @@ class ChatPage:
                         backend=backend_provider,
                         hf_token=config.get("hf_token"),
                         placeholder=out,
-                        use_fastapi=self.backend_available
+                        use_fastapi=self.backend_available,
+                        conversation_history=conversation_history,
+                        conversation_summary=conversation_summary,
+                        session_id=self.memory_manager.session_id
                     )
             else:
                 # Display error message if web search enabled but token invalid
@@ -155,7 +213,10 @@ class ChatPage:
                         backend=backend_provider,
                         hf_token=config.get("hf_token"),
                         placeholder=out,
-                        use_fastapi=self.backend_available
+                        use_fastapi=self.backend_available,
+                        conversation_history=conversation_history,
+                        conversation_summary=conversation_summary,
+                        session_id=self.memory_manager.session_id
                     )
         
         if reply:
@@ -163,6 +224,10 @@ class ChatPage:
             if use_web_search:
                 assistant_message["format"] = "web_search"
             st.session_state.chat_messages.append(assistant_message)
+            
+            # Check if we need to trigger summarization
+            self._check_and_trigger_summarization()
+            
             # Use rerun sparingly - only when necessary for UI updates
             st.rerun()
         else:
@@ -261,7 +326,7 @@ class ChatPage:
         if self.backend_available:
             available_models = backend_service.get_available_models()
         else:
-            available_models = ["gemma3n:e2b"]
+            available_models = ["gemma3:1b"]
         
         selected_model = st.sidebar.selectbox(
             "Select Model:", 
@@ -285,6 +350,109 @@ class ChatPage:
             help="Completely hide reasoning sections from responses"
         )
         st.session_state.hide_reasoning = hide_reasoning
+        
+        # Memory configuration
+        self._render_memory_config()
+    
+    def _render_memory_config(self):
+        """Render conversation memory configuration in sidebar."""
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🧠 Conversation Memory")
+        
+        # Memory toggle
+        memory_enabled = st.sidebar.checkbox(
+            "Enable conversation memory",
+            value=st.session_state.get("chat_memory_enabled", True),
+            help="Remember context from earlier in the conversation"
+        )
+        st.session_state.chat_memory_enabled = memory_enabled
+        
+        if memory_enabled:
+            # Display memory stats
+            stats = self.memory_manager.get_stats()
+            
+            # Progress bar for context usage
+            usage_label = f"Context: {stats.usage_percentage:.0f}%"
+            st.sidebar.progress(min(stats.usage_percentage / 100, 1.0), text=usage_label)
+            
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                st.sidebar.caption(f"📝 {stats.total_messages} msgs")
+            with col2:
+                st.sidebar.caption(f"🎯 ~{stats.total_tokens} tokens")
+            
+            if stats.has_summary:
+                st.sidebar.success("📋 Conversation summarized", icon="✅")
+            
+            if stats.needs_summarization:
+                st.sidebar.warning("Context near limit - will summarize soon")
+    
+    def _check_and_trigger_summarization(self):
+        """Check if summarization is needed and trigger it."""
+        if not st.session_state.get("chat_memory_enabled", True):
+            return
+        
+        stats = self.memory_manager.get_stats()
+        
+        if stats.needs_summarization:
+            logger.info("Context limit approaching, triggering summarization...")
+            
+            # Get messages to summarize
+            messages_to_summarize = self.memory_manager.prune_for_summarization()
+            
+            if messages_to_summarize:
+                # Format for summary
+                summary_text = self.memory_manager.format_messages_for_summary_prompt(
+                    messages_to_summarize,
+                    self.memory_manager.summary
+                )
+                
+                # For now, create a simple extractive summary
+                # In production, you'd call the LLM to generate a proper summary
+                simple_summary = self._create_simple_summary(messages_to_summarize)
+                
+                self.memory_manager.set_summary(simple_summary)
+                logger.info(f"Created summary with {len(simple_summary)} characters")
+    
+    def _create_simple_summary(self, messages: List[Dict[str, str]]) -> str:
+        """
+        Create a simple extractive summary of messages.
+        
+        In production, this would call the LLM for a better summary,
+        but we use a simple approach for immediate functionality.
+        """
+        existing_summary = self.memory_manager.summary
+        
+        # Extract key points from messages
+        summary_parts = []
+        
+        if existing_summary:
+            summary_parts.append(f"Previous context: {existing_summary[:500]}")
+        
+        # Summarize user queries and key assistant responses
+        for msg in messages:
+            content = msg.get("content", "")
+            role = msg.get("role", "")
+            
+            # Truncate long messages
+            if len(content) > 200:
+                content = content[:200] + "..."
+            
+            if role == "user":
+                summary_parts.append(f"User asked about: {content}")
+            elif role == "assistant":
+                # Take first sentence or first 100 chars
+                first_sentence = content.split('.')[0] if '.' in content else content[:100]
+                summary_parts.append(f"Assistant explained: {first_sentence}")
+        
+        # Combine and limit total length
+        combined = " | ".join(summary_parts)
+        
+        # Limit to ~2000 characters (roughly 500 tokens)
+        if len(combined) > 2000:
+            combined = combined[:2000] + "..."
+        
+        return combined
 
 
 def render_chat_page():

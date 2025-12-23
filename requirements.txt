@@ -34,3 +34,6 @@ soundfile
 wordfreq
 edge-tts
 pyttsx3
+
+# Pipecat (best-in-class VAD + turn detection for barge-in)
+pipecat-ai[silero,local-smart-turn-v3]

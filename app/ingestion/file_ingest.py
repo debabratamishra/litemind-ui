@@ -197,7 +197,7 @@ def extract_pdf_with_pymupdf(path: Path) -> Tuple[List[dict], List[dict]]:
 def extract_excel(path: Path) -> List[dict]:
     """Extract text content from Excel files."""
     if not PANDAS_AVAILABLE:
-        logger.warning("Pandas not available for Excel parsing. Install with: pip install pandas openpyxl")
+        logger.warning("Pandas not available for Excel parsing. Install with: uv pip install pandas openpyxl")
         return []
     
     try:

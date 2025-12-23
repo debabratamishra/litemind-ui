@@ -980,9 +980,19 @@ class RAGService:
         result_documents = [id_to_content[i] for i in top_text_ids if i in id_to_content]
         return result_documents
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None):
-        """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama."""
-        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3n:e2b")).replace("ollama/","")
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None):
+        """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama.
+        
+        Args:
+            query_text: The user's query
+            system_prompt: System prompt for the LLM
+            messages: Conversation history
+            n_results: Number of documents to retrieve
+            use_hybrid_search: Whether to use hybrid BM25 + semantic search
+            model: Model name to use
+            conversation_summary: Summary of earlier conversation for context
+        """
+        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
         history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
         full_query = f"{history_context}\nUser: {query_text}" if history_context else query_text
 
@@ -995,10 +1005,22 @@ class RAGService:
             results = self.text_collection.query(query_texts=[full_query], n_results=n_results)
             context = " ".join(results['documents'][0]) if results.get('documents') else ""
 
-        llm_messages = messages + [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"}
-        ]
+        # Build messages with conversation memory support
+        llm_messages = []
+        
+        # Add conversation summary if available
+        if conversation_summary:
+            llm_messages.append({
+                "role": "system",
+                "content": f"Summary of previous conversation:\n{conversation_summary}"
+            })
+        
+        # Add conversation history
+        llm_messages.extend(messages)
+        
+        # Add system prompt and current query with context
+        llm_messages.append({"role": "system", "content": system_prompt})
+        llm_messages.append({"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"})
         
         async for chunk in stream_ollama(llm_messages, model=model_name):
             yield chunk
@@ -1006,7 +1028,7 @@ class RAGService:
 
 class CrewAIRAGOrchestrator:
     """Coordinates refined querying and answer composition using an Ollama-backed model."""
-    def __init__(self, rag_service: RAGService, model_name="gemma3n:e2b"):
+    def __init__(self, rag_service: RAGService, model_name="gemma3:1b"):
         """Configure the Ollama LLM, agent roles, and default context parameters."""
         self.rag_service = rag_service
         if not model_name.startswith("ollama/"):
@@ -1119,7 +1141,7 @@ class CrewAIRAGOrchestrator:
 
     async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False, model: Optional[str] = None):
         """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
-        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3n:e2b")).replace("ollama/","")
+        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
         if self.context_length == 4096:
             self.context_length = await self._get_context_length(self.model_name)
         

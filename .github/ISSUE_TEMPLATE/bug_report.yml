@@ -27,7 +27,7 @@ body:
       options:
         - Docker Hub images (docker-compose.hub.yml)
         - Built from source (docker-compose.yml)
-        - Native installation (pip install)
+        - Native installation (uv)
         - One-line install script
     validations:
       required: true

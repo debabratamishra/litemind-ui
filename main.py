@@ -26,8 +26,8 @@ from pydantic import BaseModel
 
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
-from app.services.speech_service import get_speech_service
-from app.services.tts_service import get_tts_service
+from app.services.speech_service import get_speech_service, preload_stt_model
+from app.services.tts_service import get_tts_service, preload_tts_model
 from app.services.vllm_service import vllm_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
@@ -217,7 +217,61 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Thread tuning failed: {e}")
 
-    logger.info("Services initialized successfully")
+    # Preload speech models for reduced latency
+    # This now runs synchronously to ensure models are ready before "startup complete"
+    preload_enabled = os.getenv("PRELOAD_SPEECH_MODELS", "1").strip().lower() not in {"0", "false", "no"}
+    preload_async = os.getenv("PRELOAD_SPEECH_MODELS_ASYNC", "0").strip().lower() in {"1", "true", "yes"}
+    
+    if preload_enabled:
+        logger.info("=" * 60)
+        logger.info("LOADING SPEECH MODELS (this may take a moment)...")
+        logger.info("=" * 60)
+        
+        def preload_models():
+            start_time = time.time()
+            stt_loaded = False
+            tts_loaded = False
+            
+            try:
+                # Preload STT (Whisper) model
+                logger.info("  → Loading STT (Whisper) model...")
+                preload_stt_model()
+                stt_loaded = True
+                logger.info("  ✓ STT model loaded successfully")
+            except Exception as e:
+                logger.warning(f"  ✗ Failed to preload STT model: {e}")
+            
+            try:
+                # Preload TTS (Kokoro) model
+                logger.info("  → Loading TTS (Kokoro) model...")
+                preload_tts_model()
+                tts_loaded = True
+                logger.info("  ✓ TTS model loaded successfully")
+            except Exception as e:
+                logger.warning(f"  ✗ Failed to preload TTS model: {e}")
+            
+            elapsed = time.time() - start_time
+            logger.info("=" * 60)
+            logger.info(f"SPEECH MODELS READY (took {elapsed:.1f}s)")
+            logger.info(f"  STT: {'✓ Ready' if stt_loaded else '✗ Not loaded'}")
+            logger.info(f"  TTS: {'✓ Ready' if tts_loaded else '✗ Not loaded'}")
+            logger.info("=" * 60)
+        
+        if preload_async:
+            # Optional: Run in background (set PRELOAD_SPEECH_MODELS_ASYNC=1)
+            logger.info("(Running in background mode)")
+            preload_thread = threading.Thread(target=preload_models, daemon=True)
+            preload_thread.start()
+        else:
+            # Default: Run synchronously so models are ready before server starts
+            preload_models()
+    else:
+        logger.info("Speech model preloading disabled (PRELOAD_SPEECH_MODELS=0)")
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("LITEMINDUI API READY")
+    logger.info("=" * 60)
 
     yield
 
@@ -576,7 +630,7 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                     
                     orchestrator = CrewAIRAGOrchestrator(
                         rag_service=rag_service,
-                        model_name=request.model or "gemma3n:e2b"
+                        model_name=request.model or "gemma3:1b"
                     )
                     
                     async for chunk in orchestrator.query(
@@ -693,6 +747,63 @@ async def get_tts_status():
         return tts_service.get_status()
     except Exception as e:
         logger.error(f"Failed to get TTS status: {e}")
+        return {"available": False, "error": str(e)}
+
+
+@app.post("/api/tts/synthesize-chunk")
+async def synthesize_chunk(request: TTSRequest):
+    """
+    Synthesize a single text chunk to speech.
+    
+    This endpoint is optimized for streaming scenarios where you want to
+    synthesize text sentence by sentence as it arrives from the LLM.
+    """
+    try:
+        tts_service = get_tts_service()
+        
+        if not tts_service.is_available():
+            raise HTTPException(status_code=503, detail="TTS service not available")
+        
+        # Use synchronous chunk synthesis for lower latency
+        loop = asyncio.get_running_loop()
+        audio_data = await loop.run_in_executor(
+            None, 
+            tts_service.synthesize_text_chunk, 
+            request.text, 
+            request.voice
+        )
+        
+        if not audio_data:
+            raise HTTPException(status_code=500, detail="Failed to generate speech audio")
+        
+        # Determine content type based on audio format
+        content_type = "audio/wav"  # Kokoro outputs WAV
+        if audio_data[:4] != b'RIFF':
+            content_type = "audio/mpeg"  # Edge TTS outputs MP3
+        
+        return Response(
+            content=audio_data,
+            media_type=content_type,
+            headers={
+                "Content-Length": str(len(audio_data)),
+                "Cache-Control": "no-cache"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"TTS chunk error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stt/status")
+async def get_stt_status():
+    """Get STT service status."""
+    try:
+        speech_service = get_speech_service()
+        return speech_service.get_status()
+    except Exception as e:
+        logger.error(f"Failed to get STT status: {e}")
         return {"available": False, "error": str(e)}
 
 

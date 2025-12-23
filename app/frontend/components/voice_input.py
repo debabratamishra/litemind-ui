@@ -6,6 +6,7 @@ import streamlit as st
 from typing import Optional
 
 from ...services.speech_service import get_speech_service
+from .voice_realtime import render_realtime_voice_chat
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ class VoiceInput:
         self.page_key = page_key
         self.text_key = f"text_{page_key}"
         self.audio_mode_key = f"audio_mode_{page_key}"
+        self.realtime_mode_key = f"realtime_voice_mode_{page_key}"
         self.transcription_key = f"transcription_{page_key}"
         self.audio_processed_key = f"audio_processed_{page_key}"
         
@@ -24,6 +26,8 @@ class VoiceInput:
             st.session_state[self.text_key] = ""
         if self.audio_mode_key not in st.session_state:
             st.session_state[self.audio_mode_key] = False
+        if self.realtime_mode_key not in st.session_state:
+            st.session_state[self.realtime_mode_key] = False
         if self.transcription_key not in st.session_state:
             st.session_state[self.transcription_key] = ""
         if self.audio_processed_key not in st.session_state:
@@ -31,7 +35,11 @@ class VoiceInput:
 
     def render_input(self, placeholder_text: str = "Type your message...") -> Optional[str]:
         """Render the input component and return user input."""
-        
+
+        if st.session_state[self.realtime_mode_key]:
+            render_realtime_voice_chat(page_key=self.page_key)
+            return None
+
         if st.session_state[self.audio_mode_key]:
             return self._render_audio_mode(placeholder_text)
         else:
@@ -44,13 +52,22 @@ class VoiceInput:
             st.session_state[f"chat_input_{self.page_key}"] = st.session_state[self.transcription_key]
             st.session_state[self.transcription_key] = ""
         
-        # Create clean layout with chat input and mic button
-        col_input, col_mic = st.columns([20, 1])
+        # Create clean layout with chat input, realtime voice button, and mic button
+        col_input, col_realtime, col_mic = st.columns([20, 1, 1])
         
         with col_input:
             user_input = st.chat_input(
                 placeholder=placeholder_text,
                 key=f"chat_input_{self.page_key}"
+            )
+
+        with col_realtime:
+            realtime_clicked = st.button(
+                "📞",
+                key=f"realtime_voice_toggle_{self.page_key}",
+                help="Realtime voice chat (WebRTC)",
+                type="secondary",
+                use_container_width=True,
             )
         
         with col_mic:
@@ -61,10 +78,17 @@ class VoiceInput:
                 type="secondary",
                 use_container_width=True
             )
+
+        if realtime_clicked:
+            st.session_state[self.realtime_mode_key] = True
+            st.session_state[self.audio_mode_key] = False
+            st.session_state[self.audio_processed_key] = False
+            st.rerun()
         
         # Handle microphone click
         if mic_clicked:
             st.session_state[self.audio_mode_key] = True
+            st.session_state[self.realtime_mode_key] = False
             st.session_state[self.audio_processed_key] = False
             st.rerun()
         

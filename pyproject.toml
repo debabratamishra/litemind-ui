@@ -1,0 +1,210 @@
+[project]
+name = "litemind-ui"
+version = "0.1.0"
+description = "LiteMindUI - A comprehensive AI assistant with RAG, web search, and multimodal capabilities"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    # Shared core dependencies
+    "python-dotenv",
+    "psutil",
+]
+
+[project.optional-dependencies]
+# Backend: FastAPI + ML/RAG + Document Processing
+backend = [
+    # Core FastAPI
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "jinja2",
+    "pydantic",
+    "httpx",
+    "requests",
+    
+    # RAG and ML
+    "chromadb",
+    "sentence-transformers",
+    "ollama",
+    "rank-bm25",
+    "huggingface-hub",
+    "transformers",
+    "numpy",
+    
+    # PyTorch CPU-only
+    "torch",
+    
+    # Document Processing
+    "PyMuPDF",
+    "pdfplumber",
+    "python-docx",
+    "beautifulsoup4",
+    "camelot-py[cv]",
+    "Pillow",
+    "opencv-python-headless",
+    "easyocr",
+    "pandas",
+    "nltk",
+    
+    # Web Search
+    "crewai",
+    "google-search-results",
+    
+    # Text-to-Speech
+    "edge-tts",
+    "pyttsx3",
+    "kokoro",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    
+    # Speech-to-Text
+    "faster-whisper",
+]
+
+# Frontend: Streamlit + Audio/Voice
+frontend = [
+    # Streamlit
+    "streamlit",
+    "streamlit-audiorecorder",
+    "streamlit-webrtc",
+    "av",
+    "webrtcvad",
+    
+    # Pipecat (VAD + turn detection)
+    "pipecat-ai[silero,local-smart-turn-v3]",
+    
+    # Audio Processing
+    "librosa",
+    "soundfile",
+    "numpy",
+    
+    # Text Processing
+    "wordfreq",
+    "nltk",
+    
+    # HTTP client for backend communication
+    "httpx",
+    "requests",
+]
+
+[tool.uv]
+# Dependency groups for optional installation
+# Backend: FastAPI, ML, RAG
+# Frontend: Streamlit, audio
+# Dev: testing and code quality
+
+[dependency-groups]
+backend = [
+    # Core FastAPI
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "jinja2",
+    "pydantic",
+    "httpx",
+    "requests",
+    
+    # RAG and ML
+    "chromadb",
+    "sentence-transformers",
+    "ollama",
+    "rank-bm25",
+    "huggingface-hub",
+    "transformers",
+    "numpy",
+    
+    # PyTorch CPU-only
+    "torch",
+    
+    # Document Processing
+    "PyMuPDF",
+    "pdfplumber",
+    "python-docx",
+    "beautifulsoup4",
+    "camelot-py[cv]",
+    "Pillow",
+    "opencv-python-headless",
+    "easyocr",
+    "pandas",
+    "nltk",
+    
+    # Web Search
+    "crewai",
+    "google-search-results",
+    
+    # Text-to-Speech
+    "edge-tts",
+    "pyttsx3",
+    "kokoro",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    
+    # Speech-to-Text
+    "faster-whisper",
+]
+
+frontend = [
+    # Streamlit
+    "streamlit",
+    "streamlit-audiorecorder",
+    "streamlit-webrtc",
+    "av",
+    "webrtcvad",
+    
+    # Pipecat (VAD + turn detection)
+    "pipecat-ai[silero,local-smart-turn-v3]",
+    
+    # Audio Processing
+    "librosa",
+    "soundfile",
+    "numpy",
+    
+    # Text Processing
+    "wordfreq",
+    "nltk",
+    
+    # HTTP client for backend communication
+    "httpx",
+    "requests",
+]
+
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy",
+]
+
+# Configure PyTorch to use CPU-only version
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm.build]
+includes = []
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

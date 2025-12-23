@@ -219,7 +219,7 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
 
 
 async def _handle_vllm_rag_query(request: RAGQueryRequestEnhanced, rag_service):
-    """Handle vLLM RAG query"""
+    """Handle vLLM RAG query with conversation memory support"""
     if request.hf_token:
         vllm_service.set_hf_token(request.hf_token)
 
@@ -238,11 +238,22 @@ async def _handle_vllm_rag_query(request: RAGQueryRequestEnhanced, rag_service):
     except Exception as e:
         logger.warning(f"Vector query failed: {e}")
 
-    # Create messages
-    messages = request.messages + [
-        {"role": "system", "content": request.system_prompt},
-        {"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"}
-    ]
+    # Build messages with conversation memory support
+    messages = []
+    
+    # Add conversation summary if available
+    if request.conversation_summary:
+        messages.append({
+            "role": "system",
+            "content": f"Summary of previous conversation:\n{request.conversation_summary}"
+        })
+    
+    # Add conversation history
+    messages.extend(request.messages)
+    
+    # Add system prompt and current query with context
+    messages.append({"role": "system", "content": request.system_prompt})
+    messages.append({"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"})
 
     # Stream response
     async def event_generator():
@@ -253,11 +264,15 @@ async def _handle_vllm_rag_query(request: RAGQueryRequestEnhanced, rag_service):
 
 
 async def _handle_ollama_rag_query(request: RAGQueryRequestEnhanced, rag_service):
-    """Handle Ollama RAG query"""
+    """Handle Ollama RAG query with conversation memory support"""
+    # Prepare messages with conversation summary if available
+    messages = request.messages.copy() if request.messages else []
+    
     async def event_generator():
         async for chunk in rag_service.query(
-            request.query, request.system_prompt, request.messages,
-            request.n_results, request.use_hybrid_search, request.model
+            request.query, request.system_prompt, messages,
+            request.n_results, request.use_hybrid_search, request.model,
+            conversation_summary=request.conversation_summary
         ):
             yield chunk + "\n"
 

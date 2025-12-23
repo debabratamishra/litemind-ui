@@ -155,13 +155,19 @@ git clone https://github.com/debabratamishra/litemind-ui
 cd litemind-ui
 ```
 
-2. Create and activate a virtual environment, then install dependencies
+2. Install dependencies using uv
 
 ```bash
-python -m venv .venv
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install dependencies
+uv sync
+
+# Or manually create venv and install
+uv venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+uv pip install -e .
 ```
 
 3. Create required directories
@@ -211,13 +217,7 @@ docker-compose -f docker-compose.hub.yml logs -f
 ```
 ```
 
-2. **Install dependencies**
-
-```bash
-uv pip install -r requirements.txt
-```
-
-3. **Create required directories**
+2. **Create required directories**
 
 ```bash
 mkdir -p uploads .streamlit
@@ -417,7 +417,7 @@ LiteMindUI supports optional web search integration powered by SerpAPI. When ena
 - **Model loading errors:** Check model compatibility and available GPU memory
 
 **Native Installation Issues:**
-- **Module not found:** Reinstall dependencies with `uv pip install -r requirements.txt`
+- **Module not found:** Reinstall dependencies with `uv sync`
 - **Streamlit not starting:** Check if port 8501 is available
 - **FastAPI errors:** Verify Python 3.12+ and check logs in terminal
 

@@ -71,7 +71,7 @@ class TTSPlayer:
             voice: Optional voice ID (e.g., 'en-US-AriaNeural')
             
         Returns:
-            Audio bytes (MP3 format) or None on error
+            Audio bytes (typically MP3 for edge-tts, WAV for pyttsx3) or None on error
         """
         try:
             logger.debug(f"TTS synthesize request: {len(text)} chars")
@@ -177,23 +177,27 @@ class TTSPlayer:
         """Render the audio player with optional close button."""
         try:
             logger.debug(f"Rendering audio player: {len(audio_bytes)} bytes")
+
+            audio_format = "audio/mpeg"
+            if isinstance(audio_bytes, (bytes, bytearray)) and bytes(audio_bytes).startswith(b"RIFF"):
+                audio_format = "audio/wav"
             
             if show_close:
                 col1, col2 = st.columns([15, 1])
                 with col1:
                     if isinstance(audio_bytes, bytes):
-                        st.audio(io.BytesIO(audio_bytes), format="audio/mpeg")
+                        st.audio(io.BytesIO(audio_bytes), format=audio_format)
                     else:
-                        st.audio(audio_bytes, format="audio/mpeg")
+                        st.audio(audio_bytes, format=audio_format)
                 with col2:
                     if st.button("✕", key=close_key, help="Close"):
                         st.session_state[show_key] = False
                         st.rerun()
             else:
                 if isinstance(audio_bytes, bytes):
-                    st.audio(io.BytesIO(audio_bytes), format="audio/mpeg")
+                    st.audio(io.BytesIO(audio_bytes), format=audio_format)
                 else:
-                    st.audio(audio_bytes, format="audio/mpeg")
+                    st.audio(audio_bytes, format=audio_format)
                     
         except Exception as e:
             logger.error(f"Audio player error: {type(e).__name__}: {e}")
