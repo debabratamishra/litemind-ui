@@ -38,8 +38,8 @@ ENV UV_LINK_MODE=copy
 # Create app directory
 WORKDIR /app
 
-# Copy pyproject.toml and .python-version first for better caching
-COPY pyproject.toml .python-version ./
+# Copy pyproject.toml, lockfile, and .python-version first for better caching
+COPY pyproject.toml uv.lock .python-version ./
 
 # Install only backend dependencies (not frontend, not dev)
 RUN --mount=type=cache,target=/root/.cache/uv \
