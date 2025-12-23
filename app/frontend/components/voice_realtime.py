@@ -34,6 +34,7 @@ import streamlit as st
 
 from ..config import FASTAPI_URL
 from ..components.streaming_handler import streaming_handler
+from ..utils.memory_manager import ChatMemoryManager, RAGMemoryManager
 from ...services.speech_service import get_speech_service
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,20 @@ def _get_realtime_greeting(page_key: str) -> str:
     if page_key == "rag":
         return REALTIME_GREETING_RAG
     return REALTIME_GREETING_CHAT
+
+
+def _get_memory_manager(page_key: str):
+    """Get the appropriate memory manager based on page type.
+    
+    Args:
+        page_key: Either "chat" or "rag"
+        
+    Returns:
+        The appropriate memory manager instance (ChatMemoryManager or RAGMemoryManager)
+    """
+    if page_key == "rag":
+        return RAGMemoryManager()
+    return ChatMemoryManager()
 
 
 def _get_chat_config_from_session(page_key: str = "chat") -> dict:
@@ -1270,6 +1285,9 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     else:
                         tts_streaming_callback = None
                     
+                    # Get memory manager for conversation context
+                    memory_manager = _get_memory_manager(page_key)
+                    
                     # Stream the response based on page type
                     if page_key == "rag":
                         # RAG query with document context
@@ -1289,9 +1307,11 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             hf_token=cfg.get("hf_token"),
                             placeholder=out,
                             tts_callback=tts_streaming_callback,
+                            conversation_summary=memory_manager.summary,
+                            session_id=memory_manager.session_id,
                         )
                     else:
-                        # Regular chat response
+                        # Regular chat response with conversation memory
                         reply = streaming_handler.stream_chat_response(
                             message=user_text,
                             model=cfg["model"],
@@ -1301,6 +1321,9 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             placeholder=out,
                             use_fastapi=st.session_state.get("backend_available", False),
                             tts_callback=tts_streaming_callback,
+                            conversation_history=memory_manager.get_history_for_api(),
+                            conversation_summary=memory_manager.summary,
+                            session_id=memory_manager.session_id,
                         )
                     
                     # Finalize any remaining TTS audio (if not interrupted)

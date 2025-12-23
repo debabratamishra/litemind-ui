@@ -5,6 +5,12 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel
 
 
+class ChatMessage(BaseModel):
+    """A single message in a conversation."""
+    role: str  # "user", "assistant", or "system"
+    content: str
+
+
 class ChatRequestEnhanced(BaseModel):
     message: str
     model: Optional[str] = "default"
@@ -12,6 +18,10 @@ class ChatRequestEnhanced(BaseModel):
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
     use_web_search: Optional[bool] = False
+    # Conversation memory fields
+    session_id: Optional[str] = None  # Session ID for memory tracking
+    conversation_history: Optional[List[ChatMessage]] = None  # Previous messages
+    conversation_summary: Optional[str] = None  # Summary of older messages
 
 
 class RAGQueryRequestEnhanced(BaseModel):
@@ -24,6 +34,9 @@ class RAGQueryRequestEnhanced(BaseModel):
     use_hybrid_search: Optional[bool] = False
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
+    # Conversation memory fields
+    session_id: Optional[str] = None  # Session ID for memory tracking
+    conversation_summary: Optional[str] = None  # Summary of older messages
 
 
 class ChatResponse(BaseModel):
@@ -129,3 +142,14 @@ class WebSearchResponse(BaseModel):
 class SerpTokenStatus(BaseModel):
     status: str
     message: str
+
+
+class MemoryStatsResponse(BaseModel):
+    """Response model for conversation memory statistics."""
+    session_id: str
+    message_count: int
+    total_tokens: int
+    summary_tokens: int
+    has_summary: bool
+    max_context_tokens: int
+    usage_percentage: float

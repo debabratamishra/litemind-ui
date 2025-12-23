@@ -172,8 +172,10 @@ class RAGService:
         use_hybrid_search: bool = False,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
+        conversation_summary: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> requests.Response:
-        """Stream a RAG response from the backend."""
+        """Stream a RAG response from the backend with conversation memory support."""
         payload = {
             "query": query,
             "messages": messages,
@@ -188,6 +190,12 @@ class RAGService:
             payload["backend"] = backend
             if hf_token:
                 payload["hf_token"] = hf_token
+
+        # Add conversation memory fields
+        if conversation_summary:
+            payload["conversation_summary"] = conversation_summary
+        if session_id:
+            payload["session_id"] = session_id
 
         response = requests.post(
             f"{self.base_url}/api/rag/query",

@@ -1,9 +1,9 @@
 """
-RAG page implementation.
+RAG page implementation with conversation memory support.
 """
 import logging
 import streamlit as st
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 
 from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text
@@ -12,15 +12,17 @@ from ..components.tts_player import is_tts_available, render_tts_button
 from ..services.backend_service import backend_service
 from ..services.rag_service import rag_service
 from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS, FASTAPI_URL
+from ..utils.memory_manager import RAGMemoryManager
 
 logger = logging.getLogger(__name__)
 
 
 class RAGPage:
-    """Handles the RAG interface and document processing."""
+    """Handles the RAG interface and document processing with conversation memory."""
     
     def __init__(self):
         self.backend_available = st.session_state.get("backend_available", False)
+        self.memory_manager = RAGMemoryManager()
         self._initialize_session_state()
         
     def render(self):
@@ -36,6 +38,12 @@ class RAGPage:
             st.title("📚 RAG Interface")
             
             self._initialize_session_state()
+            
+            # Display memory indicator if enabled
+            if st.session_state.get("rag_memory_enabled", True):
+                stats = self.memory_manager.get_stats()
+                if stats.total_messages > 0:
+                    self._render_memory_indicator(stats)
             
             self._render_system_prompt_config()
             
@@ -63,6 +71,29 @@ class RAGPage:
             "use_multi_agent": False,
             "use_hybrid_search": False,
         })
+        
+        # Initialize memory-related session state
+        st.session_state.setdefault("rag_memory_enabled", True)
+    
+    def _render_memory_indicator(self, stats):
+        """Render a visual memory usage indicator."""
+        # Choose color based on usage
+        if stats.usage_percentage < 50:
+            color = "#4CAF50"  # green
+        elif stats.usage_percentage < 75:
+            color = "#FF9800"  # orange
+        else:
+            color = "#f44336"  # red
+        
+        summary_indicator = "📝" if stats.has_summary else ""
+        
+        st.markdown(
+            f"""<div style="font-size: 0.75em; color: #888; padding: 4px 0;">
+            <span style="color: {color};">●</span> 
+            Context: {stats.usage_percentage:.0f}% ({stats.total_messages} messages) {summary_indicator}
+            </div>""",
+            unsafe_allow_html=True
+        )
     
     def _render_system_prompt_config(self):
         """Render system prompt configuration in main page."""
@@ -317,7 +348,7 @@ class RAGPage:
                 st.error(f"TTS error: {e}")
     
     def _process_rag_query(self, query: str):
-        """Process RAG query and generate response."""
+        """Process RAG query and generate response with conversation memory."""
         backend_provider = st.session_state.get("current_backend", "ollama")
         is_docker = st.session_state.get("is_docker_deployment", False)
         
@@ -329,6 +360,11 @@ class RAGPage:
         if backend_provider == "vllm" and not st.session_state.get("vllm_model"):
             st.error("❌ Please configure and load a vLLM model first")
             return
+        
+        # Get conversation context BEFORE adding the new message
+        conversation_summary = None
+        if st.session_state.get("rag_memory_enabled", True):
+            conversation_summary = self.memory_manager.summary
         
         # Add user message
         st.session_state.rag_messages.append({"role": "user", "content": query})
@@ -358,11 +394,17 @@ class RAGPage:
                     use_hybrid_search=config["use_hybrid_search"],
                     backend=backend_provider,
                     hf_token=st.session_state.get("hf_token") if backend_provider == "vllm" else None,
-                    placeholder=out
+                    placeholder=out,
+                    conversation_summary=conversation_summary,
+                    session_id=self.memory_manager.session_id
                 )
 
         if response_text:
             st.session_state.rag_messages.append({"role": "assistant", "content": response_text})
+            
+            # Check if we need to trigger summarization
+            self._check_and_trigger_summarization()
+            
             # Rerun to show TTS button in the message history
             st.rerun()
         else:
@@ -406,6 +448,9 @@ class RAGPage:
         
         # Reasoning settings
         self._render_sidebar_reasoning_config()
+        
+        # Memory configuration
+        self._render_sidebar_memory_config()
         
         # System management
         self._render_sidebar_system_management()
@@ -647,10 +692,102 @@ class RAGPage:
                 st.success(f"✅ {message}")
                 st.session_state.rag_messages.clear()
                 st.session_state.show_reset_confirm = False
+                # Also clear conversation memory
+                self.memory_manager.clear()
                 st.rerun()
             else:
                 st.error(f"❌ {message}")
                 st.session_state.show_reset_confirm = False
+    
+    def _render_sidebar_memory_config(self):
+        """Render conversation memory configuration in sidebar."""
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🧠 Conversation Memory")
+        
+        # Memory toggle
+        memory_enabled = st.sidebar.checkbox(
+            "Enable conversation memory",
+            value=st.session_state.get("rag_memory_enabled", True),
+            help="Remember context from earlier in the conversation"
+        )
+        st.session_state.rag_memory_enabled = memory_enabled
+        
+        if memory_enabled:
+            # Display memory stats
+            stats = self.memory_manager.get_stats()
+            
+            # Progress bar for context usage
+            usage_label = f"Context: {stats.usage_percentage:.0f}%"
+            st.sidebar.progress(min(stats.usage_percentage / 100, 1.0), text=usage_label)
+            
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                st.sidebar.caption(f"📝 {stats.total_messages} msgs")
+            with col2:
+                st.sidebar.caption(f"🎯 ~{stats.total_tokens} tokens")
+            
+            if stats.has_summary:
+                st.sidebar.success("📋 Conversation summarized", icon="✅")
+            
+            if stats.needs_summarization:
+                st.sidebar.warning("Context near limit - will summarize soon")
+    
+    def _check_and_trigger_summarization(self):
+        """Check if summarization is needed and trigger it."""
+        if not st.session_state.get("rag_memory_enabled", True):
+            return
+        
+        stats = self.memory_manager.get_stats()
+        
+        if stats.needs_summarization:
+            logger.info("Context limit approaching, triggering summarization for RAG...")
+            
+            # Get messages to summarize
+            messages_to_summarize = self.memory_manager.prune_for_summarization()
+            
+            if messages_to_summarize:
+                # Create a simple summary
+                simple_summary = self._create_simple_summary(messages_to_summarize)
+                
+                self.memory_manager.set_summary(simple_summary)
+                logger.info(f"Created RAG summary with {len(simple_summary)} characters")
+    
+    def _create_simple_summary(self, messages: List[Dict[str, str]]) -> str:
+        """
+        Create a simple extractive summary of messages for RAG context.
+        """
+        existing_summary = self.memory_manager.summary
+        
+        # Extract key points from messages
+        summary_parts = []
+        
+        if existing_summary:
+            summary_parts.append(f"Previous context: {existing_summary[:500]}")
+        
+        # Summarize user queries and key assistant responses
+        for msg in messages:
+            content = msg.get("content", "")
+            role = msg.get("role", "")
+            
+            # Truncate long messages
+            if len(content) > 200:
+                content = content[:200] + "..."
+            
+            if role == "user":
+                summary_parts.append(f"User asked about: {content}")
+            elif role == "assistant":
+                # Take first sentence or first 100 chars
+                first_sentence = content.split('.')[0] if '.' in content else content[:100]
+                summary_parts.append(f"Assistant explained: {first_sentence}")
+        
+        # Combine and limit total length
+        combined = " | ".join(summary_parts)
+        
+        # Limit to ~2000 characters (roughly 500 tokens)
+        if len(combined) > 2000:
+            combined = combined[:2000] + "..."
+        
+        return combined
 
 
 def render_rag_page():

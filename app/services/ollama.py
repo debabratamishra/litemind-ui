@@ -41,7 +41,7 @@ def get_ollama_url():
         return url
 
 
-async def stream_ollama(messages, model: str = "gemma3n:e2b", temperature: float = 0.7):
+async def stream_ollama(messages, model: str = "gemma3:1b", temperature: float = 0.7):
     """Stream markdown text from Ollama.
 
     Parameters
@@ -49,7 +49,7 @@ async def stream_ollama(messages, model: str = "gemma3n:e2b", temperature: float
     messages : list[dict]
         Chat messages (role/content dicts) to send to the model.
     model : str
-        Ollama model name (e.g. "llama3", "gemma3n:e2b").
+        Ollama model name (e.g. "llama3", "gemma3:1b").
     temperature : float
         Sampling temperature.
 

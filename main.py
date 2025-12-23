@@ -630,7 +630,7 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                     
                     orchestrator = CrewAIRAGOrchestrator(
                         rag_service=rag_service,
-                        model_name=request.model or "gemma3n:e2b"
+                        model_name=request.model or "gemma3:1b"
                     )
                     
                     async for chunk in orchestrator.query(
