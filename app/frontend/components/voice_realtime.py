@@ -1236,12 +1236,21 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
 
             if user_text and user_text.strip():
                 user_text = user_text.strip()
+                
+                cfg = _get_chat_config_from_session(page_key)
+                
+                # Get conversation context BEFORE adding the new message
+                # This ensures the current question is not included in the history
+                memory_manager = _get_memory_manager(page_key)
+                conversation_history = memory_manager.get_history_for_api()
+                conversation_summary = memory_manager.summary
+                session_id = memory_manager.session_id
+                
+                # Now add the user message to session state
                 st.session_state[messages_key].append({"role": "user", "content": user_text})
                 
                 with st.chat_message("user"):
                     st.markdown(user_text)
-
-                cfg = _get_chat_config_from_session(page_key)
 
                 # Generate response with streaming TTS
                 with st.chat_message("assistant"):
@@ -1285,9 +1294,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     else:
                         tts_streaming_callback = None
                     
-                    # Get memory manager for conversation context
-                    memory_manager = _get_memory_manager(page_key)
-                    
                     # Stream the response based on page type
                     if page_key == "rag":
                         # RAG query with document context
@@ -1307,8 +1313,8 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             hf_token=cfg.get("hf_token"),
                             placeholder=out,
                             tts_callback=tts_streaming_callback,
-                            conversation_summary=memory_manager.summary,
-                            session_id=memory_manager.session_id,
+                            conversation_summary=conversation_summary,
+                            session_id=session_id,
                         )
                     else:
                         # Regular chat response with conversation memory
@@ -1321,9 +1327,9 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             placeholder=out,
                             use_fastapi=st.session_state.get("backend_available", False),
                             tts_callback=tts_streaming_callback,
-                            conversation_history=memory_manager.get_history_for_api(),
-                            conversation_summary=memory_manager.summary,
-                            session_id=memory_manager.session_id,
+                            conversation_history=conversation_history,
+                            conversation_summary=conversation_summary,
+                            session_id=session_id,
                         )
                     
                     # Finalize any remaining TTS audio (if not interrupted)
