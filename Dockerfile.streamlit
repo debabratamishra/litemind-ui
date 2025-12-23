@@ -7,9 +7,10 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install system dependencies
+# Install system dependencies (incl. build tools for C extensions)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)
@@ -21,8 +22,8 @@ ENV UV_LINK_MODE=copy
 # Create app directory
 WORKDIR /app
 
-# Copy pyproject.toml and .python-version first for better caching
-COPY pyproject.toml .python-version ./
+# Copy pyproject.toml, .python-version, and uv.lock first for better caching
+COPY pyproject.toml .python-version uv.lock ./
 
 # Install only frontend dependencies (not backend, not dev)
 RUN --mount=type=cache,target=/root/.cache/uv \
