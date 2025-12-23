@@ -7,13 +7,15 @@ an open-source Whisper model from Hugging Face.
 Features:
 - Model preloading: Load models at startup for reduced latency
 - Multiple backends: transformers pipeline or faster-whisper
+- Streaming transcription: Get partial results during speech
 - Configurable via environment variables
 """
 
 import logging
 import os
 import tempfile
-from typing import Optional
+import threading
+from typing import Optional, Generator, Tuple, Callable
 
 import librosa
 import numpy as np
@@ -198,6 +200,163 @@ class SpeechService:
 
         except Exception as e:
             logger.error(f"File transcription failed: {e}")
+            return None
+
+    def transcribe_audio_streaming(
+        self, 
+        audio_data: bytes, 
+        sample_rate: int = 16000,
+        on_partial: Optional[Callable[[str], None]] = None
+    ) -> Optional[str]:
+        """
+        Transcribe audio with streaming partial results.
+        
+        This method provides intermediate transcription results as they become
+        available, which is useful for showing live transcription in the UI.
+        
+        Args:
+            audio_data: Raw audio bytes
+            sample_rate: Sample rate of the audio
+            on_partial: Callback function called with partial transcription text
+            
+        Returns:
+            Final transcribed text or None if transcription fails
+        """
+        self._ensure_model_loaded()
+        
+        try:
+            import io
+            try:
+                audio_array, sr = librosa.load(io.BytesIO(audio_data), sr=sample_rate)
+            except Exception:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+                    tmp.write(audio_data)
+                    tmp.flush()
+                    audio_array, sr = librosa.load(tmp.name, sr=sample_rate)
+
+            if audio_array.dtype != np.float32:
+                audio_array = audio_array.astype(np.float32)
+
+            # faster-whisper supports streaming segments
+            if self.backend == "faster-whisper" and self._fw_model is not None:
+                language = os.getenv("FASTWHISPER_LANGUAGE", "en").strip() or None
+                vad_filter = os.getenv("FASTWHISPER_VAD", "1").strip() not in {"0", "false", "False"}
+                beam_size = int(os.getenv("FASTWHISPER_BEAM_SIZE", "1"))
+
+                segments, _info = self._fw_model.transcribe(
+                    audio_array,
+                    language=language,
+                    vad_filter=vad_filter,
+                    beam_size=beam_size,
+                )
+                
+                # Stream segments as they come
+                text_parts = []
+                for seg in segments:
+                    seg_text = (seg.text or "").strip()
+                    if seg_text:
+                        text_parts.append(seg_text)
+                        partial_text = " ".join(text_parts)
+                        if on_partial:
+                            try:
+                                on_partial(partial_text)
+                            except Exception as e:
+                                logger.debug(f"Partial callback error: {e}")
+                
+                text = " ".join(text_parts).strip()
+            else:
+                # transformers pipeline - single result (no streaming support)
+                if self.pipe is None:
+                    raise RuntimeError("SpeechService pipeline not initialized")
+                
+                # Show "Processing..." while transcribing
+                if on_partial:
+                    on_partial("Processing...")
+                
+                result = self.pipe(audio_array)
+                text = (result.get("text") or "").strip()
+                
+                # Send final result
+                if on_partial and text:
+                    on_partial(text)
+
+            if not text:
+                logger.warning("Streaming transcription returned empty text")
+                return None
+            logger.info(f"Streaming transcription successful: {len(text)} characters")
+            return text
+
+        except Exception as e:
+            logger.error(f"Streaming transcription failed: {e}")
+            return None
+
+    def transcribe_chunk_generator(
+        self, 
+        audio_data: bytes, 
+        sample_rate: int = 16000
+    ) -> Generator[Tuple[str, bool], None, None]:
+        """
+        Generator that yields transcription chunks.
+        
+        Yields:
+            Tuple of (text, is_final) where is_final indicates if this is the final result
+        """
+        self._ensure_model_loaded()
+        
+        try:
+            import io
+            try:
+                audio_array, sr = librosa.load(io.BytesIO(audio_data), sr=sample_rate)
+            except Exception:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+                    tmp.write(audio_data)
+                    tmp.flush()
+                    audio_array, sr = librosa.load(tmp.name, sr=sample_rate)
+
+            if audio_array.dtype != np.float32:
+                audio_array = audio_array.astype(np.float32)
+
+            # faster-whisper supports streaming segments
+            if self.backend == "faster-whisper" and self._fw_model is not None:
+                language = os.getenv("FASTWHISPER_LANGUAGE", "en").strip() or None
+                vad_filter = os.getenv("FASTWHISPER_VAD", "1").strip() not in {"0", "false", "False"}
+                beam_size = int(os.getenv("FASTWHISPER_BEAM_SIZE", "1"))
+
+                segments, _info = self._fw_model.transcribe(
+                    audio_array,
+                    language=language,
+                    vad_filter=vad_filter,
+                    beam_size=beam_size,
+                )
+                
+                # Yield segments as they come
+                text_parts = []
+                segment_list = list(segments)  # Consume generator
+                
+                for i, seg in enumerate(segment_list):
+                    seg_text = (seg.text or "").strip()
+                    if seg_text:
+                        text_parts.append(seg_text)
+                        partial_text = " ".join(text_parts)
+                        is_final = (i == len(segment_list) - 1)
+                        yield (partial_text, is_final)
+                
+                # If no segments, yield empty final
+                if not text_parts:
+                    yield ("", True)
+            else:
+                # transformers pipeline - single result
+                if self.pipe is None:
+                    raise RuntimeError("SpeechService pipeline not initialized")
+                
+                yield ("Processing...", False)
+                result = self.pipe(audio_array)
+                text = (result.get("text") or "").strip()
+                yield (text, True)
+
+        except Exception as e:
+            logger.error(f"Transcription generator failed: {e}")
+            yield (f"Error: {e}", True)
             return None
 
     def get_status(self) -> dict:

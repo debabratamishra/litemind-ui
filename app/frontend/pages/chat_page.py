@@ -3,7 +3,7 @@ Chat interface for LLM conversations with voice input support.
 """
 import logging
 import streamlit as st
-from typing import Dict, List
+from typing import Dict
 
 from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text, render_plain_text, render_web_search_text

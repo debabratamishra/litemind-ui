@@ -3,7 +3,7 @@ Streaming handlers for chat and RAG responses.
 """
 import logging
 import requests
-from typing import Optional, Any
+from typing import Optional, Any, Callable
 
 from .text_renderer import StreamingRenderer, plain_text_renderer, web_search_renderer
 from ..services.chat_service import chat_service
@@ -24,9 +24,22 @@ class StreamingHandler:
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         placeholder: Optional[Any] = None,
-        use_fastapi: bool = True
+        use_fastapi: bool = True,
+        tts_callback: Optional[Callable[[str], None]] = None
     ) -> Optional[str]:
-        """Stream a chat response with reasoning segregation."""
+        """Stream a chat response with reasoning segregation.
+        
+        Args:
+            message: User message
+            model: Model name
+            temperature: Temperature for generation
+            backend: Backend to use (ollama/vllm)
+            hf_token: HuggingFace token for vLLM
+            placeholder: Streamlit placeholder for UI updates
+            use_fastapi: Whether to use FastAPI backend
+            tts_callback: Optional callback to receive text chunks for TTS synthesis.
+                         Called with each text chunk as it arrives for real-time TTS.
+        """
         
         try:
             if not use_fastapi:
@@ -46,7 +59,7 @@ class StreamingHandler:
                 hf_token=hf_token
             )
             
-            return self._process_streaming_response(response, placeholder)
+            return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)
             
         except requests.Timeout:
             logger.error("Chat API timed out while streaming.")
@@ -148,9 +161,16 @@ class StreamingHandler:
     def _process_streaming_response(
         self, 
         response: requests.Response, 
-        placeholder: Optional[Any]
+        placeholder: Optional[Any],
+        tts_callback: Optional[Callable[[str], None]] = None
     ) -> str:
-        """Process streaming response and handle reasoning segregation."""
+        """Process streaming response and handle reasoning segregation.
+        
+        Args:
+            response: Streaming HTTP response
+            placeholder: Streamlit placeholder for UI updates
+            tts_callback: Optional callback for TTS chunks (called for each text chunk)
+        """
         buf = ""
         segregator = StreamingRenderer(placeholder) if placeholder is not None else None
 
@@ -167,6 +187,13 @@ class StreamingHandler:
             buf += chunk
             if segregator is not None:
                 segregator.feed(chunk)
+            
+            # Call TTS callback with the text chunk for streaming synthesis
+            if tts_callback is not None:
+                try:
+                    tts_callback(chunk)
+                except Exception as e:
+                    logger.debug(f"TTS callback error: {e}")
 
         return buf
     

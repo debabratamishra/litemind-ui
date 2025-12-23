@@ -218,36 +218,60 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Thread tuning failed: {e}")
 
     # Preload speech models for reduced latency
-    # This runs in background to not block startup
+    # This now runs synchronously to ensure models are ready before "startup complete"
     preload_enabled = os.getenv("PRELOAD_SPEECH_MODELS", "1").strip().lower() not in {"0", "false", "no"}
+    preload_async = os.getenv("PRELOAD_SPEECH_MODELS_ASYNC", "0").strip().lower() in {"1", "true", "yes"}
+    
     if preload_enabled:
-        logger.info("Preloading speech models in background...")
+        logger.info("=" * 60)
+        logger.info("LOADING SPEECH MODELS (this may take a moment)...")
+        logger.info("=" * 60)
         
         def preload_models():
+            start_time = time.time()
+            stt_loaded = False
+            tts_loaded = False
+            
             try:
                 # Preload STT (Whisper) model
-                logger.info("Preloading STT model...")
+                logger.info("  → Loading STT (Whisper) model...")
                 preload_stt_model()
-                logger.info("STT model preloaded successfully")
+                stt_loaded = True
+                logger.info("  ✓ STT model loaded successfully")
             except Exception as e:
-                logger.warning(f"Failed to preload STT model: {e}")
+                logger.warning(f"  ✗ Failed to preload STT model: {e}")
             
             try:
                 # Preload TTS (Kokoro) model
-                logger.info("Preloading TTS model...")
+                logger.info("  → Loading TTS (Kokoro) model...")
                 preload_tts_model()
-                logger.info("TTS model preloaded successfully")
+                tts_loaded = True
+                logger.info("  ✓ TTS model loaded successfully")
             except Exception as e:
-                logger.warning(f"Failed to preload TTS model: {e}")
+                logger.warning(f"  ✗ Failed to preload TTS model: {e}")
+            
+            elapsed = time.time() - start_time
+            logger.info("=" * 60)
+            logger.info(f"SPEECH MODELS READY (took {elapsed:.1f}s)")
+            logger.info(f"  STT: {'✓ Ready' if stt_loaded else '✗ Not loaded'}")
+            logger.info(f"  TTS: {'✓ Ready' if tts_loaded else '✗ Not loaded'}")
+            logger.info("=" * 60)
         
-        # Run preloading in a background thread to not block startup
-        import threading
-        preload_thread = threading.Thread(target=preload_models, daemon=True)
-        preload_thread.start()
+        if preload_async:
+            # Optional: Run in background (set PRELOAD_SPEECH_MODELS_ASYNC=1)
+            logger.info("(Running in background mode)")
+            preload_thread = threading.Thread(target=preload_models, daemon=True)
+            preload_thread.start()
+        else:
+            # Default: Run synchronously so models are ready before server starts
+            preload_models()
     else:
         logger.info("Speech model preloading disabled (PRELOAD_SPEECH_MODELS=0)")
 
-    logger.info("Services initialized successfully")
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("LITEMINDUI API READY")
+    logger.info("=" * 60)
 
     yield
 

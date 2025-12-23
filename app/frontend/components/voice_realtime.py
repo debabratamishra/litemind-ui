@@ -24,8 +24,9 @@ import queue
 import re
 import threading
 import time
+import concurrent.futures
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple, List
+from typing import Any, Optional, Tuple, List, Callable
 
 import numpy as np
 import requests
@@ -66,7 +67,11 @@ class _PipecatConfig:
 
 # Sentence-ending punctuation for streaming TTS
 SENTENCE_ENDINGS = re.compile(r'[.!?;:]\s*')
-MIN_TTS_CHUNK_SIZE = 30  # Minimum characters before synthesizing
+MIN_TTS_CHUNK_SIZE = 15  # Reduced for faster first audio (was 30)
+
+# Greeting message for when realtime voice starts
+REALTIME_GREETING = "Good day! How can I help you today?"
+GREETING_CACHE_KEY = "realtime_greeting_audio_cached"
 
 
 # ============================================================================
@@ -161,7 +166,8 @@ class StreamingTTSHandler:
     Handles streaming TTS synthesis alongside streaming LLM responses.
     
     This class buffers incoming text and synthesizes audio sentence-by-sentence
-    to reduce time-to-first-audio latency.
+    to reduce time-to-first-audio latency. Uses a thread pool for async synthesis.
+    Supports interruption for barge-in scenarios.
     """
     
     def __init__(self, audio_queue: queue.Queue, target_sample_rate: int = 48000):
@@ -169,41 +175,114 @@ class StreamingTTSHandler:
         self._audio_queue = audio_queue
         self._target_sample_rate = target_sample_rate
         self._synthesized_sentences: List[str] = []
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self._pending_futures: List[concurrent.futures.Future] = []
+        self._synthesis_lock = threading.Lock()
+        self._interrupted = threading.Event()  # Flag to stop synthesis on interruption
+        self._full_text = ""  # Track complete text for saving
+    
+    def interrupt(self) -> None:
+        """
+        Signal that synthesis should stop (barge-in occurred).
+        Clears pending work and prevents new synthesis.
+        """
+        self._interrupted.set()
+        with self._synthesis_lock:
+            # Cancel pending futures
+            for future in self._pending_futures:
+                future.cancel()
+            self._pending_futures.clear()
+            # Clear the audio queue
+            while True:
+                try:
+                    self._audio_queue.get_nowait()
+                except queue.Empty:
+                    break
+            self._buffer = ""
+        logger.debug("StreamingTTSHandler interrupted")
+    
+    def is_interrupted(self) -> bool:
+        """Check if synthesis has been interrupted."""
+        return self._interrupted.is_set()
+    
+    def get_full_text(self) -> str:
+        """Get the complete text that was fed to the handler."""
+        return self._full_text
     
     def feed(self, text_chunk: str) -> None:
         """
         Feed a text chunk from the LLM stream.
         
         Automatically synthesizes complete sentences and queues audio.
+        Uses async synthesis for lower latency.
         """
-        if not text_chunk:
+        if not text_chunk or self._interrupted.is_set():
             return
         
         self._buffer += text_chunk
+        self._full_text += text_chunk  # Track for saving
         
         # Check for complete sentences
         sentences = SENTENCE_ENDINGS.split(self._buffer)
         
         if len(sentences) > 1:
-            # Synthesize all complete sentences
+            # Synthesize all complete sentences asynchronously
             for sentence in sentences[:-1]:
+                if self._interrupted.is_set():
+                    return
                 sentence = sentence.strip()
                 if sentence and len(sentence) >= MIN_TTS_CHUNK_SIZE:
-                    self._synthesize_and_queue(sentence)
+                    # Submit synthesis to thread pool for parallel processing
+                    future = self._executor.submit(self._synthesize_and_queue, sentence)
+                    with self._synthesis_lock:
+                        self._pending_futures.append(future)
                     self._synthesized_sentences.append(sentence)
             
             # Keep the incomplete sentence in buffer
             self._buffer = sentences[-1]
+        
+        # Clean up completed futures
+        with self._synthesis_lock:
+            self._pending_futures = [f for f in self._pending_futures if not f.done()]
     
     def finalize(self) -> None:
-        """Synthesize any remaining text in the buffer."""
+        """Synthesize any remaining text in the buffer and wait for all pending."""
+        if self._interrupted.is_set():
+            # Don't synthesize more if interrupted
+            self._pending_futures.clear()
+            return
+            
         if self._buffer.strip():
-            self._synthesize_and_queue(self._buffer.strip())
+            # Submit final chunk
+            future = self._executor.submit(self._synthesize_and_queue, self._buffer.strip())
+            with self._synthesis_lock:
+                self._pending_futures.append(future)
             self._synthesized_sentences.append(self._buffer.strip())
             self._buffer = ""
+        
+        # Wait for all pending synthesis to complete (with timeout)
+        for future in self._pending_futures:
+            if self._interrupted.is_set():
+                break
+            try:
+                future.result(timeout=10.0)
+            except concurrent.futures.CancelledError:
+                pass  # Expected on interruption
+            except Exception as e:
+                logger.warning(f"TTS synthesis future error: {e}")
+        self._pending_futures.clear()
+    
+    def shutdown(self) -> None:
+        """Shutdown the executor."""
+        self._interrupted.set()  # Signal to stop any pending work
+        self._executor.shutdown(wait=False)
     
     def _synthesize_and_queue(self, text: str) -> None:
         """Synthesize text and add to audio queue."""
+        # Check if interrupted before synthesis
+        if self._interrupted.is_set():
+            return
+            
         try:
             # Use the chunk synthesis endpoint for lower latency
             resp = requests.post(
@@ -211,6 +290,10 @@ class StreamingTTSHandler:
                 json={"text": text, "voice": None},
                 timeout=30,
             )
+            
+            # Check again after network request
+            if self._interrupted.is_set():
+                return
             
             if resp.status_code == 200 and resp.content:
                 pcm_out, _ = _decode_audio_bytes_to_pcm16_mono(
@@ -259,6 +342,86 @@ def _synthesize_and_play(text: str, voice: Optional[str] = None) -> None:
         st.error(f"TTS Playback Error: {e}")
 
 
+def _get_or_cache_greeting_audio() -> Optional[bytes]:
+    """
+    Get cached greeting audio or synthesize and cache it.
+    
+    This pre-caches the greeting audio to eliminate TTS latency on startup.
+    """
+    # Check if we already have cached greeting in session state
+    if GREETING_CACHE_KEY in st.session_state:
+        cached = st.session_state[GREETING_CACHE_KEY]
+        if cached:
+            logger.debug("Using cached greeting audio")
+            return cached
+    
+    # Synthesize greeting audio
+    try:
+        logger.info("Synthesizing greeting audio for caching...")
+        resp = requests.post(
+            f"{FASTAPI_URL}/api/tts/synthesize",
+            json={"text": REALTIME_GREETING, "voice": None, "use_cache": True},
+            timeout=30,
+        )
+        if resp.status_code == 200 and resp.content:
+            st.session_state[GREETING_CACHE_KEY] = resp.content
+            logger.info(f"Greeting audio cached: {len(resp.content)} bytes")
+            return resp.content
+        else:
+            logger.warning(f"Failed to synthesize greeting: {resp.status_code}")
+    except Exception as e:
+        logger.error(f"Error caching greeting audio: {e}")
+    
+    return None
+
+
+def _play_greeting_via_webrtc(audio_processor, audio_bytes: bytes, target_sr: int = 48000) -> bool:
+    """
+    Play greeting audio through WebRTC audio processor.
+    
+    Returns True if successful.
+    """
+    if not audio_bytes or not hasattr(audio_processor, "enqueue_assistant_pcm16"):
+        return False
+    
+    try:
+        pcm_out, _ = _decode_audio_bytes_to_pcm16_mono(
+            audio_bytes, target_sample_rate=target_sr
+        )
+        if pcm_out:
+            audio_processor.enqueue_assistant_pcm16(pcm_out)
+            logger.info("Greeting audio enqueued for playback")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to play greeting via WebRTC: {e}")
+    
+    return False
+
+
+def _play_greeting_via_audio_widget(audio_bytes: bytes) -> bool:
+    """
+    Play greeting audio using st.audio widget as fallback.
+    
+    Returns True if successful.
+    """
+    if not audio_bytes:
+        return False
+    
+    try:
+        # Detect format from content
+        fmt = "audio/mp3"
+        if audio_bytes[:4] == b'RIFF':
+            fmt = "audio/wav"
+        
+        st.audio(io.BytesIO(audio_bytes), format=fmt, autoplay=True)
+        logger.info("Greeting played via audio widget")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to play greeting via audio widget: {e}")
+    
+    return False
+
+
 # ============================================================================
 # Audio Output Queue (for barge-in support)
 # ============================================================================
@@ -271,10 +434,16 @@ class _InterruptibleAudioOut:
         self._buf = bytearray()
         self._lock = threading.Lock()
         self._bot_speaking = False
+        self._interrupted = threading.Event()  # Signal for barge-in
+        self._interrupt_callback: Optional[Callable[[], None]] = None
+
+    def set_interrupt_callback(self, callback: Optional[Callable[[], None]]) -> None:
+        """Set a callback to be called when interrupt occurs (for TTS handler)."""
+        self._interrupt_callback = callback
 
     def enqueue(self, pcm16: bytes) -> None:
         """Add audio to the output queue."""
-        if not pcm16:
+        if not pcm16 or self._interrupted.is_set():
             return
         with self._lock:
             self._bot_speaking = True
@@ -282,6 +451,7 @@ class _InterruptibleAudioOut:
 
     def interrupt(self) -> None:
         """Clear all queued audio (user started speaking)."""
+        self._interrupted.set()  # Signal interruption
         with self._lock:
             self._bot_speaking = False
             self._buf.clear()
@@ -290,6 +460,20 @@ class _InterruptibleAudioOut:
                     self._q.get_nowait()
             except queue.Empty:
                 pass
+        # Call the interrupt callback if set (to stop TTS synthesis)
+        if self._interrupt_callback:
+            try:
+                self._interrupt_callback()
+            except Exception:
+                pass
+
+    def reset_interrupt(self) -> None:
+        """Reset the interrupt flag for a new response."""
+        self._interrupted.clear()
+
+    def is_interrupted(self) -> bool:
+        """Check if audio output has been interrupted."""
+        return self._interrupted.is_set()
 
     def is_bot_speaking(self) -> bool:
         """Check if there's audio being output."""
@@ -437,6 +621,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
         
         def __init__(self) -> None:
             self._segments: queue.Queue[Tuple[bytes, int]] = queue.Queue()
+            self._interim_audio: queue.Queue[Tuple[bytes, int]] = queue.Queue()  # For live transcription
             self._stop = threading.Event()
             self._out = _InterruptibleAudioOut()
             
@@ -453,6 +638,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             self._pre_roll = bytearray()
             self._in_speech = False
             self._silence_frames = 0
+            self._interim_counter = 0  # Counter for interim updates
             
             # Initialize VAD
             self._init_vad()
@@ -488,6 +674,18 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
         
         def interrupt_assistant(self) -> None:
             self._out.interrupt()
+        
+        def set_tts_interrupt_callback(self, callback: Optional[Callable[[], None]]) -> None:
+            """Set a callback to be invoked on barge-in (to stop TTS handler)."""
+            self._out.set_interrupt_callback(callback)
+        
+        def reset_interrupt(self) -> None:
+            """Reset the interrupt flag for a new response."""
+            self._out.reset_interrupt()
+        
+        def is_audio_interrupted(self) -> bool:
+            """Check if audio output has been interrupted (barge-in occurred)."""
+            return self._out.is_interrupted()
         
         def _get_resampler(self, frame) -> Optional[Any]:
             """Get or create a resampler for the current frame format."""
@@ -546,7 +744,21 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     if not self._collecting:
                         self._collecting = True
                         self._utterance = bytearray(self._pre_roll)
+                        self._interim_counter = 0
                     self._utterance.extend(pcm16_bytes)
+                    
+                    # Emit interim audio every ~500ms for live transcription
+                    # (25 frames at 20ms each = 500ms)
+                    self._interim_counter += 1
+                    if self._interim_counter >= 25:
+                        min_interim_bytes = int(pipecat_cfg.segment_sample_rate * 0.3 * 2)  # 300ms minimum
+                        if len(self._utterance) >= min_interim_bytes:
+                            # Put interim audio (copy to avoid mutation)
+                            try:
+                                self._interim_audio.put_nowait((bytes(self._utterance), pipecat_cfg.segment_sample_rate))
+                            except queue.Full:
+                                pass  # Skip if queue is full
+                        self._interim_counter = 0
                 else:
                     if self._collecting:
                         self._utterance.extend(pcm16_bytes)
@@ -562,6 +774,18 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             self._pre_roll = bytearray()
                             self._in_speech = False
                             self._silence_frames = 0
+                            self._interim_counter = 0
+        
+        @property
+        def interim_audio(self) -> queue.Queue[Tuple[bytes, int]]:
+            """Queue for interim audio chunks for live transcription."""
+            return self._interim_audio
+        
+        @property
+        def is_speaking(self) -> bool:
+            """Check if user is currently speaking."""
+            with self._vad_lock:
+                return self._in_speech
         
         def recv(self, frame):
             """Process a single audio frame (synchronous callback)."""
@@ -702,6 +926,17 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     ProcessorClass = PipecatVADProcessor if use_pipecat else WebRTCVADProcessor
     webrtc_mode = WebRtcMode.SENDRECV if use_pipecat else WebRtcMode.SENDONLY
     
+    # Session state key to track if greeting has been played
+    greeting_played_key = f"realtime_greeting_played_{page_key}"
+    
+    # Pre-cache greeting audio on page load (runs in background)
+    if GREETING_CACHE_KEY not in st.session_state:
+        # Start background thread to cache greeting audio
+        def cache_greeting_async():
+            _get_or_cache_greeting_audio()
+        
+        threading.Thread(target=cache_greeting_async, daemon=True).start()
+    
     col_center = st.columns([1, 2, 1])[1]
     with col_center:
         webrtc_ctx = webrtc_streamer(
@@ -725,6 +960,53 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             backend_info = "Pipecat Silero VAD" if use_pipecat else "webrtcvad"
             st.info(f"Using: {backend_info}")
             st.caption("Audio output is handled by your browser.")
+    
+    # ========================================================================
+    # Play Greeting When Session Starts
+    # ========================================================================
+    
+    # Check if WebRTC is playing and greeting hasn't been played yet
+    if webrtc_ctx and getattr(webrtc_ctx.state, "playing", False):
+        if not st.session_state.get(greeting_played_key, False):
+            # Mark greeting as played (do this first to prevent re-triggering)
+            st.session_state[greeting_played_key] = True
+            
+            # Add greeting to chat messages
+            st.session_state.setdefault("chat_messages", [])
+            st.session_state.chat_messages.append({
+                "role": "assistant", 
+                "content": REALTIME_GREETING
+            })
+            
+            # Get cached or synthesize greeting audio
+            greeting_audio = _get_or_cache_greeting_audio()
+            
+            if greeting_audio:
+                # Try to play through WebRTC first (lower latency)
+                greeting_played = False
+                if webrtc_ctx.audio_processor and use_pipecat:
+                    if hasattr(webrtc_ctx.audio_processor, "enqueue_assistant_pcm16"):
+                        target_sr = webrtc_ctx.audio_processor.output_sample_rate
+                        greeting_played = _play_greeting_via_webrtc(
+                            webrtc_ctx.audio_processor, 
+                            greeting_audio, 
+                            target_sr
+                        )
+                
+                # Fallback to audio widget if WebRTC playback failed
+                if not greeting_played:
+                    _play_greeting_via_audio_widget(greeting_audio)
+            else:
+                # Last resort: synthesize and play directly
+                logger.warning("No cached greeting, synthesizing inline...")
+                _synthesize_and_play(REALTIME_GREETING)
+            
+            logger.info("AI greeting played on realtime voice session start")
+    
+    # Reset greeting flag when WebRTC stops
+    if webrtc_ctx and not getattr(webrtc_ctx.state, "playing", False):
+        if st.session_state.get(greeting_played_key, False):
+            st.session_state[greeting_played_key] = False
 
     # ========================================================================
     # Process Finalized Segments with Streaming TTS
@@ -732,14 +1014,93 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
+    
+    # Session state for live transcription
+    live_transcript_key = f"live_transcript_{page_key}"
+    if live_transcript_key not in st.session_state:
+        st.session_state[live_transcript_key] = ""
+    
+    # Placeholder for live transcription display
+    live_transcript_placeholder = st.empty()
 
     if webrtc_ctx and webrtc_ctx.audio_processor:
+        # ====================================================================
+        # Live Transcription: Show partial text as user speaks
+        # ====================================================================
+        if use_pipecat and hasattr(webrtc_ctx.audio_processor, "interim_audio"):
+            try:
+                interim_pcm16, interim_sr = webrtc_ctx.audio_processor.interim_audio.get_nowait()
+                if interim_pcm16 and interim_sr:
+                    # Transcribe interim audio in background
+                    def transcribe_interim():
+                        try:
+                            wav_bytes = _pcm16_to_wav_bytes(interim_pcm16, sample_rate=interim_sr, channels=1)
+                            speech_service = get_speech_service()
+                            partial_text = speech_service.transcribe_audio(wav_bytes, sample_rate=16000)
+                            if partial_text:
+                                st.session_state[live_transcript_key] = partial_text
+                        except Exception as e:
+                            logger.debug(f"Interim transcription error: {e}")
+                    
+                    # Run in thread to avoid blocking
+                    threading.Thread(target=transcribe_interim, daemon=True).start()
+            except queue.Empty:
+                pass
+        
+        # Display live transcription if available
+        live_text = st.session_state.get(live_transcript_key, "")
+        if live_text and webrtc_ctx.audio_processor:
+            # Check if user is still speaking
+            is_speaking = False
+            if hasattr(webrtc_ctx.audio_processor, "is_speaking"):
+                is_speaking = webrtc_ctx.audio_processor.is_speaking
+            
+            if is_speaking or live_text:
+                with live_transcript_placeholder.container():
+                    st.markdown(
+                        f"""<div style="
+                            padding: 0.75rem 1rem;
+                            background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 100%);
+                            border-left: 4px solid #667eea;
+                            border-radius: 8px;
+                            margin-bottom: 1rem;
+                            font-style: italic;
+                            color: #555;
+                        ">
+                            🎙️ <strong>Listening:</strong> {live_text}...
+                        </div>""",
+                        unsafe_allow_html=True
+                    )
+        
+        # ====================================================================
+        # Process Completed Segments
+        # ====================================================================
         try:
             pcm16, sr = webrtc_ctx.audio_processor.segments.get_nowait()
         except queue.Empty:
             pcm16, sr = None, None
 
         if pcm16 and sr:
+            # Clear live transcript when we have a complete segment
+            st.session_state[live_transcript_key] = ""
+            live_transcript_placeholder.empty()
+            
+            # BARGE-IN: Interrupt any ongoing TTS playback immediately
+            # 1. Clear the audio output queue to stop playback instantly
+            if hasattr(webrtc_ctx.audio_processor, "interrupt_assistant"):
+                webrtc_ctx.audio_processor.interrupt_assistant()
+                logger.debug("Cleared audio output queue on barge-in")
+            
+            # 2. Interrupt the TTS handler to stop generating more audio
+            active_tts_key = f"active_tts_handler_{page_key}"
+            if active_tts_key in st.session_state and st.session_state[active_tts_key]:
+                try:
+                    st.session_state[active_tts_key].interrupt()
+                    logger.debug("Interrupted TTS handler on barge-in")
+                except Exception as e:
+                    logger.debug(f"TTS interrupt error: {e}")
+                st.session_state[active_tts_key] = None
+            
             with st.spinner("Transcribing..."):
                 wav_bytes = _pcm16_to_wav_bytes(pcm16, sample_rate=sr, channels=1)
                 speech_service = get_speech_service()
@@ -758,15 +1119,49 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                 with st.chat_message("assistant"):
                     out = st.empty()
                     
-                    # Set up streaming TTS if using Pipecat
+                    # Set up streaming TTS handler for real-time synthesis
                     tts_handler = None
-                    if use_pipecat and hasattr(webrtc_ctx.audio_processor, "enqueue_assistant_pcm16"):
-                        # Create a queue for TTS audio chunks
-                        tts_queue = queue.Queue()
-                        target_sr = webrtc_ctx.audio_processor.output_sample_rate
-                        tts_handler = StreamingTTSHandler(tts_queue, target_sr)
+                    audio_processor = webrtc_ctx.audio_processor
+                    tts_audio_queue = None
                     
-                    # Stream the LLM response
+                    if use_pipecat and hasattr(audio_processor, "enqueue_assistant_pcm16"):
+                        # Create streaming TTS handler that synthesizes audio in parallel
+                        target_sr = audio_processor.output_sample_rate
+                        tts_audio_queue = queue.Queue()
+                        tts_handler = StreamingTTSHandler(tts_audio_queue, target_sr)
+                        
+                        # Store in session state for barge-in interruption
+                        st.session_state[active_tts_key] = tts_handler
+                        
+                        # Set up barge-in callback so VAD interrupt triggers TTS stop
+                        if hasattr(audio_processor, "set_tts_interrupt_callback"):
+                            audio_processor.set_tts_interrupt_callback(tts_handler.interrupt)
+                        
+                        # Reset interrupt flag for this new response
+                        if hasattr(audio_processor, "reset_interrupt"):
+                            audio_processor.reset_interrupt()
+                        
+                        # Create a callback that feeds text to TTS and queues audio
+                        def tts_streaming_callback(text_chunk: str) -> None:
+                            """Called for each LLM text chunk to synthesize audio in parallel."""
+                            if tts_handler and not tts_handler.is_interrupted():
+                                tts_handler.feed(text_chunk)
+                                # Immediately drain any ready audio from queue to WebRTC
+                                while True:
+                                    try:
+                                        audio_chunk = tts_audio_queue.get_nowait()
+                                        if audio_chunk and not tts_handler.is_interrupted():
+                                            audio_processor.enqueue_assistant_pcm16(audio_chunk)
+                                    except queue.Empty:
+                                        break
+                    else:
+                        tts_streaming_callback = None
+                    
+                    # Track partial response for saving if interrupted
+                    partial_response_key = f"partial_response_{page_key}"
+                    st.session_state[partial_response_key] = ""
+                    
+                    # Stream the LLM response with TTS callback for real-time synthesis
                     reply = streaming_handler.stream_chat_response(
                         message=user_text,
                         model=cfg["model"],
@@ -775,33 +1170,35 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                         hf_token=cfg.get("hf_token"),
                         placeholder=out,
                         use_fastapi=st.session_state.get("backend_available", False),
+                        tts_callback=tts_streaming_callback,
                     )
-
-                if reply:
-                    st.session_state.chat_messages.append({"role": "assistant", "content": reply})
-
-                    # TTS: Use streaming if available, else fallback
-                    tts_success = False
-                    if use_pipecat and hasattr(webrtc_ctx.audio_processor, "enqueue_assistant_pcm16"):
-                        try:
-                            resp = requests.post(
-                                f"{FASTAPI_URL}/api/tts/synthesize",
-                                json={"text": reply, "voice": None, "use_cache": False},
-                                timeout=120,
-                            )
-                            if resp.status_code == 200 and resp.content:
-                                target_sr = webrtc_ctx.audio_processor.output_sample_rate
-                                pcm_out, _ = _decode_audio_bytes_to_pcm16_mono(
-                                    resp.content, target_sample_rate=target_sr
-                                )
-                                if pcm_out:
-                                    webrtc_ctx.audio_processor.enqueue_assistant_pcm16(pcm_out)
-                                    tts_success = True
-                        except Exception as e:
-                            logger.error(f"TTS queueing error: {e}")
                     
-                    if not tts_success:
-                        _synthesize_and_play(reply)
+                    # Finalize any remaining TTS audio (if not interrupted)
+                    if tts_handler:
+                        if not tts_handler.is_interrupted():
+                            tts_handler.finalize()
+                            # Drain remaining audio to WebRTC
+                            while tts_audio_queue:
+                                try:
+                                    audio_chunk = tts_audio_queue.get_nowait()
+                                    if audio_chunk:
+                                        audio_processor.enqueue_assistant_pcm16(audio_chunk)
+                                except queue.Empty:
+                                    break
+                        tts_handler.shutdown()
+                        st.session_state[active_tts_key] = None
+
+                # Save response (use reply if available, or partial from tts_handler)
+                final_reply = reply
+                if not final_reply and tts_handler:
+                    final_reply = tts_handler.get_full_text()
+                
+                if final_reply:
+                    st.session_state.chat_messages.append({"role": "assistant", "content": final_reply})
+                    
+                    # If streaming TTS wasn't available, fall back to full synthesis
+                    if not (use_pipecat and hasattr(audio_processor, "enqueue_assistant_pcm16")):
+                        _synthesize_and_play(final_reply)
 
                 st.rerun()
 
