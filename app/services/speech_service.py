@@ -15,11 +15,22 @@ import logging
 import os
 import tempfile
 import threading
+import warnings
 from typing import Optional, Generator, Tuple, Callable
 
 import librosa
 import numpy as np
 import torch
+
+# Suppress the FutureWarning from transformers about 'inputs' deprecation
+# This is an internal transformers issue that will be fixed in a future version
+warnings.filterwarnings(
+    "ignore", 
+    message=".*input name `inputs` is deprecated.*",
+    category=FutureWarning,
+    module="transformers.*"
+)
+
 from transformers import pipeline
 
 logger = logging.getLogger(__name__)
@@ -77,6 +88,8 @@ class SpeechService:
                 model=self.model_name,
                 device=0 if torch.cuda.is_available() else -1,
                 torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                # Enable return_timestamps for long-form audio (>30s)
+                return_timestamps=True,
             )
             self._fw_model = None
             self.backend = "transformers"
@@ -148,7 +161,8 @@ class SpeechService:
                 # transformers pipeline accepts raw array
                 if self.pipe is None:
                     raise RuntimeError("SpeechService pipeline not initialized")
-                result = self.pipe(audio_array)
+                # Pass dict with 'raw' key to avoid deprecation warning
+                result = self.pipe({"raw": audio_array, "sampling_rate": sample_rate})
                 text = (result.get("text") or "").strip()
 
             if not text:
@@ -191,8 +205,8 @@ class SpeechService:
                 if self.pipe is None:
                     raise RuntimeError("SpeechService pipeline not initialized")
 
-                # Transcribe
-                result = self.pipe(audio_array)
+                # Transcribe - use dict with 'raw' key to avoid deprecation warning
+                result = self.pipe({"raw": audio_array, "sampling_rate": 16000})
                 text = (result.get("text") or "").strip()
 
             logger.info(f"File transcription successful: {len(text)} characters")
@@ -273,7 +287,8 @@ class SpeechService:
                 if on_partial:
                     on_partial("Processing...")
                 
-                result = self.pipe(audio_array)
+                # Use dict with 'raw' key to avoid deprecation warning
+                result = self.pipe({"raw": audio_array, "sampling_rate": sample_rate})
                 text = (result.get("text") or "").strip()
                 
                 # Send final result
@@ -350,7 +365,8 @@ class SpeechService:
                     raise RuntimeError("SpeechService pipeline not initialized")
                 
                 yield ("Processing...", False)
-                result = self.pipe(audio_array)
+                # Use dict with 'raw' key to avoid deprecation warning
+                result = self.pipe({"raw": audio_array, "sampling_rate": sample_rate})
                 text = (result.get("text") or "").strip()
                 yield (text, True)
 

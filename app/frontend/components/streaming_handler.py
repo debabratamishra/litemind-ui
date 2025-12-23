@@ -83,9 +83,24 @@ class StreamingHandler:
         use_hybrid_search: bool = False,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
-        placeholder: Optional[Any] = None
+        placeholder: Optional[Any] = None,
+        tts_callback: Optional[Callable[[str], None]] = None
     ) -> Optional[str]:
-        """Stream a RAG response with reasoning segregation."""
+        """Stream a RAG response with reasoning segregation.
+        
+        Args:
+            query: User query
+            messages: Chat history
+            model: Model name
+            system_prompt: System prompt for RAG
+            n_results: Number of results to retrieve
+            use_multi_agent: Whether to use multi-agent processing
+            use_hybrid_search: Whether to use hybrid search
+            backend: Backend to use (ollama/vllm)
+            hf_token: HuggingFace token for vLLM
+            placeholder: Streamlit placeholder for UI updates
+            tts_callback: Optional callback to receive text chunks for TTS synthesis
+        """
         
         try:
             response = rag_service.stream_rag_query(
@@ -100,7 +115,7 @@ class StreamingHandler:
                 hf_token=hf_token
             )
             
-            return self._process_streaming_response(response, placeholder)
+            return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)
             
         except requests.Timeout:
             logger.error("RAG API timed out while streaming.")

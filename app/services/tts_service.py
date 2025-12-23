@@ -28,14 +28,25 @@ logger = logging.getLogger(__name__)
 
 # TTS Configuration
 TTS_CONFIG = {
-    "kokoro_voice": "af_heart",           # Default Kokoro voice
+    "kokoro_voice": "af_heart",           # Default Kokoro voice (warm, expressive)
     "kokoro_repo_id": "hexgrad/Kokoro-82M",  # Explicit repo_id to suppress warning
-    "alternative_kokoro_voices": [
-        "af_bella",     # Female voice
-        "af_sarah",     # Female voice
-        "am_adam",      # Male voice
-        "am_michael",   # Male voice
-    ],
+    # Available voice options - expressive voices first
+    "expressive_voices": {
+        "af_heart": "Warm, expressive female voice",
+        "af_bella": "Friendly, engaging female voice",
+        "af_sarah": "Clear, professional female voice",
+        "am_adam": "Warm, friendly male voice",
+        "am_michael": "Clear, professional male voice",
+    },
+    # Voice style presets for different contexts
+    "voice_styles": {
+        "default": {"voice": "af_heart", "speed": 1.0},
+        "friendly": {"voice": "af_bella", "speed": 1.0},
+        "professional": {"voice": "af_sarah", "speed": 1.05},
+        "conversational": {"voice": "af_heart", "speed": 0.95},
+    },
+    # Default speed for more natural-sounding speech
+    "default_speed": 0.95,  # Slightly slower for more natural cadence
 }
 
 # Cache directory for TTS audio
@@ -303,8 +314,14 @@ class TTSService:
         except Exception as e:
             logger.warning(f"Failed to cache audio: {e}")
 
-    def _synthesize_kokoro(self, text: str, voice: str = None) -> Optional[bytes]:
-        """Synthesize speech using Kokoro TTS."""
+    def _synthesize_kokoro(self, text: str, voice: str = None, speed: float = None) -> Optional[bytes]:
+        """Synthesize speech using Kokoro TTS with expressive settings.
+        
+        Args:
+            text: Text to synthesize
+            voice: Voice to use (defaults to expressive af_heart)
+            speed: Speech speed (defaults to slightly slower for natural cadence)
+        """
         try:
             from kokoro import KPipeline
             import soundfile as sf
@@ -324,12 +341,13 @@ class TTSService:
                     self._kokoro_loaded = True
             
             voice = voice or TTS_CONFIG["kokoro_voice"]
+            speed = speed if speed is not None else TTS_CONFIG.get("default_speed", 0.95)
             
             # Kokoro generator yields (graphemes, phonemes, audio_tensor)
             generator = self._kokoro_pipeline(
                 text, 
                 voice=voice,
-                speed=1, 
+                speed=speed, 
                 split_pattern=r'\n+'
             )
             
@@ -352,12 +370,17 @@ class TTSService:
             logger.error(f"Kokoro synthesis failed: {e}")
             return None
     
-    def _synthesize_kokoro_streaming(self, text: str, voice: str = None) -> Generator[bytes, None, None]:
+    def _synthesize_kokoro_streaming(self, text: str, voice: str = None, speed: float = None) -> Generator[bytes, None, None]:
         """
         Synthesize speech using Kokoro TTS with streaming output.
         
         Yields audio chunks as they are generated.
         Optimized for low latency with smaller split patterns.
+        
+        Args:
+            text: Text to synthesize
+            voice: Voice to use (defaults to expressive af_heart)
+            speed: Speech speed (defaults to slightly slower for natural cadence)
         """
         try:
             from kokoro import KPipeline
@@ -378,13 +401,14 @@ class TTSService:
                     self._kokoro_loaded = True
             
             voice = voice or TTS_CONFIG["kokoro_voice"]
+            speed = speed if speed is not None else TTS_CONFIG.get("default_speed", 0.95)
             
             # Use more aggressive split pattern for faster first audio
             # Split on sentence boundaries AND commas for smaller chunks
             generator = self._kokoro_pipeline(
                 text, 
                 voice=voice,
-                speed=1.0, 
+                speed=speed, 
                 split_pattern=r'[.!?;:,]\s*'  # Added comma for smaller chunks
             )
             

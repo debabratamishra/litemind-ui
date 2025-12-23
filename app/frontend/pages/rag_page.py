@@ -29,14 +29,19 @@ class RAGPage:
             st.info("📡 Enhanced RAG functionality requires the FastAPI backend. Please start the backend server.")
             return
         
-        st.title("📚 RAG Interface")
+        # Check if realtime voice mode is active
+        realtime_active = st.session_state.get("realtime_voice_mode_rag", False)
         
-        self._initialize_session_state()
+        if not realtime_active:
+            st.title("📚 RAG Interface")
+            
+            self._initialize_session_state()
+            
+            self._render_system_prompt_config()
+            
+            # Only render main content sections, configuration is in sidebar
+            self._render_upload_section()
         
-        self._render_system_prompt_config()
-        
-        # Only render main content sections, configuration is in sidebar
-        self._render_upload_section()
         self._render_query_section()
     
     def _initialize_session_state(self):
@@ -242,40 +247,45 @@ class RAGPage:
     def _render_query_section(self):
         """Render the query interface."""
         import io
-        st.subheader("Query Your Knowledge Base")
         
-        # Display chat history
-        for idx, message in enumerate(st.session_state.rag_messages):
-            with st.chat_message(message["role"]):
-                render_llm_text(message["content"])
-                
-                # Add TTS play button for assistant messages
-                if message["role"] == "assistant":
-                    audio_key = f"rag_tts_audio_{idx}"
-                    show_key = f"rag_tts_show_{idx}"
-                    error_key = f"rag_tts_error_{idx}"
+        # Check if realtime voice mode is active
+        realtime_active = st.session_state.get("realtime_voice_mode_rag", False)
+        
+        if not realtime_active:
+            st.subheader("Query Your Knowledge Base")
+            
+            # Display chat history
+            for idx, message in enumerate(st.session_state.rag_messages):
+                with st.chat_message(message["role"]):
+                    render_llm_text(message["content"])
                     
-                    # Show audio player if audio is available
-                    if st.session_state.get(show_key) and st.session_state.get(audio_key):
-                        col1, col2 = st.columns([15, 1])
-                        with col1:
-                            audio_bytes = st.session_state[audio_key]
-                            st.audio(io.BytesIO(audio_bytes), format="audio/mpeg")
-                        with col2:
-                            if st.button("✕", key=f"rag_close_{idx}", help="Close"):
-                                st.session_state[show_key] = False
-                                st.rerun()
-                    else:
-                        # Show error if any
-                        if st.session_state.get(error_key):
-                            st.error(st.session_state[error_key])
-                            del st.session_state[error_key]
+                    # Add TTS play button for assistant messages
+                    if message["role"] == "assistant":
+                        audio_key = f"rag_tts_audio_{idx}"
+                        show_key = f"rag_tts_show_{idx}"
+                        error_key = f"rag_tts_error_{idx}"
                         
-                        # Show play button
-                        if st.button("🗣️ Read Aloud", key=f"rag_tts_{idx}", help="Read this response aloud"):
-                            self._generate_tts(message["content"], idx)
+                        # Show audio player if audio is available
+                        if st.session_state.get(show_key) and st.session_state.get(audio_key):
+                            col1, col2 = st.columns([15, 1])
+                            with col1:
+                                audio_bytes = st.session_state[audio_key]
+                                st.audio(io.BytesIO(audio_bytes), format="audio/mpeg")
+                            with col2:
+                                if st.button("✕", key=f"rag_close_{idx}", help="Close"):
+                                    st.session_state[show_key] = False
+                                    st.rerun()
+                        else:
+                            # Show error if any
+                            if st.session_state.get(error_key):
+                                st.error(st.session_state[error_key])
+                                del st.session_state[error_key]
+                            
+                            # Show play button
+                            if st.button("🗣️ Read Aloud", key=f"rag_tts_{idx}", help="Read this response aloud"):
+                                self._generate_tts(message["content"], idx)
         
-        # Get user input
+        # Get user input (this handles realtime voice mode internally)
         rag_input = get_voice_input(
             "Ask about your documents...", 
             "rag"
