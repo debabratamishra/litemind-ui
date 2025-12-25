@@ -18,6 +18,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 ![RAG](https://img.shields.io/badge/RAG-Document%20Q&A-32CD32)
 ![API](https://img.shields.io/badge/API-REST%20%2B%20Streaming-007ACC)
 ![Multi-format](https://img.shields.io/badge/Documents-PDF%20%7C%20DOCX%20%7C%20TXT-FFA500)
+![Voice](https://img.shields.io/badge/Voice-Realtime%20%2B%20TTS-8A2BE2)
 
 ## 🚀 Architecture
 
@@ -38,7 +39,9 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 - 🧠 **Dual Backend Support** - Seamlessly switch between Ollama (local) and vLLM (Hugging Face) backends
 - 📚 **RAG Integration** - Upload documents (PDFs, DOCX, TXT) with enhanced extraction and query with context-aware responses
 - 🔍 **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
-- 🗣️ **Text-to-Speech** - Listen to AI responses with built-in TTS powered by Edge TTS (no API key required)
+- 🗣️ **Realtime Voice Mode** - WebRTC voice chat with live transcription, barge-in, and streaming speech replies (Chat + RAG)
+- 🔊 **Streaming TTS (Offline)** - Kokoro-based speech with expressive voice presets, sentence-level streaming, and local fallback
+   - 🎙️ **Voice Input** - Whisper-based speech-to-text (transformers or faster-whisper) for one-tap mic input
 - 🔄 **Auto-Failover** - Intelligent backend detection with graceful fallbacks
 - 🤖 **Multi-Model Support** - Access to popular models through vLLM or local Ollama models
 
@@ -58,7 +61,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 
 ---
 
-### � Installation
+### 🧭 Installation
 
 The instructions below are tested against this repository: https://github.com/debabratamishra/litemind-ui and Docker images pushed to Docker Hub under the user `debabratamishra1` (https://hub.docker.com/u/debabratamishra1).
 
@@ -155,20 +158,22 @@ git clone https://github.com/debabratamishra/litemind-ui
 cd litemind-ui
 ```
 
-2. Install dependencies using uv
+2. Install dependencies using uv (full stack with voice)
 
 ```bash
 # Install uv if you haven't already
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create virtual environment and install dependencies
-uv sync
+# Create virtual environment and install all feature groups (backend + frontend + voice)
+uv sync --group backend --group frontend
 
-# Or manually create venv and install
+# Or manually create venv and install editable package with groups
 uv venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install -e .[backend,frontend]
 ```
+
+> Want a lighter install without voice/realtime audio? Omit the groups to only install the minimal core.
 
 3. Create required directories
 
@@ -257,20 +262,36 @@ mkdir -p uploads .streamlit
 5. Enter your message and receive AI responses
 6. **Listen to Responses:** Click the 🗣️ button next to any AI response to hear it read aloud
 
+### Realtime Voice Mode (WebRTC)
+
+Hold full voice conversations in Chat or RAG with live transcription and streaming replies.
+
+- Built on `streamlit-webrtc` with Pipecat Silero VAD (fallback to `webrtcvad`)
+- Uses Whisper STT (optionally `STT_BACKEND=faster-whisper` for lower latency)
+- Streams Kokoro TTS audio sentence-by-sentence with barge-in support
+- Works in both Chat and RAG tabs with separate session memory
+
+How to use:
+1. Make sure the backend is running (FastAPI) and voice deps are installed (`uv sync --group backend --group frontend` for native installs; Docker images already include them).
+2. Open **Chat** or **RAG** and click the 📞 button beside the input box.
+3. Allow microphone access when prompted.
+4. Speak naturally; live transcript appears while you talk.
+5. Responses stream as speech and text. Start speaking again to interrupt/barge-in.
+6. Click ✕ to exit realtime mode and return to standard chat input.
+
 ### Text-to-Speech (TTS)
 
-LiteMindUI includes built-in text-to-speech functionality powered by Edge TTS:
+LiteMindUI ships with offline, low-latency speech powered by Kokoro TTS plus a pyttsx3 fallback:
 
-- **No API Key Required** - Uses Microsoft's Edge TTS service (free, no setup needed)
-- **Multiple Voices** - Choose from various voices (default: `en-US-AriaNeural`)
-- **Works Everywhere** - Available in both Chat and RAG interfaces
-- **Caching** - Audio is cached to avoid re-synthesizing the same text
+- **Offline-first** - No external API key required; runs locally
+- **Expressive presets** - Warm/friendly/professional voice styles tuned for dialogue
+- **Streaming-first** - Sentence-level synthesis for faster first audio and realtime mode
+- **Caching** - Reuses audio for repeated responses to save time
 
-To use TTS:
+To use TTS on any response:
 1. Get a response from the AI in Chat or RAG mode
-2. Click the 🗣️ button next to the response
-3. Audio will be generated and played automatically
-4. Click ✕ to close the audio player
+2. Click the 🗣️ button next to the response (or let realtime mode stream it automatically)
+3. Audio plays inline; close with ✕ when done
 
 ### Document Q\&A (RAG)
 
