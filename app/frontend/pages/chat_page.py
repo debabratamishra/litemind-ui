@@ -10,6 +10,7 @@ from ..components.text_renderer import render_llm_text, render_plain_text, rende
 from ..components.streaming_handler import streaming_handler
 from ..components.web_search_toggle import WebSearchToggle
 from ..components.tts_player import render_tts_button
+from ..components.conversation_sidebar import get_chat_sidebar
 from ..services.backend_service import backend_service
 from ..utils.memory_manager import ChatMemoryManager, display_memory_stats_sidebar
 
@@ -23,6 +24,7 @@ class ChatPage:
         self.backend_available = st.session_state.get("backend_available", False)
         self.web_search_toggle = WebSearchToggle()
         self.memory_manager = ChatMemoryManager()
+        self.conversation_sidebar = get_chat_sidebar()
         self._initialize_session_state()
     
     def _initialize_session_state(self):
@@ -36,6 +38,10 @@ class ChatPage:
         # Initialize memory-related session state
         if "chat_memory_enabled" not in st.session_state:
             st.session_state.chat_memory_enabled = True
+        
+        # Initialize conversation history enabled state
+        if "chat_history_enabled" not in st.session_state:
+            st.session_state.chat_history_enabled = True
     
     def _render_web_search_toggle(self) -> bool:
         """
@@ -170,6 +176,10 @@ class ChatPage:
         # Add user message
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
         
+        # Save user message to conversation history if enabled
+        if st.session_state.get("chat_history_enabled", True):
+            self.conversation_sidebar.save_message("user", user_input)
+        
         with st.chat_message("user"):
             render_llm_text(user_input)
         
@@ -224,6 +234,11 @@ class ChatPage:
             if use_web_search:
                 assistant_message["format"] = "web_search"
             st.session_state.chat_messages.append(assistant_message)
+            
+            # Save assistant message to conversation history if enabled
+            if st.session_state.get("chat_history_enabled", True):
+                metadata = {"format": "web_search"} if use_web_search else None
+                self.conversation_sidebar.save_message("assistant", reply, metadata)
             
             # Check if we need to trigger summarization
             self._check_and_trigger_summarization()
@@ -284,8 +299,12 @@ class ChatPage:
         return "Thinking..."
     
     def render_sidebar_config(self):
+        # Render conversation history sidebar first
+        if st.session_state.get("chat_history_enabled", True):
+            self.conversation_sidebar.render()
+        
         st.sidebar.markdown("---")
-        st.sidebar.subheader("💬 Chat Configuration")
+        st.sidebar.subheader("Chat Configuration")
         
         backend_provider = st.session_state.get("current_backend", "ollama")
         is_docker = st.session_state.get("is_docker_deployment", False)
@@ -306,9 +325,11 @@ class ChatPage:
         # Reasoning settings
         self._render_reasoning_config()
         
-        # Clear chat
-        if st.sidebar.button("🗑️ Clear Chat History", type="secondary"):
+        # Clear chat (clears current session, not history)
+        if st.sidebar.button("🗑️ Clear Current Chat", type="secondary"):
             st.session_state.chat_messages.clear()
+            # Clear active conversation to start fresh
+            self.conversation_sidebar.active_conversation_id = None
             # Clear any other chat-related state that might interfere
             if "last_user_input" in st.session_state:
                 del st.session_state.last_user_input
@@ -336,7 +357,7 @@ class ChatPage:
     
     def _render_reasoning_config(self):
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🧠 Reasoning Display")
+        st.sidebar.subheader("Reasoning Display")
         
         st.session_state.show_reasoning_expanded = st.sidebar.checkbox(
             "Expand reasoning by default",
@@ -357,11 +378,19 @@ class ChatPage:
     def _render_memory_config(self):
         """Render conversation memory configuration in sidebar."""
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🧠 Conversation Memory")
+        st.sidebar.subheader("Conversation Settings")
+        
+        # History persistence toggle
+        history_enabled = st.sidebar.checkbox(
+            "Save conversation history",
+            value=st.session_state.get("chat_history_enabled", True),
+            help="Persist conversations for later access"
+        )
+        st.session_state.chat_history_enabled = history_enabled
         
         # Memory toggle
         memory_enabled = st.sidebar.checkbox(
-            "Enable conversation memory",
+            "Enable context memory",
             value=st.session_state.get("chat_memory_enabled", True),
             help="Remember context from earlier in the conversation"
         )
@@ -407,8 +436,6 @@ class ChatPage:
                     self.memory_manager.summary
                 )
                 
-                # For now, create a simple extractive summary
-                # In production, you'd call the LLM to generate a proper summary
                 simple_summary = self._create_simple_summary(messages_to_summarize)
                 
                 self.memory_manager.set_summary(simple_summary)

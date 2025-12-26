@@ -9,6 +9,7 @@ from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text
 from ..components.streaming_handler import streaming_handler
 from ..components.tts_player import is_tts_available, render_tts_button
+from ..components.conversation_sidebar import get_rag_sidebar
 from ..services.backend_service import backend_service
 from ..services.rag_service import rag_service
 from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS, FASTAPI_URL
@@ -23,12 +24,13 @@ class RAGPage:
     def __init__(self):
         self.backend_available = st.session_state.get("backend_available", False)
         self.memory_manager = RAGMemoryManager()
+        self.conversation_sidebar = get_rag_sidebar()
         self._initialize_session_state()
         
     def render(self):
         """Render the complete RAG page."""
         if not self.backend_available:
-            st.info("📡 Enhanced RAG functionality requires the FastAPI backend. Please start the backend server.")
+            st.info("Enhanced RAG functionality requires the FastAPI backend. Please start the backend server.")
             return
         
         # Check if realtime voice mode is active
@@ -74,6 +76,9 @@ class RAGPage:
         
         # Initialize memory-related session state
         st.session_state.setdefault("rag_memory_enabled", True)
+        
+        # Initialize conversation history enabled state
+        st.session_state.setdefault("rag_history_enabled", True)
     
     def _render_memory_indicator(self, stats):
         """Render a visual memory usage indicator."""
@@ -151,10 +156,10 @@ class RAGPage:
         if rag_status:
             if rag_status["status"] == "ready":
                 if rag_status.get("uploaded_files", 0) > 0:
-                    st.info(f"📊 Current Knowledge Base: {rag_status['uploaded_files']} files, "
+                    st.info(f"Current Knowledge Base: {rag_status['uploaded_files']} files, "
                            f"{rag_status['indexed_chunks']} chunks indexed")
                 else:
-                    st.info("📭 Knowledge base is empty. Upload documents to get started.")
+                    st.info("Knowledge base is empty. Upload documents to get started.")
             else:
                 st.warning(f"⚠️ System Status: {rag_status['status']}")
         else:
@@ -201,7 +206,7 @@ class RAGPage:
             st.success("✅ Enhanced processing completed!")
             self._display_upload_results(results)
             st.session_state.rag_messages.clear()
-            st.info("💡 Chat history cleared to reflect new knowledge base")
+            st.info("Chat history cleared to reflect new knowledge base")
             if duplicates:
                 st.info("Skipped duplicates:\\n- " + "\\n- ".join(d.name for d in duplicates))
             st.rerun()
@@ -369,6 +374,10 @@ class RAGPage:
         # Add user message
         st.session_state.rag_messages.append({"role": "user", "content": query})
         
+        # Save user message to conversation history if enabled
+        if st.session_state.get("rag_history_enabled", True):
+            self.conversation_sidebar.save_message("user", query)
+        
         with st.chat_message("user"):
             render_llm_text(query)
         
@@ -402,6 +411,10 @@ class RAGPage:
         if response_text:
             st.session_state.rag_messages.append({"role": "assistant", "content": response_text})
             
+            # Save assistant message to conversation history if enabled
+            if st.session_state.get("rag_history_enabled", True):
+                self.conversation_sidebar.save_message("assistant", response_text)
+            
             # Check if we need to trigger summarization
             self._check_and_trigger_summarization()
             
@@ -434,6 +447,10 @@ class RAGPage:
     
     def render_sidebar_config(self):
         """Render RAG-specific sidebar configuration."""
+        # Render conversation history sidebar first
+        if st.session_state.get("rag_history_enabled", True):
+            self.conversation_sidebar.render()
+        
         st.sidebar.markdown("---")
         st.sidebar.subheader("📚 RAG Configuration")
         
@@ -702,11 +719,19 @@ class RAGPage:
     def _render_sidebar_memory_config(self):
         """Render conversation memory configuration in sidebar."""
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🧠 Conversation Memory")
+        st.sidebar.subheader("🧠 Conversation Settings")
+        
+        # History persistence toggle
+        history_enabled = st.sidebar.checkbox(
+            "Save conversation history",
+            value=st.session_state.get("rag_history_enabled", True),
+            help="Persist conversations for later access"
+        )
+        st.session_state.rag_history_enabled = history_enabled
         
         # Memory toggle
         memory_enabled = st.sidebar.checkbox(
-            "Enable conversation memory",
+            "Enable context memory",
             value=st.session_state.get("rag_memory_enabled", True),
             help="Remember context from earlier in the conversation"
         )
