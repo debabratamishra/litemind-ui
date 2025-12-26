@@ -14,6 +14,10 @@ dependencies = [
 [project.optional-dependencies]
 # Backend: FastAPI + ML/RAG + Document Processing
 backend = [
+    # Shared core dependencies
+    "python-dotenv",
+    "psutil",
+    
     # Core FastAPI
     "fastapi",
     "uvicorn",
@@ -59,10 +63,17 @@ backend = [
     
     # Speech-to-Text
     "faster-whisper",
+    # Audio processing for STT
+    "librosa",
+    "soundfile",
 ]
 
 # Frontend: Streamlit + Audio/Voice
 frontend = [
+    # Shared core dependencies
+    "python-dotenv",
+    "psutil",
+    
     # Streamlit
     "streamlit",
     "streamlit-audiorecorder",
@@ -70,8 +81,9 @@ frontend = [
     "av",
     "webrtcvad",
     
-    # Pipecat (VAD + turn detection)
+    # Pipecat (VAD + turn detection) - requires torch for Silero
     "pipecat-ai[silero,local-smart-turn-v3]",
+    "torch",
     
     # Audio Processing
     "librosa",
@@ -95,6 +107,10 @@ frontend = [
 
 [dependency-groups]
 backend = [
+    # Shared core dependencies
+    "python-dotenv",
+    "psutil",
+    
     # Core FastAPI
     "fastapi",
     "uvicorn",
@@ -140,9 +156,16 @@ backend = [
     
     # Speech-to-Text
     "faster-whisper",
+    # Audio processing for STT
+    "librosa",
+    "soundfile",
 ]
 
 frontend = [
+    # Shared core dependencies
+    "python-dotenv",
+    "psutil",
+    
     # Streamlit
     "streamlit",
     "streamlit-audiorecorder",
@@ -150,8 +173,9 @@ frontend = [
     "av",
     "webrtcvad",
     
-    # Pipecat (VAD + turn detection)
+    # Pipecat (VAD + turn detection) - requires torch for Silero
     "pipecat-ai[silero,local-smart-turn-v3]",
+    "torch",
     
     # Audio Processing
     "librosa",

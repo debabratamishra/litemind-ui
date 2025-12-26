@@ -5,7 +5,7 @@ import logging
 import streamlit as st
 from typing import Optional
 
-from ...services.speech_service import get_speech_service
+from ..services.backend_service import backend_service
 from .voice_realtime import render_realtime_voice_chat
 
 logger = logging.getLogger(__name__)
@@ -137,8 +137,7 @@ class VoiceInput:
                 audio_bytes = audio_data.read()
                 
                 if audio_bytes:
-                    speech_service = get_speech_service()
-                    transcribed_text = speech_service.transcribe_audio(audio_bytes)
+                    transcribed_text = backend_service.transcribe_audio(audio_bytes)
                     
                     if transcribed_text and transcribed_text.strip():
                         st.session_state[self.transcription_key] = transcribed_text.strip()

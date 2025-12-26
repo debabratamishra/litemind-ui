@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libfontconfig1 \
     libfreetype6 \
+    libsndfile1 \
     espeak \
     espeak-ng \
     && rm -rf /var/lib/apt/lists/*
@@ -43,14 +44,18 @@ COPY pyproject.toml uv.lock .python-version ./
 
 # Install only backend dependencies (not frontend, not dev)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --only-group backend --no-install-project
+    uv sync --no-dev --only-group backend --no-install-project
 
 # Copy application code
 COPY . .
 
 # Install the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --only-group backend
+    uv sync --no-dev --only-group backend
+
+# Ensure the container uses the project's virtual environment for runtime
+ENV VIRTUAL_ENV="/app/.venv"
+ENV PATH="/app/.venv/bin:${PATH}"
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/uploads /app/chroma_db /app/storage /app/.streamlit /app/logs /tmp/litemind_tts_cache \

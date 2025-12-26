@@ -35,7 +35,7 @@ import streamlit as st
 from ..config import FASTAPI_URL
 from ..components.streaming_handler import streaming_handler
 from ..utils.memory_manager import ChatMemoryManager, RAGMemoryManager
-from ...services.speech_service import get_speech_service
+from ..services.backend_service import backend_service
 
 logger = logging.getLogger(__name__)
 
@@ -1175,8 +1175,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     # Transcribe interim audio in a synchronous manner for immediate UI update
                     try:
                         wav_bytes = _pcm16_to_wav_bytes(interim_pcm16, sample_rate=interim_sr, channels=1)
-                        speech_service = get_speech_service()
-                        partial_text = speech_service.transcribe_audio(wav_bytes, sample_rate=16000)
+                        partial_text = backend_service.transcribe_audio(wav_bytes, sample_rate=16000)
                         if partial_text and partial_text.strip():
                             st.session_state[live_transcript_key] = partial_text.strip()
                             # Force UI update for live transcript
@@ -1231,8 +1230,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             
             with st.spinner("Transcribing..."):
                 wav_bytes = _pcm16_to_wav_bytes(pcm16, sample_rate=sr, channels=1)
-                speech_service = get_speech_service()
-                user_text = speech_service.transcribe_audio(wav_bytes, sample_rate=16000)
+                user_text = backend_service.transcribe_audio(wav_bytes, sample_rate=16000)
 
             if user_text and user_text.strip():
                 user_text = user_text.strip()

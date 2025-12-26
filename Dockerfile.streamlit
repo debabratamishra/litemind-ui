@@ -7,10 +7,18 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install system dependencies (incl. build tools for C extensions)
+# Install system dependencies (incl. build tools for C extensions and audio libs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     build-essential \
+    libsndfile1 \
+    ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
+    portaudio19-dev \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)
@@ -27,14 +35,18 @@ COPY pyproject.toml .python-version uv.lock ./
 
 # Install only frontend dependencies (not backend, not dev)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --only-group frontend --no-install-project
+    uv sync --no-dev --only-group frontend --no-install-project
 
 # Copy application code
 COPY . .
 
 # Install the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --only-group frontend
+    uv sync --no-dev --only-group frontend
+
+# Ensure the container uses the project's virtual environment for runtime
+ENV VIRTUAL_ENV="/app/.venv"
+ENV PATH="/app/.venv/bin:${PATH}"
 
 # Create necessary directories
 RUN mkdir -p /app/.streamlit
