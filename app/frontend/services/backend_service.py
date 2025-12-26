@@ -111,6 +111,43 @@ class BackendService:
         except Exception:
             return False
 
+    def transcribe_audio(self, audio_bytes: bytes, sample_rate: int = 16000) -> Optional[str]:
+        """Transcribe audio using the backend STT service.
+        
+        Args:
+            audio_bytes: Raw audio data bytes
+            sample_rate: Audio sample rate (default 16000)
+            
+        Returns:
+            Transcribed text or None if transcription fails
+        """
+        import base64
+        try:
+            # Encode audio as base64 for JSON transport
+            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+            response = requests.post(
+                f"{self.base_url}/api/stt/transcribe",
+                json={"audio_data": audio_b64, "sample_rate": sample_rate},
+                timeout=60,
+            )
+            if response.status_code == 200:
+                return response.json().get("transcription")
+            logger.error(f"STT Error: {response.status_code}")
+            return None
+        except requests.RequestException as exc:
+            logger.error(f"STT Connection Error: {exc}")
+            return None
+
+    def get_stt_status(self) -> Dict[str, Any]:
+        """Get STT service status from backend."""
+        try:
+            response = requests.get(f"{self.base_url}/api/stt/status", timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            return {"available": False, "model_loaded": False}
+        except Exception:
+            return {"available": False, "model_loaded": False}
+
 
 # Singleton instance
 backend_service = BackendService()

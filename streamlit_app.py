@@ -150,10 +150,7 @@ class StreamlitApp:
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔧 System Status")
         
-        # Show Docker deployment status
         is_docker = st.session_state.get("is_docker_deployment", False)
-        if is_docker:
-            st.sidebar.info("🐳 Docker Deployment")
         
         if st.session_state.backend_available:
             st.sidebar.success("✅ FastAPI Backend Connected")

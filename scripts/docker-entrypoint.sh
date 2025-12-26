@@ -4,6 +4,12 @@ set -e
 # Docker Entrypoint Script for LLMWebUI
 # This script handles container startup, validation, and graceful shutdown
 
+# Ensure we use the project's virtualenv if present (uv-managed)
+if [ -d "/app/.venv/bin" ]; then
+    export VIRTUAL_ENV="/app/.venv"
+    export PATH="/app/.venv/bin:$PATH"
+fi
+
 # Configuration
 STARTUP_TIMEOUT=${STARTUP_TIMEOUT:-60}
 VALIDATION_ENABLED=${VALIDATION_ENABLED:-true}
