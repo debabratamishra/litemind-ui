@@ -3,6 +3,8 @@ RAG API endpoints
 """
 import asyncio
 import logging
+import os
+import re
 from typing import List
 from fastapi import APIRouter, HTTPException, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
@@ -18,6 +20,74 @@ from app.services.vllm_service import vllm_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rag", tags=["rag"])
+
+
+# Security: File upload constants
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx', '.doc', '.csv', '.md', '.json', '.xml', '.html'}
+
+
+# Security: Filename sanitization
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename to prevent path traversal attacks.
+    Removes directory separators and other dangerous characters.
+    """
+    if not filename:
+        raise ValueError("Filename cannot be empty")
+    
+    # Get just the basename (removes any directory components)
+    filename = os.path.basename(filename)
+    
+    # Remove any remaining path separators
+    filename = filename.replace('/', '').replace('\\', '')
+    
+    # Remove null bytes
+    filename = filename.replace('\0', '')
+    
+    # Remove leading dots and spaces
+    filename = filename.lstrip('. ')
+    
+    # Validate filename is not empty after sanitization
+    if not filename or filename in ('.', '..'):
+        raise ValueError("Invalid filename")
+    
+    # Limit filename length (keep extension)
+    name, ext = os.path.splitext(filename)
+    if len(name) > 200:
+        name = name[:200]
+    filename = name + ext
+    
+    # Validate against dangerous patterns
+    dangerous_patterns = [r'\.\./|\\\.\.\\', r'^\.+$', r'\0']
+    for pattern in dangerous_patterns:
+        if re.search(pattern, filename):
+            raise ValueError(f"Filename contains dangerous pattern: {filename}")
+    
+    # Validate file extension
+    if ext.lower() not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"File extension '{ext}' not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}")
+    
+    return filename
+
+
+async def validate_file_size(file: UploadFile) -> None:
+    """
+    Validate file size without reading entire file into memory.
+    Raises HTTPException if file is too large.
+    """
+    # Read file in chunks to check size
+    content = await file.read()
+    total_size = len(content)
+    
+    # Reset file position
+    await file.seek(0)
+    
+    if total_size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413, 
+            detail=f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f}MB"
+        )
 
 
 @router.get("/status", response_model=RAGStatusResponse)
@@ -100,18 +170,53 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
     if not rag_service:
         raise HTTPException(status_code=503, detail="RAG service not initialized")
 
+    # Validate number of files
+    if len(files) > 50:
+        raise HTTPException(status_code=400, detail="Too many files. Maximum 50 files per upload.")
+
     results = []
     saved_paths = []
     
     # Save files and check for duplicates
     for upload_file in files:
-        # Save file first
-        dest_path = backend_config.upload_folder / upload_file.filename
+        try:
+            # Validate file size
+            await validate_file_size(upload_file)
+            
+            # Sanitize filename to prevent path traversal
+            safe_filename = sanitize_filename(upload_file.filename)
+        except ValueError as e:
+            results.append({
+                "filename": upload_file.filename,
+                "status": "error",
+                "message": f"Invalid filename: {str(e)}",
+                "chunks_created": 0
+            })
+            continue
+        
+        # Save file with sanitized name
+        dest_path = backend_config.upload_folder / safe_filename
+        
+        # Additional security check: ensure dest_path is within upload_folder
+        try:
+            dest_resolved = dest_path.resolve()
+            upload_resolved = backend_config.upload_folder.resolve()
+            if not str(dest_resolved).startswith(str(upload_resolved)):
+                raise ValueError("Path traversal attempt detected")
+        except (ValueError, OSError) as e:
+            results.append({
+                "filename": upload_file.filename,
+                "status": "error",
+                "message": f"Security error: {str(e)}",
+                "chunks_created": 0
+            })
+            continue
+        
         with open(dest_path, "wb") as f:
             f.write(await upload_file.read())
         
         # Check for duplicates using the saved file path
-        is_duplicate, reason = rag_service._is_file_already_processed(str(dest_path), upload_file.filename)
+        is_duplicate, reason = rag_service._is_file_already_processed(str(dest_path), safe_filename)
         
         if is_duplicate:
             # Remove the saved file since it's a duplicate

@@ -225,6 +225,17 @@ class ConversationDatabase:
         Returns:
             The created Conversation object
         """
+        # Input validation
+        if not title or not isinstance(title, str):
+            raise ValueError("Title must be a non-empty string")
+        if len(title) > 500:
+            raise ValueError("Title cannot exceed 500 characters")
+        
+        # Validate conversation_type
+        valid_types = {"chat", "rag"}
+        if conversation_type not in valid_types:
+            raise ValueError(f"conversation_type must be one of {valid_types}")
+        
         conversation_id = generate_conversation_id()
         now = datetime.now().isoformat()
         
@@ -431,6 +442,21 @@ class ConversationDatabase:
         Returns:
             The created ConversationMessage object
         """
+        # Input validation
+        if not conversation_id or not isinstance(conversation_id, str):
+            raise ValueError("conversation_id must be a non-empty string")
+        
+        # Validate role
+        valid_roles = {"user", "assistant", "system"}
+        if role not in valid_roles:
+            raise ValueError(f"role must be one of {valid_roles}")
+        
+        # Validate content
+        if not isinstance(content, str):
+            raise ValueError("content must be a string")
+        if len(content) > 1000000:  # 1MB limit
+            raise ValueError("content cannot exceed 1MB")
+        
         message_id = generate_message_id()
         now = datetime.now().isoformat()
         

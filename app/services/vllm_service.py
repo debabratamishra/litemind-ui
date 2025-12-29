@@ -71,12 +71,16 @@ class VLLMService:
         
         try:
             # Test if vLLM is available in llm_ui environment
+            # Fixed: Avoid shell injection by not using shell commands
             import subprocess
+            # Use direct Python invocation instead of bash -c
             result = subprocess.run(
-                ["/bin/bash", "-c", "conda activate llm_ui && python -c 'import vllm; print(vllm.__version__)'"],
+                ["python", "-c", "import vllm; print(vllm.__version__)"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                # Ensure we don't use shell expansion
+                shell=False
             )
             
             if result.returncode == 0 and result.stdout.strip():
@@ -147,6 +151,11 @@ class VLLMService:
     def _kill_host_process(self, pid: int) -> bool:
         """Kill a process on the host system by PID."""
         try:
+            # Security: Validate PID is a positive integer
+            if not isinstance(pid, int) or pid <= 0:
+                logger.error(f"Invalid PID: {pid}")
+                return False
+            
             if self.is_containerized:
                 # When in container, we need to kill the process on the host
                 # This requires the container to have access to host processes
@@ -192,6 +201,11 @@ class VLLMService:
     async def _check_host_process_running(self, pid: int) -> bool:
         """Check if a process is running on the host system."""
         try:
+            # Security: Validate PID is a positive integer
+            if not isinstance(pid, int) or pid <= 0:
+                logger.error(f"Invalid PID: {pid}")
+                return False
+            
             if self.is_containerized:
                 # Check if process exists on host system
                 result = subprocess.run(

@@ -1083,16 +1083,35 @@ class CrewAIRAGOrchestrator:
                 data = resp.json()
                 params = data.get('model_info', '')
                 
+                # Security: Use JSON parsing instead of ast.literal_eval
                 if isinstance(params, str):
-                    import ast
-                    params = ast.literal_eval(params)
+                    import json
+                    try:
+                        params = json.loads(params)
+                    except json.JSONDecodeError:
+                        # If JSON parsing fails, try ast.literal_eval as fallback
+                        # ast.literal_eval is safe for literal structures only
+                        import ast
+                        try:
+                            params = ast.literal_eval(params)
+                        except (ValueError, SyntaxError) as e:
+                            logger.warning(f"Failed to parse model_info: {e}")
+                            return 4096
+                
+                if not isinstance(params, dict):
+                    return 4096
                 
                 for key, value in params.items():
                     if key.endswith("context_length"):
-                        return int(value)
+                        try:
+                            return int(value)
+                        except (ValueError, TypeError):
+                            logger.warning(f"Invalid context_length value: {value}")
+                            return 4096
                 
                 return 4096
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error getting context length: {e}")
             return 4096
 
     async def _generate_summary(self, text: str, system_prompt: str) -> str:

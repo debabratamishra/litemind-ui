@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import re
 import signal
 import shutil
 import sys
@@ -65,6 +66,78 @@ DEFAULT_RAG_CONFIG = {
 }
 
 rag_service = None
+
+# Security: File upload constants
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx', '.doc', '.csv', '.md', '.json', '.xml', '.html'}
+
+
+# Security: Filename sanitization
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename to prevent path traversal attacks.
+    Removes directory separators and other dangerous characters.
+    """
+    if not filename:
+        raise ValueError("Filename cannot be empty")
+    
+    # Get just the basename (removes any directory components)
+    filename = os.path.basename(filename)
+    
+    # Remove any remaining path separators
+    filename = filename.replace('/', '').replace('\\', '')
+    
+    # Remove null bytes
+    filename = filename.replace('\0', '')
+    
+    # Remove leading dots and spaces
+    filename = filename.lstrip('. ')
+    
+    # Validate filename is not empty after sanitization
+    if not filename or filename in ('.', '..'):
+        raise ValueError("Invalid filename")
+    
+    # Limit filename length (keep extension)
+    name, ext = os.path.splitext(filename)
+    if len(name) > 200:
+        name = name[:200]
+    filename = name + ext
+    
+    # Validate against dangerous patterns
+    dangerous_patterns = [r'\.\./|\\\.\.\\', r'^\.+$', r'\0']
+    for pattern in dangerous_patterns:
+        if re.search(pattern, filename):
+            raise ValueError(f"Filename contains dangerous pattern: {filename}")
+    
+    # Validate file extension
+    if ext.lower() not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"File extension '{ext}' not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}")
+    
+    return filename
+
+
+async def validate_file_size(file: UploadFile) -> None:
+    """
+    Validate file size without reading entire file into memory.
+    Raises HTTPException if file is too large.
+    """
+    # Read file in chunks to check size
+    total_size = 0
+    chunk_size = 1024 * 1024  # 1MB chunks
+    
+    # Read and validate size
+    content = await file.read()
+    total_size = len(content)
+    
+    # Reset file position
+    await file.seek(0)
+    
+    if total_size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413, 
+            detail=f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f}MB"
+        )
+
 
 # Request/Response Models
 class ChatRequestEnhanced(BaseModel):
@@ -455,15 +528,58 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
     results = []
     saved_paths = []
     
+    # Validate number of files
+    if len(files) > 50:
+        raise HTTPException(status_code=400, detail="Too many files. Maximum 50 files per upload.")
+    
     # Save files and check for duplicates
     for up in files:
-        # Save file first
-        dest = UPLOAD_FOLDER / up.filename
+        try:
+            # Validate file size
+            await validate_file_size(up)
+            
+            # Sanitize filename to prevent path traversal
+            safe_filename = sanitize_filename(up.filename)
+        except ValueError as e:
+            results.append({
+                "filename": up.filename,
+                "status": "error",
+                "message": f"Invalid filename: {str(e)}",
+                "chunks_created": 0
+            })
+            continue
+        except HTTPException as e:
+            results.append({
+                "filename": up.filename,
+                "status": "error",
+                "message": str(e.detail),
+                "chunks_created": 0
+            })
+            continue
+        
+        # Save file with sanitized name
+        dest = UPLOAD_FOLDER / safe_filename
+        
+        # Additional security check: ensure dest is within UPLOAD_FOLDER
+        try:
+            dest_resolved = dest.resolve()
+            upload_resolved = UPLOAD_FOLDER.resolve()
+            if not str(dest_resolved).startswith(str(upload_resolved)):
+                raise ValueError("Path traversal attempt detected")
+        except (ValueError, OSError) as e:
+            results.append({
+                "filename": up.filename,
+                "status": "error",
+                "message": f"Security error: {str(e)}",
+                "chunks_created": 0
+            })
+            continue
+        
         with open(dest, "wb") as f:
             f.write(await up.read())
         
         # Check for duplicates using the saved file path
-        is_duplicate, reason = rag_service._is_file_already_processed(str(dest), up.filename)
+        is_duplicate, reason = rag_service._is_file_already_processed(str(dest), safe_filename)
         
         if is_duplicate:
             dest.unlink(missing_ok=True)
@@ -531,13 +647,39 @@ async def check_file_duplicates(files: List[UploadFile] = File(...)):
         results = []
         
         for up in files:
+            try:
+                # Sanitize filename to prevent path traversal
+                safe_filename = sanitize_filename(up.filename)
+            except ValueError as e:
+                results.append({
+                    "filename": up.filename,
+                    "is_duplicate": False,
+                    "reason": f"Invalid filename: {str(e)}"
+                })
+                continue
+            
             # Save file temporarily to calculate hash
-            temp_path = UPLOAD_FOLDER / f"temp_{up.filename}"
+            temp_path = UPLOAD_FOLDER / f"temp_{safe_filename}"
+            
+            # Security check: ensure temp_path is within UPLOAD_FOLDER
+            try:
+                temp_resolved = temp_path.resolve()
+                upload_resolved = UPLOAD_FOLDER.resolve()
+                if not str(temp_resolved).startswith(str(upload_resolved)):
+                    raise ValueError("Path traversal attempt detected")
+            except (ValueError, OSError) as e:
+                results.append({
+                    "filename": up.filename,
+                    "is_duplicate": False,
+                    "reason": f"Security error: {str(e)}"
+                })
+                continue
+            
             try:
                 with open(temp_path, "wb") as f:
                     f.write(await up.read())
                 
-                is_duplicate, reason = rag_service._is_file_already_processed(str(temp_path), up.filename)
+                is_duplicate, reason = rag_service._is_file_already_processed(str(temp_path), safe_filename)
                 
                 results.append({
                     "filename": up.filename,

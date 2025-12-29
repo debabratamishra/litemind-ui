@@ -86,7 +86,8 @@ def sanitize_links(text: str) -> str:
         cleaned = clean_url(url_part)
         return cleaned
 
-    bare_url_pattern = r"(?i)https?\s*:\s*/\s*/(?:[a-zA-Z0-9\-._ ~:/?#\[\]@!$&'()*+,;=%]|\s)+?(?=\s+[A-Z][a-z]|\s*[.!?]\s|$|\s+\w+:)"
+    # Fixed ReDoS vulnerability - use more restrictive pattern with length limit
+    bare_url_pattern = r"(?i)https?://[a-zA-Z0-9\-._%~:/?#\[\]@!$&'()*+,;=]{1,2000}(?=\s+[A-Z][a-z]|\s*[.!?]\s|$|\s+\w+:)"
     simple_url_pattern = r"(?i)https?\s*:\s*/\s*/[^\s<>\"'\(\)\[\]{}|\\^`]+(?:[^\s<>\"'\(\)\[\]{}|\\^`.,;!?]|[.,;!?](?=\s|$))*"
     
     text = re.sub(bare_url_pattern, _bare_url_repl, text)
