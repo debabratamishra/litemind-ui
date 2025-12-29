@@ -23,6 +23,7 @@ class ChatService:
         message: str, 
         model: str = "default", 
         temperature: float = 0.7,
+        max_tokens: int = 2048,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None
@@ -32,7 +33,8 @@ class ChatService:
             payload = {
                 "message": message, 
                 "model": model, 
-                "temperature": temperature
+                "temperature": temperature,
+                "max_tokens": max_tokens
             }
             
             # Add conversation history if provided
@@ -61,6 +63,7 @@ class ChatService:
         message: str,
         model: str = "default",
         temperature: float = 0.7,
+        max_tokens: int = 2048,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
@@ -72,6 +75,7 @@ class ChatService:
             "message": message,
             "model": model,
             "temperature": temperature,
+            "max_tokens": max_tokens,
             "backend": backend
         }
         
@@ -100,6 +104,7 @@ class ChatService:
         message: str,
         model: str,
         temperature: float,
+        max_tokens: int = 2048,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None
     ) -> str:
@@ -126,7 +131,8 @@ class ChatService:
             async for chunk in stream_ollama(
                 messages, 
                 model=model, 
-                temperature=temperature
+                temperature=temperature,
+                max_tokens=max_tokens
             ):
                 acc += chunk
             return acc
@@ -138,6 +144,7 @@ class ChatService:
         message: str,
         model: str = "default",
         temperature: float = 0.7,
+        max_tokens: int = 2048,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
@@ -149,6 +156,7 @@ class ChatService:
             "message": message,
             "model": model,
             "temperature": temperature,
+            "max_tokens": max_tokens,
             "backend": backend,
             "use_web_search": True
         }

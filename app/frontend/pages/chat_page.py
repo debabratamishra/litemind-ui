@@ -200,6 +200,7 @@ class ChatPage:
                         message=user_input,
                         model=config["model"],
                         temperature=config["temperature"],
+                        max_tokens=config["max_tokens"],
                         backend=backend_provider,
                         hf_token=config.get("hf_token"),
                         placeholder=out,
@@ -220,6 +221,7 @@ class ChatPage:
                         message=user_input,
                         model=config["model"],
                         temperature=config["temperature"],
+                        max_tokens=config["max_tokens"],
                         backend=backend_provider,
                         hf_token=config.get("hf_token"),
                         placeholder=out,
@@ -269,6 +271,7 @@ class ChatPage:
     def _get_chat_config(self, backend_provider: str) -> Dict:
         config = {
             "temperature": st.session_state.get("chat_temperature", 0.7),
+            "max_tokens": st.session_state.get("chat_max_tokens", 2048),
             "hf_token": st.session_state.get("hf_token") if backend_provider == "vllm" else None
         }
         
@@ -321,6 +324,16 @@ class ChatPage:
         # Temperature slider
         temperature = st.sidebar.slider("Temperature:", 0.0, 1.0, 0.7, 0.1)
         st.session_state.chat_temperature = temperature
+        
+        # Max tokens slider
+        max_tokens = st.sidebar.slider(
+            "Max Tokens:", 
+            256, 8192, 
+            st.session_state.get("chat_max_tokens", 2048), 
+            256,
+            help="Maximum number of tokens to generate in the response"
+        )
+        st.session_state.chat_max_tokens = max_tokens
         
         # Reasoning settings
         self._render_reasoning_config()

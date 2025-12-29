@@ -15,6 +15,7 @@ class ChatRequestEnhanced(BaseModel):
     message: str
     model: Optional[str] = "default"
     temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 2048  # Maximum tokens for LLM response generation
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
     use_web_search: Optional[bool] = False
@@ -35,6 +36,7 @@ class RAGQueryRequestEnhanced(BaseModel):
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
     temperature: Optional[float] = 0.7  # Temperature for LLM response generation
+    max_tokens: Optional[int] = 2048  # Maximum tokens for LLM response generation
     # Conversation memory fields
     session_id: Optional[str] = None  # Session ID for memory tracking
     conversation_summary: Optional[str] = None  # Summary of older messages

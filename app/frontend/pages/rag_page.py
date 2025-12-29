@@ -76,6 +76,9 @@ class RAGPage:
         # Initialize temperature for RAG
         st.session_state.setdefault("rag_temperature", 0.7)
         
+        # Initialize max_tokens for RAG
+        st.session_state.setdefault("rag_max_tokens", 2048)
+        
         # Initialize memory-related session state
         st.session_state.setdefault("rag_memory_enabled", True)
         
@@ -388,8 +391,9 @@ class RAGPage:
         history = [{"role": msg["role"], "content": msg["content"]} 
                   for msg in st.session_state.rag_messages[:-1]]
         
-        # Get temperature setting
+        # Get temperature and max_tokens settings
         temperature = st.session_state.get("rag_temperature", 0.7)
+        max_tokens = st.session_state.get("rag_max_tokens", 2048)
         
         # Generate response
         with st.chat_message("assistant"):
@@ -411,7 +415,8 @@ class RAGPage:
                     placeholder=out,
                     conversation_summary=conversation_summary,
                     session_id=self.memory_manager.session_id,
-                    temperature=temperature
+                    temperature=temperature,
+                    max_tokens=max_tokens
                 )
 
         if response_text:
@@ -472,6 +477,16 @@ class RAGPage:
             help="Controls randomness in responses. Lower values = more focused, higher values = more creative"
         )
         st.session_state.rag_temperature = temperature
+        
+        # Max tokens slider
+        max_tokens = st.sidebar.slider(
+            "Max Tokens:", 
+            256, 8192, 
+            st.session_state.get("rag_max_tokens", 2048), 
+            256,
+            help="Maximum number of tokens to generate in the response"
+        )
+        st.session_state.rag_max_tokens = max_tokens
 
         # RAG Configuration Section
         self._render_sidebar_rag_config()

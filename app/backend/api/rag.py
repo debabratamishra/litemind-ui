@@ -360,12 +360,13 @@ async def _handle_vllm_rag_query(request: RAGQueryRequestEnhanced, rag_service):
     messages.append({"role": "system", "content": request.system_prompt})
     messages.append({"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"})
 
-    # Stream response with temperature
+    # Stream response with temperature and max_tokens
     async def event_generator():
         async for chunk in vllm_service.stream_vllm_chat(
             messages=messages, 
             model=request.model,
-            temperature=request.temperature
+            temperature=request.temperature,
+            max_tokens=request.max_tokens
         ):
             yield chunk + "\n"
 
@@ -382,7 +383,8 @@ async def _handle_ollama_rag_query(request: RAGQueryRequestEnhanced, rag_service
             request.query, request.system_prompt, messages,
             request.n_results, request.use_hybrid_search, request.model,
             conversation_summary=request.conversation_summary,
-            temperature=request.temperature
+            temperature=request.temperature,
+            max_tokens=request.max_tokens
         ):
             yield chunk + "\n"
 
