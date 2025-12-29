@@ -174,6 +174,7 @@ class RAGService:
         hf_token: Optional[str] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None,
+        temperature: float = 0.7,
     ) -> requests.Response:
         """Stream a RAG response from the backend with conversation memory support."""
         payload = {
@@ -184,6 +185,7 @@ class RAGService:
             "n_results": n_results,
             "use_multi_agent": use_multi_agent,
             "use_hybrid_search": use_hybrid_search,
+            "temperature": temperature,
         }
         
         if backend == "vllm":

@@ -8,11 +8,10 @@ from typing import Dict, Optional, Any, List
 from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text
 from ..components.streaming_handler import streaming_handler
-from ..components.tts_player import is_tts_available, render_tts_button
 from ..components.conversation_sidebar import get_rag_sidebar
 from ..services.backend_service import backend_service
 from ..services.rag_service import rag_service
-from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS, FASTAPI_URL
+from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS
 from ..utils.memory_manager import RAGMemoryManager
 
 logger = logging.getLogger(__name__)
@@ -37,7 +36,7 @@ class RAGPage:
         realtime_active = st.session_state.get("realtime_voice_mode_rag", False)
         
         if not realtime_active:
-            st.title("📚 RAG Interface")
+            st.title("RAG Interface")
             
             self._initialize_session_state()
             
@@ -73,6 +72,9 @@ class RAGPage:
             "use_multi_agent": False,
             "use_hybrid_search": False,
         })
+        
+        # Initialize temperature for RAG
+        st.session_state.setdefault("rag_temperature", 0.7)
         
         # Initialize memory-related session state
         st.session_state.setdefault("rag_memory_enabled", True)
@@ -146,7 +148,7 @@ class RAGPage:
         )
         
         # Upload and process files
-        if uploaded_files and st.button("📤 Upload & Process", type="primary", 
+        if uploaded_files and st.button("Upload & Process", type="primary", 
                                        disabled=not st.session_state.config_saved):
             self._process_uploaded_files(uploaded_files)
     
@@ -386,6 +388,9 @@ class RAGPage:
         history = [{"role": msg["role"], "content": msg["content"]} 
                   for msg in st.session_state.rag_messages[:-1]]
         
+        # Get temperature setting
+        temperature = st.session_state.get("rag_temperature", 0.7)
+        
         # Generate response
         with st.chat_message("assistant"):
             status = self._build_status_message(config, backend_provider)
@@ -405,7 +410,8 @@ class RAGPage:
                     hf_token=st.session_state.get("hf_token") if backend_provider == "vllm" else None,
                     placeholder=out,
                     conversation_summary=conversation_summary,
-                    session_id=self.memory_manager.session_id
+                    session_id=self.memory_manager.session_id,
+                    temperature=temperature
                 )
 
         if response_text:
@@ -452,14 +458,24 @@ class RAGPage:
             self.conversation_sidebar.render()
         
         st.sidebar.markdown("---")
-        st.sidebar.subheader("📚 RAG Configuration")
+        st.sidebar.subheader("RAG Configuration")
         
         # Base model selection for RAG (only when Ollama backend is selected)
         self._render_sidebar_base_model_selection()
+        
+        # Temperature slider
+        temperature = st.sidebar.slider(
+            "Temperature:", 
+            0.0, 1.0, 
+            st.session_state.get("rag_temperature", 0.7), 
+            0.1,
+            help="Controls randomness in responses. Lower values = more focused, higher values = more creative"
+        )
+        st.session_state.rag_temperature = temperature
 
         # RAG Configuration Section
         self._render_sidebar_rag_config()
-        
+
         # Display status
         self._render_sidebar_status()
         
@@ -585,6 +601,9 @@ class RAGPage:
     
     def _render_sidebar_status(self):
         """Render RAG status in sidebar."""
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("RAG System Status")
+
         rag_status = rag_service.get_status()
         if rag_status:
             if rag_status["status"] == "ready":
@@ -618,7 +637,7 @@ class RAGPage:
     def _render_sidebar_reasoning_config(self):
         """Render reasoning configuration in sidebar."""
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🧠 Reasoning Display")
+        st.sidebar.subheader("Reasoning Display")
         
         st.session_state.show_reasoning_expanded = st.sidebar.checkbox(
             "Expand reasoning by default",
@@ -634,21 +653,6 @@ class RAGPage:
             key="rag_hide_reasoning"
         )
         st.session_state.hide_reasoning = hide_reasoning
-        
-        # TTS Configuration
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("🗣️ Text-to-Speech")
-        
-        tts_available = is_tts_available()
-        if tts_available:
-            st.sidebar.success("✅ TTS service available")
-        else:
-            st.sidebar.warning("⚠️ TTS service not available")
-            if st.sidebar.button("🔄 Retry TTS Connection", key="rag_retry_tts"):
-                # Clear cached status to force re-check
-                if "tts_service_available" in st.session_state:
-                    del st.session_state["tts_service_available"]
-                st.rerun()
     
     def _render_sidebar_system_prompt(self):
         """Render system prompt configuration in sidebar."""
@@ -719,7 +723,7 @@ class RAGPage:
     def _render_sidebar_memory_config(self):
         """Render conversation memory configuration in sidebar."""
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🧠 Conversation Settings")
+        st.sidebar.subheader("Conversation Settings")
         
         # History persistence toggle
         history_enabled = st.sidebar.checkbox(

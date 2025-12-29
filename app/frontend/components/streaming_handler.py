@@ -97,7 +97,8 @@ class StreamingHandler:
         placeholder: Optional[Any] = None,
         tts_callback: Optional[Callable[[str], None]] = None,
         conversation_summary: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        temperature: float = 0.7
     ) -> Optional[str]:
         """Stream a RAG response with reasoning segregation and conversation memory.
         
@@ -115,6 +116,7 @@ class StreamingHandler:
             tts_callback: Optional callback to receive text chunks for TTS synthesis
             conversation_summary: Summary of earlier messages
             session_id: Session identifier for memory tracking
+            temperature: Temperature for LLM response generation
         """
         
         try:
@@ -129,7 +131,8 @@ class StreamingHandler:
                 backend=backend,
                 hf_token=hf_token,
                 conversation_summary=conversation_summary,
-                session_id=session_id
+                session_id=session_id,
+                temperature=temperature
             )
             
             return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)

@@ -34,6 +34,7 @@ class RAGQueryRequestEnhanced(BaseModel):
     use_hybrid_search: Optional[bool] = False
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
+    temperature: Optional[float] = 0.7  # Temperature for LLM response generation
     # Conversation memory fields
     session_id: Optional[str] = None  # Session ID for memory tracking
     conversation_summary: Optional[str] = None  # Summary of older messages
