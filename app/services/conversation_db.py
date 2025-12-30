@@ -11,7 +11,7 @@ import uuid
 import atexit
 from datetime import datetime
 from typing import List, Dict, Optional, Any, Tuple
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from contextlib import contextmanager
 
