@@ -7,14 +7,13 @@ and deleting old conversations.
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Callable
+from typing import Optional
 
 import streamlit as st
 
 from ...services.conversation_db import (
     get_conversation_db,
-    Conversation,
-    ConversationMessage
+    Conversation
 )
 
 logger = logging.getLogger(__name__)
@@ -408,7 +407,7 @@ class ConversationHistorySidebar:
         
         
         if not conversations:
-            st.sidebar.caption("Start chatting to create history")
+            st.sidebar.caption("Start chatting to build conversation history")
             return
         
         # Render conversation list

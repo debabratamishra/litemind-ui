@@ -7,7 +7,6 @@ import io
 import json
 import logging
 import os
-import re
 import signal
 import shutil
 import sys
@@ -25,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from app.backend.api import chat as chat_api
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
@@ -33,21 +33,19 @@ from app.services.vllm_service import vllm_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
 from sentence_transformers import SentenceTransformer
-
-# Import API routers
-from app.backend.api import chat as chat_api
+from app.backend.api.security_utils import sanitize_filename, validate_file_size
 
 try:
     import torch
 except ImportError:
     torch = None
 
-# Configure logging
+# Configure logging early so lifespan hooks can use logger
 try:
     from logging_config import get_logger, setup_logging
     setup_logging()
     logger = get_logger(__name__)
-except ImportError:
+except Exception:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
@@ -66,77 +64,6 @@ DEFAULT_RAG_CONFIG = {
 }
 
 rag_service = None
-
-# Security: File upload constants
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
-ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx', '.doc', '.csv', '.md', '.json', '.xml', '.html'}
-
-
-# Security: Filename sanitization
-def sanitize_filename(filename: str) -> str:
-    """
-    Sanitize filename to prevent path traversal attacks.
-    Removes directory separators and other dangerous characters.
-    """
-    if not filename:
-        raise ValueError("Filename cannot be empty")
-    
-    # Get just the basename (removes any directory components)
-    filename = os.path.basename(filename)
-    
-    # Remove any remaining path separators
-    filename = filename.replace('/', '').replace('\\', '')
-    
-    # Remove null bytes
-    filename = filename.replace('\0', '')
-    
-    # Remove leading dots and spaces
-    filename = filename.lstrip('. ')
-    
-    # Validate filename is not empty after sanitization
-    if not filename or filename in ('.', '..'):
-        raise ValueError("Invalid filename")
-    
-    # Limit filename length (keep extension)
-    name, ext = os.path.splitext(filename)
-    if len(name) > 200:
-        name = name[:200]
-    filename = name + ext
-    
-    # Validate against dangerous patterns
-    dangerous_patterns = [r'\.\./|\\\.\.\\', r'^\.+$', r'\0']
-    for pattern in dangerous_patterns:
-        if re.search(pattern, filename):
-            raise ValueError(f"Filename contains dangerous pattern: {filename}")
-    
-    # Validate file extension
-    if ext.lower() not in ALLOWED_EXTENSIONS:
-        raise ValueError(f"File extension '{ext}' not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}")
-    
-    return filename
-
-
-async def validate_file_size(file: UploadFile) -> None:
-    """
-    Validate file size without reading entire file into memory.
-    Raises HTTPException if file is too large.
-    """
-    # Read file in chunks to check size
-    total_size = 0
-    chunk_size = 1024 * 1024  # 1MB chunks
-    
-    # Read and validate size
-    content = await file.read()
-    total_size = len(content)
-    
-    # Reset file position
-    await file.seek(0)
-    
-    if total_size > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413, 
-            detail=f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f}MB"
-        )
 
 
 # Request/Response Models
@@ -566,7 +493,7 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             upload_resolved = UPLOAD_FOLDER.resolve()
             if not str(dest_resolved).startswith(str(upload_resolved)):
                 raise ValueError("Path traversal attempt detected")
-        except (ValueError, OSError) as e:
+        except (ValueError, OSError, RuntimeError) as e:
             results.append({
                 "filename": up.filename,
                 "status": "error",
@@ -667,7 +594,7 @@ async def check_file_duplicates(files: List[UploadFile] = File(...)):
                 upload_resolved = UPLOAD_FOLDER.resolve()
                 if not str(temp_resolved).startswith(str(upload_resolved)):
                     raise ValueError("Path traversal attempt detected")
-            except (ValueError, OSError) as e:
+            except (ValueError, OSError, RuntimeError) as e:
                 results.append({
                     "filename": up.filename,
                     "is_duplicate": False,
@@ -1049,7 +976,8 @@ def run():
         log_level="info"
     )
     server = uvicorn.Server(config)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     stop_event = asyncio.Event()
 
     def handle_exit(*_args):

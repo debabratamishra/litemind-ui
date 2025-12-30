@@ -3,15 +3,14 @@ RAG API endpoints
 """
 import asyncio
 import logging
-import os
-import re
 from typing import List
 from fastapi import APIRouter, HTTPException, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 
+from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.models.api_models import (
-    RAGConfigRequest, RAGQueryRequestEnhanced, RAGStatusResponse, 
-    UploadResponse, ResetResponse
+    RAGConfigRequest, RAGQueryRequestEnhanced, RAGStatusResponse,
+    UploadResponse, ResetResponse,
 )
 from app.backend.core.config import backend_config
 from app.backend.core.embeddings import create_embedding_function
@@ -20,74 +19,6 @@ from app.services.vllm_service import vllm_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rag", tags=["rag"])
-
-
-# Security: File upload constants
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
-ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx', '.doc', '.csv', '.md', '.json', '.xml', '.html'}
-
-
-# Security: Filename sanitization
-def sanitize_filename(filename: str) -> str:
-    """
-    Sanitize filename to prevent path traversal attacks.
-    Removes directory separators and other dangerous characters.
-    """
-    if not filename:
-        raise ValueError("Filename cannot be empty")
-    
-    # Get just the basename (removes any directory components)
-    filename = os.path.basename(filename)
-    
-    # Remove any remaining path separators
-    filename = filename.replace('/', '').replace('\\', '')
-    
-    # Remove null bytes
-    filename = filename.replace('\0', '')
-    
-    # Remove leading dots and spaces
-    filename = filename.lstrip('. ')
-    
-    # Validate filename is not empty after sanitization
-    if not filename or filename in ('.', '..'):
-        raise ValueError("Invalid filename")
-    
-    # Limit filename length (keep extension)
-    name, ext = os.path.splitext(filename)
-    if len(name) > 200:
-        name = name[:200]
-    filename = name + ext
-    
-    # Validate against dangerous patterns
-    dangerous_patterns = [r'\.\./|\\\.\.\\', r'^\.+$', r'\0']
-    for pattern in dangerous_patterns:
-        if re.search(pattern, filename):
-            raise ValueError(f"Filename contains dangerous pattern: {filename}")
-    
-    # Validate file extension
-    if ext.lower() not in ALLOWED_EXTENSIONS:
-        raise ValueError(f"File extension '{ext}' not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}")
-    
-    return filename
-
-
-async def validate_file_size(file: UploadFile) -> None:
-    """
-    Validate file size without reading entire file into memory.
-    Raises HTTPException if file is too large.
-    """
-    # Read file in chunks to check size
-    content = await file.read()
-    total_size = len(content)
-    
-    # Reset file position
-    await file.seek(0)
-    
-    if total_size > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413, 
-            detail=f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f}MB"
-        )
 
 
 @router.get("/status", response_model=RAGStatusResponse)
@@ -203,7 +134,7 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             upload_resolved = backend_config.upload_folder.resolve()
             if not str(dest_resolved).startswith(str(upload_resolved)):
                 raise ValueError("Path traversal attempt detected")
-        except (ValueError, OSError) as e:
+        except (ValueError, OSError, RuntimeError) as e:
             results.append({
                 "filename": upload_file.filename,
                 "status": "error",

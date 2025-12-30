@@ -12,7 +12,7 @@ from ..components.web_search_toggle import WebSearchToggle
 from ..components.tts_player import render_tts_button
 from ..components.conversation_sidebar import get_chat_sidebar
 from ..services.backend_service import backend_service
-from ..utils.memory_manager import ChatMemoryManager, display_memory_stats_sidebar
+from ..utils.memory_manager import ChatMemoryManager
 
 logger = logging.getLogger(__name__)
 

@@ -86,7 +86,6 @@ def sanitize_links(text: str) -> str:
         cleaned = clean_url(url_part)
         return cleaned
 
-    # Fixed ReDoS vulnerability - use more restrictive pattern with length limit
     bare_url_pattern = r"(?i)https?://[a-zA-Z0-9\-._%~:/?#\[\]@!$&'()*+,;=]{1,2000}(?=\s+[A-Z][a-z]|\s*[.!?]\s|$|\s+\w+:)"
     simple_url_pattern = r"(?i)https?\s*:\s*/\s*/[^\s<>\"'\(\)\[\]{}|\\^`]+(?:[^\s<>\"'\(\)\[\]{}|\\^`.,;!?]|[.,;!?](?=\s|$))*"
     
@@ -238,38 +237,24 @@ def format_web_search_response(text: str) -> str:
     # First, normalize basic spacing
     text = text.replace('\r', '')
     
-    # Fix single characters separated by newlines (streaming artifact)
-    # Pattern like "C\nh\na\nn\ng\ne" -> "Change"
     text = re.sub(r'(?<=[A-Za-z])\n(?=[A-Za-z](?:\n|[^A-Za-z]))', '', text)
     # Also fix single chars separated by newlines in sequence
     while re.search(r'([A-Za-z])\n([A-Za-z])\n', text):
         text = re.sub(r'([A-Za-z])\n([A-Za-z])\n', r'\1\2\n', text)
     text = re.sub(r'([A-Za-z])\n([A-Za-z])(?=[^a-zA-Z\n]|$)', r'\1\2', text)
     
-    # Fix spaces inside words - common streaming issue
-    # But be careful not to join different words
-    
     def fix_spaced_letters(match):
         """Join spaced single letters into a word."""
         return match.group(0).replace(' ', '')
     
-    # FIRST: Handle word + space + spaced_letters sequence (at least 4 total single-spaced letters)
-    # "Comm o n w e a l t h" -> join "Comm" with "onwealth" -> "Commonwealth"
-    # This must run BEFORE the all-single-letters pattern to capture the word prefix
     def fix_word_then_spaced(match):
         word = match.group(1)
         spaced = match.group(2).replace(' ', '')
         return word + spaced
     
-    # Match word (2+ chars) + space + at least 4 single letters separated by spaces
     text = re.sub(r'(\w{2,})\s+([a-zA-Z](?:\s+[a-zA-Z]){3,})\b', fix_word_then_spaced, text)
     
-    # SECOND: Handle sequences of single letters separated by spaces (no word prefix)
-    # "C o m m o n" should become "Common"
-    # Only apply if we have 4+ consecutive single letters with spaces (to avoid "is a test")
     text = re.sub(r'\b([a-zA-Z])((?:\s[a-zA-Z]){3,})\b', fix_spaced_letters, text)
-    
-    # Fix: "CB A" -> "CBA" (single uppercase letters that should be together, like stock ticker)
     text = re.sub(r'\b([A-Z]{1,2})\s+([A-Z])\b', r'\1\2', text)
     
     # Fix apostrophe spacing: "here' s" -> "here's", "don' t" -> "don't"
@@ -278,30 +263,22 @@ def format_web_search_response(text: str) -> str:
     # Fix degree/unit spacing: "27 ° C" -> "27°C", "100 % " -> "100%"
     text = re.sub(r'(\d+)\s*°\s*([CFcf])', r'\1°\2', text)
     text = re.sub(r'(\d+)\s*°', r'\1°', text)
-    
-    # Fix "Temper atures" -> "Temperatures" (space in middle of word before lowercase continuation)
-    # This catches cases where a word got split mid-stream
     text = re.sub(r'([A-Z][a-z]+)\s+([a-z]{3,})', lambda m: m.group(1) + m.group(2) if m.group(1).lower() + m.group(2) in COMMON_WORDS else m.group(0), text)
     
-    # Fix "S south" duplicated direction words
     text = re.sub(r'\bS\s+south', 'south', text, flags=re.IGNORECASE)
     text = re.sub(r'\bN\s+north', 'north', text, flags=re.IGNORECASE)
     text = re.sub(r'\bE\s+east', 'east', text, flags=re.IGNORECASE)
     text = re.sub(r'\bW\s+west', 'west', text, flags=re.IGNORECASE)
     
-    # Fix "ASX: CB A" -> "ASX:CBA" (stock symbols with spaces)
     text = re.sub(r'([A-Z]{2,}):\s*([A-Z])\s+([A-Z])\s*([A-Z])?', 
                   lambda m: f"{m.group(1)}:{m.group(2)}{m.group(3)}{m.group(4) or ''}", text)
     
-    # Fix spaces between consecutive digits: "3,1 4 1.2 0" -> "3,141.20"
-    # This is critical for numbers that got split during streaming
     for _ in range(5):
         text = re.sub(r'(\d)\s+(\d)', r'\1\2', text)
     
-    # Fix common token spacing issues (spaces before punctuation)
     text = re.sub(r'\s+([,.;:!?%])', r'\1', text)
-    text = re.sub(r'\$\s+', '$', text)  # Fix "$ 178" -> "$178"
-    text = re.sub(r'Rs\s+', 'Rs ', text)  # Keep "Rs " with single space
+    text = re.sub(r'\$\s+', '$', text)
+    text = re.sub(r'Rs\s+', 'Rs ', text)
     
     # Fix decimal numbers with spaces: "178. 88" -> "178.88"
     text = re.sub(r'(\d+)\.\s+(\d+)', r'\1.\2', text)
@@ -313,14 +290,12 @@ def format_web_search_response(text: str) -> str:
     text = re.sub(r'(\d+):\s+(\d+)', r'\1:\2', text)
     
     # Fix percentage spacing: "- 2. 17 %" -> "-2.17%"
-    text = re.sub(r'-\s*(\d)', r'-\1', text)  # Fix "- 2" -> "-2"
-    text = re.sub(r'(\d)\s*%', r'\1%', text)  # Fix "17 %" -> "17%"
+    text = re.sub(r'-\s*(\d)', r'-\1', text)
+    text = re.sub(r'(\d)\s*%', r'\1%', text)
     
-    # Fix hyphenated words with spaces: "5- day" -> "5-day", "1- month" -> "1-month"
     text = re.sub(r'(\d+)-\s+(\w)', r'\1-\2', text)
     text = re.sub(r'(\w)-\s+(\w)', r'\1-\2', text)
     
-    # Fix plus sign spacing: "+ 2" -> "+2"
     text = re.sub(r'\+\s+(\d)', r'+\1', text)
     
     # Fix spacing around brackets for citations
@@ -353,8 +328,6 @@ def _format_sources_section(text: str) -> str:
     before_sources = re.sub(r'\n\*\*\s*$', '\n', before_sources)
     before_sources = before_sources.rstrip() + '\n'
     
-    # Clean up duplicate [Link] patterns that may occur from double processing
-    # Pattern: "- [Link]( (domain) - [Link](" or similar duplicates
     sources_section = re.sub(
         r'\s*-\s*\[Link\]\([^)]*\)\s*\(\s*\([^)]+\)\s*-\s*\[Link\]\([^)]*\)\s*-\s*Link\s*',
         ' - Link ',

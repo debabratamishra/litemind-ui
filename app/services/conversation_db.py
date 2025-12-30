@@ -589,7 +589,17 @@ class ConversationDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
-            search_pattern = f"%{query}%"
+            def _escape_like(raw: str) -> str:
+                """Escape SQLite LIKE wildcards in user input."""
+                return (
+                    raw.replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                    .replace("[", "\\[")
+                )
+
+            escaped_query = _escape_like(query)
+            search_pattern = f"%{escaped_query}%"
             
             if conversation_type:
                 cursor.execute(
@@ -597,7 +607,7 @@ class ConversationDatabase:
                     SELECT DISTINCT c.* FROM conversations c
                     LEFT JOIN messages m ON c.id = m.conversation_id
                     WHERE c.conversation_type = ?
-                    AND (c.title LIKE ? OR m.content LIKE ?)
+                    AND (c.title LIKE ? ESCAPE '\\' OR m.content LIKE ? ESCAPE '\\')
                     ORDER BY c.updated_at DESC
                     LIMIT ?
                     """,
@@ -608,7 +618,7 @@ class ConversationDatabase:
                     """
                     SELECT DISTINCT c.* FROM conversations c
                     LEFT JOIN messages m ON c.id = m.conversation_id
-                    WHERE c.title LIKE ? OR m.content LIKE ?
+                    WHERE c.title LIKE ? ESCAPE '\\' OR m.content LIKE ? ESCAPE '\\'
                     ORDER BY c.updated_at DESC
                     LIMIT ?
                     """,
