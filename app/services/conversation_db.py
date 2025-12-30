@@ -4,7 +4,6 @@ Conversation Database Service using SQLite.
 Provides persistent storage for conversation history with unique identifiers.
 Uses SQLite for lightweight, file-based storage that's perfect for local deployments.
 """
-import os
 import json
 import logging
 import sqlite3
