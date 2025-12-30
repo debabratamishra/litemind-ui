@@ -685,7 +685,15 @@ async def rag_query(request: RAGQueryRequestEnhanced):
 
             # Stream response
             async def event_generator():
-                async for chunk in vllm_service.stream_vllm_chat(messages=messages, model=request.model):
+                async for chunk in vllm_service.stream_vllm_chat(
+                    messages=messages, 
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    top_p=request.top_p,
+                    frequency_penalty=request.frequency_penalty,
+                    repetition_penalty=request.repetition_penalty
+                ):
                     yield chunk + "\n"
 
             return StreamingResponse(event_generator(), media_type="text/plain")
@@ -715,8 +723,18 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                     # Use regular RAG
                     logger.info("Using standard RAG without multi-agent orchestration")
                     async for chunk in rag_service.query(
-                        request.query, request.system_prompt, request.messages,
-                        request.n_results, request.use_hybrid_search, request.model
+                        request.query, 
+                        request.system_prompt, 
+                        request.messages,
+                        request.n_results, 
+                        request.use_hybrid_search, 
+                        request.model,
+                        request.conversation_summary,
+                        request.temperature,
+                        request.max_tokens,
+                        request.top_p,
+                        request.frequency_penalty,
+                        request.repetition_penalty
                     ):
                         yield chunk + "\n"
 

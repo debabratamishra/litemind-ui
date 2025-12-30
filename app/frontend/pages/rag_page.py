@@ -394,6 +394,9 @@ class RAGPage:
         # Get temperature and max_tokens settings
         temperature = st.session_state.get("rag_temperature", 0.7)
         max_tokens = st.session_state.get("rag_max_tokens", 2048)
+        top_p = st.session_state.get("rag_top_p", 0.9)
+        frequency_penalty = st.session_state.get("rag_frequency_penalty", 0.0)
+        repetition_penalty = st.session_state.get("rag_repetition_penalty", 1.0)
         
         # Generate response
         with st.chat_message("assistant"):
@@ -416,7 +419,10 @@ class RAGPage:
                     conversation_summary=conversation_summary,
                     session_id=self.memory_manager.session_id,
                     temperature=temperature,
-                    max_tokens=max_tokens
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    repetition_penalty=repetition_penalty
                 )
 
         if response_text:
@@ -468,25 +474,57 @@ class RAGPage:
         # Base model selection for RAG (only when Ollama backend is selected)
         self._render_sidebar_base_model_selection()
         
-        # Temperature slider
-        temperature = st.sidebar.slider(
-            "Temperature:", 
-            0.0, 1.0, 
-            st.session_state.get("rag_temperature", 0.7), 
-            0.1,
-            help="Controls randomness in responses. Lower values = more focused, higher values = more creative"
-        )
-        st.session_state.rag_temperature = temperature
-        
-        # Max tokens slider
-        max_tokens = st.sidebar.slider(
-            "Max Tokens:", 
-            256, 8192, 
-            st.session_state.get("rag_max_tokens", 2048), 
-            256,
-            help="Maximum number of tokens to generate in the response"
-        )
-        st.session_state.rag_max_tokens = max_tokens
+        # Generation settings in expander
+        with st.sidebar.expander("Generation Settings", expanded=True):
+            # Temperature slider
+            temperature = st.slider(
+                "Temperature:", 
+                0.0, 1.0, 
+                st.session_state.get("rag_temperature", 0.7), 
+                0.1,
+                help="Controls randomness in responses. Lower = more focused, higher = more creative"
+            )
+            st.session_state.rag_temperature = temperature
+            
+            # Max tokens slider
+            max_tokens = st.slider(
+                "Max Tokens:", 
+                256, 8192, 
+                st.session_state.get("rag_max_tokens", 2048), 
+                256,
+                help="Maximum number of tokens to generate in the response"
+            )
+            st.session_state.rag_max_tokens = max_tokens
+            
+            # Top P (nucleus sampling)
+            top_p = st.slider(
+                "Top P (Nucleus Sampling):",
+                0.0, 1.0,
+                st.session_state.get("rag_top_p", 0.9),
+                0.05,
+                help="Controls diversity via nucleus sampling. Lower = more focused, higher = more diverse"
+            )
+            st.session_state.rag_top_p = top_p
+            
+            # Frequency penalty
+            frequency_penalty = st.slider(
+                "Frequency Penalty:",
+                -2.0, 2.0,
+                st.session_state.get("rag_frequency_penalty", 0.0),
+                0.1,
+                help="Penalize tokens based on their frequency in the text. Positive = less repetition"
+            )
+            st.session_state.rag_frequency_penalty = frequency_penalty
+            
+            # Repetition penalty
+            repetition_penalty = st.slider(
+                "Repetition Penalty:",
+                0.0, 2.0,
+                st.session_state.get("rag_repetition_penalty", 1.0),
+                0.1,
+                help="Penalize repeated tokens. Values > 1.0 reduce repetition"
+            )
+            st.session_state.rag_repetition_penalty = repetition_penalty
 
         # RAG Configuration Section
         self._render_sidebar_rag_config()

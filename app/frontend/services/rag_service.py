@@ -176,6 +176,9 @@ class RAGService:
         session_id: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
     ) -> requests.Response:
         """Stream a RAG response from the backend with conversation memory support."""
         payload = {
@@ -188,6 +191,9 @@ class RAGService:
             "use_hybrid_search": use_hybrid_search,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_p": top_p,
+            "frequency_penalty": frequency_penalty,
+            "repetition_penalty": repetition_penalty,
         }
         
         if backend == "vllm":

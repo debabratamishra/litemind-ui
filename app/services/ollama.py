@@ -41,7 +41,15 @@ def get_ollama_url():
         return url
 
 
-async def stream_ollama(messages, model: str = "gemma3:1b", temperature: float = 0.7, max_tokens: int = 2048):
+async def stream_ollama(
+    messages, 
+    model: str = "gemma3:1b", 
+    temperature: float = 0.7, 
+    max_tokens: int = 2048,
+    top_p: float = 0.9,
+    frequency_penalty: float = 0.0,
+    repetition_penalty: float = 1.0
+):
     """Stream markdown text from Ollama.
 
     Parameters
@@ -54,6 +62,12 @@ async def stream_ollama(messages, model: str = "gemma3:1b", temperature: float =
         Sampling temperature.
     max_tokens : int
         Maximum number of tokens to generate.
+    top_p : float
+        Nucleus sampling parameter (0.0 to 1.0).
+    frequency_penalty : float
+        Penalize frequent tokens (-2.0 to 2.0). Maps to Ollama's frequency_penalty.
+    repetition_penalty : float
+        Penalize repeated tokens (0.0 to 2.0). Maps to Ollama's repeat_penalty.
 
     Yields
     ------
@@ -67,7 +81,13 @@ async def stream_ollama(messages, model: str = "gemma3:1b", temperature: float =
         "model": model,
         "messages": messages,
         "stream": True,
-        "options": {"temperature": temperature, "num_predict": max_tokens},
+        "options": {
+            "temperature": temperature, 
+            "num_predict": max_tokens,
+            "top_p": top_p,
+            "frequency_penalty": frequency_penalty,
+            "repeat_penalty": repetition_penalty,
+        },
     }
 
     for attempt in range(1, _MAX_RETRIES + 1):
