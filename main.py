@@ -552,7 +552,7 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             results.append({
                 "filename": up.filename,
                 "status": "error",
-                "message": str(e.detail),
+                "message": str(getattr(e, "detail", e)),
                 "chunks_created": 0
             })
             continue
