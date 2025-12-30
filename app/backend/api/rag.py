@@ -7,9 +7,10 @@ from typing import List
 from fastapi import APIRouter, HTTPException, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 
+from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.models.api_models import (
-    RAGConfigRequest, RAGQueryRequestEnhanced, RAGStatusResponse, 
-    UploadResponse, ResetResponse
+    RAGConfigRequest, RAGQueryRequestEnhanced, RAGStatusResponse,
+    UploadResponse, ResetResponse,
 )
 from app.backend.core.config import backend_config
 from app.backend.core.embeddings import create_embedding_function
@@ -100,18 +101,53 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
     if not rag_service:
         raise HTTPException(status_code=503, detail="RAG service not initialized")
 
+    # Validate number of files
+    if len(files) > 50:
+        raise HTTPException(status_code=400, detail="Too many files. Maximum 50 files per upload.")
+
     results = []
     saved_paths = []
     
     # Save files and check for duplicates
     for upload_file in files:
-        # Save file first
-        dest_path = backend_config.upload_folder / upload_file.filename
+        try:
+            # Validate file size
+            await validate_file_size(upload_file)
+            
+            # Sanitize filename to prevent path traversal
+            safe_filename = sanitize_filename(upload_file.filename)
+        except ValueError as e:
+            results.append({
+                "filename": upload_file.filename,
+                "status": "error",
+                "message": f"Invalid filename: {str(e)}",
+                "chunks_created": 0
+            })
+            continue
+        
+        # Save file with sanitized name
+        dest_path = backend_config.upload_folder / safe_filename
+        
+        # Additional security check: ensure dest_path is within upload_folder
+        try:
+            dest_resolved = dest_path.resolve()
+            upload_resolved = backend_config.upload_folder.resolve()
+            if not str(dest_resolved).startswith(str(upload_resolved)):
+                raise ValueError("Path traversal attempt detected")
+        except (ValueError, OSError, RuntimeError) as e:
+            results.append({
+                "filename": upload_file.filename,
+                "status": "error",
+                "message": f"Security error: {str(e)}",
+                "chunks_created": 0
+            })
+            continue
+        
         with open(dest_path, "wb") as f:
             f.write(await upload_file.read())
         
         # Check for duplicates using the saved file path
-        is_duplicate, reason = rag_service._is_file_already_processed(str(dest_path), upload_file.filename)
+        is_duplicate, reason = rag_service._is_file_already_processed(str(dest_path), safe_filename)
         
         if is_duplicate:
             # Remove the saved file since it's a duplicate
@@ -255,9 +291,14 @@ async def _handle_vllm_rag_query(request: RAGQueryRequestEnhanced, rag_service):
     messages.append({"role": "system", "content": request.system_prompt})
     messages.append({"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"})
 
-    # Stream response
+    # Stream response with temperature and max_tokens
     async def event_generator():
-        async for chunk in vllm_service.stream_vllm_chat(messages=messages, model=request.model):
+        async for chunk in vllm_service.stream_vllm_chat(
+            messages=messages, 
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens
+        ):
             yield chunk + "\n"
 
     return StreamingResponse(event_generator(), media_type="text/plain")
@@ -272,7 +313,9 @@ async def _handle_ollama_rag_query(request: RAGQueryRequestEnhanced, rag_service
         async for chunk in rag_service.query(
             request.query, request.system_prompt, messages,
             request.n_results, request.use_hybrid_search, request.model,
-            conversation_summary=request.conversation_summary
+            conversation_summary=request.conversation_summary,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens
         ):
             yield chunk + "\n"
 

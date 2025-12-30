@@ -62,12 +62,12 @@ class StreamlitApp:
         
         # Initialize page selection with explicit default
         if "selected_page" not in st.session_state:
-            st.session_state.selected_page = "💬 Chat"
+            st.session_state.selected_page = "Chat"
         
         # Validate selected page is valid
-        valid_pages = ["💬 Chat", "📚 RAG"]
+        valid_pages = ["Chat", "RAG"]
         if st.session_state.selected_page not in valid_pages:
-            st.session_state.selected_page = "💬 Chat"
+            st.session_state.selected_page = "Chat"
             
         st.session_state.setdefault("chat_messages", [])
     
@@ -80,7 +80,7 @@ class StreamlitApp:
         self.render_system_status()
     
     def render_backend_selection(self):
-        st.sidebar.subheader("⚙️ Backend Provider")
+        st.sidebar.subheader("Backend Provider")
         
         # Check if running in Docker environment
         is_docker = st.session_state.get("is_docker_deployment", False)
@@ -126,7 +126,7 @@ class StreamlitApp:
         st.sidebar.markdown("---")
         
         # Get current page index, defaulting to Chat (0) if not found
-        page_options = ["💬 Chat", "📚 RAG"]
+        page_options = ["Chat", "RAG"]
         try:
             current_index = page_options.index(st.session_state.selected_page)
         except (ValueError, KeyError):
@@ -148,7 +148,7 @@ class StreamlitApp:
     
     def render_system_status(self):
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🔧 System Status")
+        st.sidebar.subheader("System Status")
         
         is_docker = st.session_state.get("is_docker_deployment", False)
         
@@ -166,17 +166,17 @@ class StreamlitApp:
         self.render_sidebar_header()
         
         # Ensure we have a valid page selected
-        selected_page = st.session_state.get("selected_page", "💬 Chat")
+        selected_page = st.session_state.get("selected_page", "Chat")
         
         # Route to the appropriate page
         try:
-            if selected_page == "💬 Chat":
+            if selected_page == "Chat":
                 render_chat_page()
-            elif selected_page == "📚 RAG":
+            elif selected_page == "RAG":
                 render_rag_page()
             else:
                 # Fallback to chat if invalid page
-                st.session_state.selected_page = "💬 Chat"
+                st.session_state.selected_page = "Chat"
                 render_chat_page()
         except Exception as e:
             # Error handling for page rendering

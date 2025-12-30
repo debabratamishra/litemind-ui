@@ -21,6 +21,7 @@ class StreamingHandler:
         message: str,
         model: str,
         temperature: float = 0.7,
+        max_tokens: int = 2048,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         placeholder: Optional[Any] = None,
@@ -36,6 +37,7 @@ class StreamingHandler:
             message: User message
             model: Model name
             temperature: Temperature for generation
+            max_tokens: Maximum tokens to generate
             backend: Backend to use (ollama/vllm)
             hf_token: HuggingFace token for vLLM
             placeholder: Streamlit placeholder for UI updates
@@ -54,6 +56,7 @@ class StreamingHandler:
                     message=message,
                     model=model,
                     temperature=temperature,
+                    max_tokens=max_tokens,
                     conversation_history=conversation_history,
                     conversation_summary=conversation_summary
                 )
@@ -63,6 +66,7 @@ class StreamingHandler:
                 message=message,
                 model=model,
                 temperature=temperature,
+                max_tokens=max_tokens,
                 backend=backend,
                 hf_token=hf_token,
                 conversation_history=conversation_history,
@@ -97,7 +101,9 @@ class StreamingHandler:
         placeholder: Optional[Any] = None,
         tts_callback: Optional[Callable[[str], None]] = None,
         conversation_summary: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048
     ) -> Optional[str]:
         """Stream a RAG response with reasoning segregation and conversation memory.
         
@@ -115,6 +121,8 @@ class StreamingHandler:
             tts_callback: Optional callback to receive text chunks for TTS synthesis
             conversation_summary: Summary of earlier messages
             session_id: Session identifier for memory tracking
+            temperature: Temperature for LLM response generation
+            max_tokens: Maximum tokens to generate
         """
         
         try:
@@ -129,7 +137,9 @@ class StreamingHandler:
                 backend=backend,
                 hf_token=hf_token,
                 conversation_summary=conversation_summary,
-                session_id=session_id
+                session_id=session_id,
+                temperature=temperature,
+                max_tokens=max_tokens
             )
             
             return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)
@@ -150,6 +160,7 @@ class StreamingHandler:
         message: str,
         model: str,
         temperature: float = 0.7,
+        max_tokens: int = 2048,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         placeholder: Optional[Any] = None,
@@ -168,6 +179,7 @@ class StreamingHandler:
                     message=message,
                     model=model,
                     temperature=temperature,
+                    max_tokens=max_tokens,
                     conversation_history=conversation_history,
                     conversation_summary=conversation_summary
                 )
@@ -177,6 +189,7 @@ class StreamingHandler:
                 message=message,
                 model=model,
                 temperature=temperature,
+                max_tokens=max_tokens,
                 backend=backend,
                 hf_token=hf_token,
                 conversation_history=conversation_history,

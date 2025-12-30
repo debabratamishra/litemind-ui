@@ -980,7 +980,7 @@ class RAGService:
         result_documents = [id_to_content[i] for i in top_text_ids if i in id_to_content]
         return result_documents
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None):
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048):
         """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama.
         
         Args:
@@ -991,6 +991,8 @@ class RAGService:
             use_hybrid_search: Whether to use hybrid BM25 + semantic search
             model: Model name to use
             conversation_summary: Summary of earlier conversation for context
+            temperature: Temperature for LLM response generation (0.0 to 1.0)
+            max_tokens: Maximum number of tokens to generate
         """
         model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
         history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
@@ -1022,7 +1024,7 @@ class RAGService:
         llm_messages.append({"role": "system", "content": system_prompt})
         llm_messages.append({"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"})
         
-        async for chunk in stream_ollama(llm_messages, model=model_name):
+        async for chunk in stream_ollama(llm_messages, model=model_name, temperature=temperature, max_tokens=max_tokens):
             yield chunk
 
 
@@ -1083,16 +1085,35 @@ class CrewAIRAGOrchestrator:
                 data = resp.json()
                 params = data.get('model_info', '')
                 
+                # Security: Use JSON parsing instead of ast.literal_eval
                 if isinstance(params, str):
-                    import ast
-                    params = ast.literal_eval(params)
+                    import json
+                    try:
+                        params = json.loads(params)
+                    except json.JSONDecodeError:
+                        # If JSON parsing fails, try ast.literal_eval as fallback
+                        # ast.literal_eval is safe for literal structures only
+                        import ast
+                        try:
+                            params = ast.literal_eval(params)
+                        except (ValueError, SyntaxError) as e:
+                            logger.warning(f"Failed to parse model_info: {e}")
+                            return 4096
+                
+                if not isinstance(params, dict):
+                    return 4096
                 
                 for key, value in params.items():
                     if key.endswith("context_length"):
-                        return int(value)
+                        try:
+                            return int(value)
+                        except (ValueError, TypeError):
+                            logger.warning(f"Invalid context_length value: {value}")
+                            return 4096
                 
                 return 4096
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error getting context length: {e}")
             return 4096
 
     async def _generate_summary(self, text: str, system_prompt: str) -> str:

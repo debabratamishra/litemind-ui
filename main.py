@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from app.backend.api import chat as chat_api
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
@@ -32,21 +33,19 @@ from app.services.vllm_service import vllm_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
 from sentence_transformers import SentenceTransformer
-
-# Import API routers
-from app.backend.api import chat as chat_api
+from app.backend.api.security_utils import sanitize_filename, validate_file_size
 
 try:
     import torch
 except ImportError:
     torch = None
 
-# Configure logging
+# Configure logging early so lifespan hooks can use logger
 try:
     from logging_config import get_logger, setup_logging
     setup_logging()
     logger = get_logger(__name__)
-except ImportError:
+except Exception:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
@@ -65,6 +64,7 @@ DEFAULT_RAG_CONFIG = {
 }
 
 rag_service = None
+
 
 # Request/Response Models
 class ChatRequestEnhanced(BaseModel):
@@ -455,15 +455,58 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
     results = []
     saved_paths = []
     
+    # Validate number of files
+    if len(files) > 50:
+        raise HTTPException(status_code=400, detail="Too many files. Maximum 50 files per upload.")
+    
     # Save files and check for duplicates
     for up in files:
-        # Save file first
-        dest = UPLOAD_FOLDER / up.filename
+        try:
+            # Validate file size
+            await validate_file_size(up)
+            
+            # Sanitize filename to prevent path traversal
+            safe_filename = sanitize_filename(up.filename)
+        except ValueError as e:
+            results.append({
+                "filename": up.filename,
+                "status": "error",
+                "message": f"Invalid filename: {str(e)}",
+                "chunks_created": 0
+            })
+            continue
+        except HTTPException as e:
+            results.append({
+                "filename": up.filename,
+                "status": "error",
+                "message": str(getattr(e, "detail", e)),
+                "chunks_created": 0
+            })
+            continue
+        
+        # Save file with sanitized name
+        dest = UPLOAD_FOLDER / safe_filename
+        
+        # Additional security check: ensure dest is within UPLOAD_FOLDER
+        try:
+            dest_resolved = dest.resolve()
+            upload_resolved = UPLOAD_FOLDER.resolve()
+            if not str(dest_resolved).startswith(str(upload_resolved)):
+                raise ValueError("Path traversal attempt detected")
+        except (ValueError, OSError, RuntimeError) as e:
+            results.append({
+                "filename": up.filename,
+                "status": "error",
+                "message": f"Security error: {str(e)}",
+                "chunks_created": 0
+            })
+            continue
+        
         with open(dest, "wb") as f:
             f.write(await up.read())
         
         # Check for duplicates using the saved file path
-        is_duplicate, reason = rag_service._is_file_already_processed(str(dest), up.filename)
+        is_duplicate, reason = rag_service._is_file_already_processed(str(dest), safe_filename)
         
         if is_duplicate:
             dest.unlink(missing_ok=True)
@@ -531,13 +574,39 @@ async def check_file_duplicates(files: List[UploadFile] = File(...)):
         results = []
         
         for up in files:
+            try:
+                # Sanitize filename to prevent path traversal
+                safe_filename = sanitize_filename(up.filename)
+            except ValueError as e:
+                results.append({
+                    "filename": up.filename,
+                    "is_duplicate": False,
+                    "reason": f"Invalid filename: {str(e)}"
+                })
+                continue
+            
             # Save file temporarily to calculate hash
-            temp_path = UPLOAD_FOLDER / f"temp_{up.filename}"
+            temp_path = UPLOAD_FOLDER / f"temp_{safe_filename}"
+            
+            # Security check: ensure temp_path is within UPLOAD_FOLDER
+            try:
+                temp_resolved = temp_path.resolve()
+                upload_resolved = UPLOAD_FOLDER.resolve()
+                if not str(temp_resolved).startswith(str(upload_resolved)):
+                    raise ValueError("Path traversal attempt detected")
+            except (ValueError, OSError, RuntimeError) as e:
+                results.append({
+                    "filename": up.filename,
+                    "is_duplicate": False,
+                    "reason": f"Security error: {str(e)}"
+                })
+                continue
+            
             try:
                 with open(temp_path, "wb") as f:
                     f.write(await up.read())
                 
-                is_duplicate, reason = rag_service._is_file_already_processed(str(temp_path), up.filename)
+                is_duplicate, reason = rag_service._is_file_already_processed(str(temp_path), safe_filename)
                 
                 results.append({
                     "filename": up.filename,
@@ -907,7 +976,8 @@ def run():
         log_level="info"
     )
     server = uvicorn.Server(config)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     stop_event = asyncio.Event()
 
     def handle_exit(*_args):

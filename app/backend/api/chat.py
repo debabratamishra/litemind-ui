@@ -147,7 +147,8 @@ async def _handle_vllm_chat(request: ChatRequestEnhanced) -> ChatResponse:
     
     response_text = ""
     async for chunk in vllm_service.stream_vllm_chat(
-        messages=messages, model=request.model, temperature=request.temperature
+        messages=messages, model=request.model, temperature=request.temperature,
+        max_tokens=request.max_tokens
     ):
         response_text += chunk
     
@@ -160,7 +161,7 @@ async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
     messages = _build_messages_with_history(request)
     
     response_text = ""
-    async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature):
+    async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature, max_tokens=request.max_tokens):
         response_text += chunk
     
     return ChatResponse(response=response_text, model=request.model)
@@ -182,7 +183,8 @@ async def _stream_vllm_chat(request: ChatRequestEnhanced):
     messages = _build_messages_with_history(request)
     
     async for chunk in vllm_service.stream_vllm_chat(
-        messages=messages, model=request.model, temperature=request.temperature
+        messages=messages, model=request.model, temperature=request.temperature,
+        max_tokens=request.max_tokens
     ):
         yield chunk
 
@@ -192,7 +194,7 @@ async def _stream_ollama_chat(request: ChatRequestEnhanced):
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
-    async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature):
+    async for chunk in stream_ollama(messages, model=request.model, temperature=request.temperature, max_tokens=request.max_tokens):
         yield chunk
 
 

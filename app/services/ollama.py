@@ -41,7 +41,7 @@ def get_ollama_url():
         return url
 
 
-async def stream_ollama(messages, model: str = "gemma3:1b", temperature: float = 0.7):
+async def stream_ollama(messages, model: str = "gemma3:1b", temperature: float = 0.7, max_tokens: int = 2048):
     """Stream markdown text from Ollama.
 
     Parameters
@@ -52,6 +52,8 @@ async def stream_ollama(messages, model: str = "gemma3:1b", temperature: float =
         Ollama model name (e.g. "llama3", "gemma3:1b").
     temperature : float
         Sampling temperature.
+    max_tokens : int
+        Maximum number of tokens to generate.
 
     Yields
     ------
@@ -65,7 +67,7 @@ async def stream_ollama(messages, model: str = "gemma3:1b", temperature: float =
         "model": model,
         "messages": messages,
         "stream": True,
-        "options": {"temperature": temperature},
+        "options": {"temperature": temperature, "num_predict": max_tokens},
     }
 
     for attempt in range(1, _MAX_RETRIES + 1):

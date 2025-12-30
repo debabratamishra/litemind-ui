@@ -8,10 +8,10 @@ from typing import Dict, Optional, Any, List
 from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text
 from ..components.streaming_handler import streaming_handler
-from ..components.tts_player import is_tts_available, render_tts_button
+from ..components.conversation_sidebar import get_rag_sidebar
 from ..services.backend_service import backend_service
 from ..services.rag_service import rag_service
-from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS, FASTAPI_URL
+from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS
 from ..utils.memory_manager import RAGMemoryManager
 
 logger = logging.getLogger(__name__)
@@ -23,19 +23,20 @@ class RAGPage:
     def __init__(self):
         self.backend_available = st.session_state.get("backend_available", False)
         self.memory_manager = RAGMemoryManager()
+        self.conversation_sidebar = get_rag_sidebar()
         self._initialize_session_state()
         
     def render(self):
         """Render the complete RAG page."""
         if not self.backend_available:
-            st.info("📡 Enhanced RAG functionality requires the FastAPI backend. Please start the backend server.")
+            st.info("Enhanced RAG functionality requires the FastAPI backend. Please start the backend server.")
             return
         
         # Check if realtime voice mode is active
         realtime_active = st.session_state.get("realtime_voice_mode_rag", False)
         
         if not realtime_active:
-            st.title("📚 RAG Interface")
+            st.title("RAG Interface")
             
             self._initialize_session_state()
             
@@ -72,8 +73,17 @@ class RAGPage:
             "use_hybrid_search": False,
         })
         
+        # Initialize temperature for RAG
+        st.session_state.setdefault("rag_temperature", 0.7)
+        
+        # Initialize max_tokens for RAG
+        st.session_state.setdefault("rag_max_tokens", 2048)
+        
         # Initialize memory-related session state
         st.session_state.setdefault("rag_memory_enabled", True)
+        
+        # Initialize conversation history enabled state
+        st.session_state.setdefault("rag_history_enabled", True)
     
     def _render_memory_indicator(self, stats):
         """Render a visual memory usage indicator."""
@@ -141,7 +151,7 @@ class RAGPage:
         )
         
         # Upload and process files
-        if uploaded_files and st.button("📤 Upload & Process", type="primary", 
+        if uploaded_files and st.button("Upload & Process", type="primary", 
                                        disabled=not st.session_state.config_saved):
             self._process_uploaded_files(uploaded_files)
     
@@ -151,10 +161,10 @@ class RAGPage:
         if rag_status:
             if rag_status["status"] == "ready":
                 if rag_status.get("uploaded_files", 0) > 0:
-                    st.info(f"📊 Current Knowledge Base: {rag_status['uploaded_files']} files, "
+                    st.info(f"Current Knowledge Base: {rag_status['uploaded_files']} files, "
                            f"{rag_status['indexed_chunks']} chunks indexed")
                 else:
-                    st.info("📭 Knowledge base is empty. Upload documents to get started.")
+                    st.info("Knowledge base is empty. Upload documents to get started.")
             else:
                 st.warning(f"⚠️ System Status: {rag_status['status']}")
         else:
@@ -201,7 +211,7 @@ class RAGPage:
             st.success("✅ Enhanced processing completed!")
             self._display_upload_results(results)
             st.session_state.rag_messages.clear()
-            st.info("💡 Chat history cleared to reflect new knowledge base")
+            st.info("Chat history cleared to reflect new knowledge base")
             if duplicates:
                 st.info("Skipped duplicates:\\n- " + "\\n- ".join(d.name for d in duplicates))
             st.rerun()
@@ -369,6 +379,10 @@ class RAGPage:
         # Add user message
         st.session_state.rag_messages.append({"role": "user", "content": query})
         
+        # Save user message to conversation history if enabled
+        if st.session_state.get("rag_history_enabled", True):
+            self.conversation_sidebar.save_message("user", query)
+        
         with st.chat_message("user"):
             render_llm_text(query)
         
@@ -376,6 +390,10 @@ class RAGPage:
         config = st.session_state.rag_config
         history = [{"role": msg["role"], "content": msg["content"]} 
                   for msg in st.session_state.rag_messages[:-1]]
+        
+        # Get temperature and max_tokens settings
+        temperature = st.session_state.get("rag_temperature", 0.7)
+        max_tokens = st.session_state.get("rag_max_tokens", 2048)
         
         # Generate response
         with st.chat_message("assistant"):
@@ -396,11 +414,17 @@ class RAGPage:
                     hf_token=st.session_state.get("hf_token") if backend_provider == "vllm" else None,
                     placeholder=out,
                     conversation_summary=conversation_summary,
-                    session_id=self.memory_manager.session_id
+                    session_id=self.memory_manager.session_id,
+                    temperature=temperature,
+                    max_tokens=max_tokens
                 )
 
         if response_text:
             st.session_state.rag_messages.append({"role": "assistant", "content": response_text})
+            
+            # Save assistant message to conversation history if enabled
+            if st.session_state.get("rag_history_enabled", True):
+                self.conversation_sidebar.save_message("assistant", response_text)
             
             # Check if we need to trigger summarization
             self._check_and_trigger_summarization()
@@ -434,15 +458,39 @@ class RAGPage:
     
     def render_sidebar_config(self):
         """Render RAG-specific sidebar configuration."""
+        # Render conversation history sidebar first
+        if st.session_state.get("rag_history_enabled", True):
+            self.conversation_sidebar.render()
+        
         st.sidebar.markdown("---")
-        st.sidebar.subheader("📚 RAG Configuration")
+        st.sidebar.subheader("RAG Configuration")
         
         # Base model selection for RAG (only when Ollama backend is selected)
         self._render_sidebar_base_model_selection()
+        
+        # Temperature slider
+        temperature = st.sidebar.slider(
+            "Temperature:", 
+            0.0, 1.0, 
+            st.session_state.get("rag_temperature", 0.7), 
+            0.1,
+            help="Controls randomness in responses. Lower values = more focused, higher values = more creative"
+        )
+        st.session_state.rag_temperature = temperature
+        
+        # Max tokens slider
+        max_tokens = st.sidebar.slider(
+            "Max Tokens:", 
+            256, 8192, 
+            st.session_state.get("rag_max_tokens", 2048), 
+            256,
+            help="Maximum number of tokens to generate in the response"
+        )
+        st.session_state.rag_max_tokens = max_tokens
 
         # RAG Configuration Section
         self._render_sidebar_rag_config()
-        
+
         # Display status
         self._render_sidebar_status()
         
@@ -568,6 +616,9 @@ class RAGPage:
     
     def _render_sidebar_status(self):
         """Render RAG status in sidebar."""
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("RAG System Status")
+
         rag_status = rag_service.get_status()
         if rag_status:
             if rag_status["status"] == "ready":
@@ -601,7 +652,7 @@ class RAGPage:
     def _render_sidebar_reasoning_config(self):
         """Render reasoning configuration in sidebar."""
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🧠 Reasoning Display")
+        st.sidebar.subheader("Reasoning Display")
         
         st.session_state.show_reasoning_expanded = st.sidebar.checkbox(
             "Expand reasoning by default",
@@ -617,21 +668,6 @@ class RAGPage:
             key="rag_hide_reasoning"
         )
         st.session_state.hide_reasoning = hide_reasoning
-        
-        # TTS Configuration
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("🗣️ Text-to-Speech")
-        
-        tts_available = is_tts_available()
-        if tts_available:
-            st.sidebar.success("✅ TTS service available")
-        else:
-            st.sidebar.warning("⚠️ TTS service not available")
-            if st.sidebar.button("🔄 Retry TTS Connection", key="rag_retry_tts"):
-                # Clear cached status to force re-check
-                if "tts_service_available" in st.session_state:
-                    del st.session_state["tts_service_available"]
-                st.rerun()
     
     def _render_sidebar_system_prompt(self):
         """Render system prompt configuration in sidebar."""
@@ -702,11 +738,19 @@ class RAGPage:
     def _render_sidebar_memory_config(self):
         """Render conversation memory configuration in sidebar."""
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🧠 Conversation Memory")
+        st.sidebar.subheader("Conversation Settings")
+        
+        # History persistence toggle
+        history_enabled = st.sidebar.checkbox(
+            "Save conversation history",
+            value=st.session_state.get("rag_history_enabled", True),
+            help="Persist conversations for later access"
+        )
+        st.session_state.rag_history_enabled = history_enabled
         
         # Memory toggle
         memory_enabled = st.sidebar.checkbox(
-            "Enable conversation memory",
+            "Enable context memory",
             value=st.session_state.get("rag_memory_enabled", True),
             help="Remember context from earlier in the conversation"
         )

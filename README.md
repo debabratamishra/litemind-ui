@@ -35,29 +35,30 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 
 ### 🔧 **Core Capabilities**
 
-- ⚡ **High-Performance API** - Async FastAPI backend for scalable LLM processing
-- 🧠 **Dual Backend Support** - Seamlessly switch between Ollama (local) and vLLM (Hugging Face) backends
-- 📚 **RAG Integration** - Upload documents (PDFs, DOCX, TXT) with enhanced extraction and query with context-aware responses
-- 🔍 **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
-- 🗣️ **Realtime Voice Mode** - WebRTC voice chat with live transcription, barge-in, and streaming speech replies (Chat + RAG)
-- 🔊 **Streaming TTS (Offline)** - Kokoro-based speech with expressive voice presets, sentence-level streaming, and local fallback
-   - 🎙️ **Voice Input** - Whisper-based speech-to-text (transformers or faster-whisper) for one-tap mic input
-- 🔄 **Auto-Failover** - Intelligent backend detection with graceful fallbacks
-- 🤖 **Multi-Model Support** - Access to popular models through vLLM or local Ollama models
+- **High-Performance API** - Async FastAPI backend for scalable LLM processing
+- **Dual Backend Support** - Seamlessly switch between Ollama (local) and vLLM (Hugging Face) backends
+- **RAG Integration** - Upload documents (PDFs, DOCX, TXT) with enhanced extraction and query with context-aware responses
+- **Generation Controls** - Per-chat and per-RAG sliders for temperature and max tokens (hard cut-off) with both Ollama and vLLM backends
+- **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
+- **Realtime Voice Mode** - WebRTC voice chat with live transcription, barge-in, and streaming speech replies (Chat + RAG)
+- **Streaming TTS (Offline)** - Kokoro-based speech with expressive voice presets, sentence-level streaming, and local fallback
+   - **Voice Input** - Whisper-based speech-to-text (transformers or faster-whisper) for one-tap mic input
+- **Auto-Failover** - Intelligent backend detection with graceful fallbacks
+- **Multi-Model Support** - Access to popular models through vLLM or local Ollama models
 
 ### 🛠 **Developer Experience**
 
-- 📖 **Auto-Generated API Docs** - Interactive Swagger UI at `/docs`
-- 🌐 **RESTful Endpoints** - Complete API for chat, RAG, and model management
-- 🐍 **Pure Python Stack** - Easy to extend, customize, and deploy with modular Python files for RAG and LLM interaction
-- 📦 **Dependency Management** - Reproducible installs with [`uv`](https://github.com/astral-sh/uv)
+- **Auto-Generated API Docs** - Interactive Swagger UI at `/docs`
+- **RESTful Endpoints** - Complete API for chat, RAG, and model management
+- **Pure Python Stack** - Easy to extend, customize, and deploy with modular Python files for RAG and LLM interaction
+- **Dependency Management** - Reproducible installs with [`uv`](https://github.com/astral-sh/uv)
 
 ### 🔒 **Production Ready**
 
-- 🏠 **Local-First** - Runs entirely on localhost, no external dependencies
-- 🔐 **CORS Configured** - Proper cross-origin resource sharing setup
-- ⚙️ **Health Monitoring** - Built-in health checks and status monitoring
-- 📊 **Streaming Support** - Real-time response streaming capabilities
+- **Local-First** - Runs entirely on localhost, no external dependencies
+- **CORS Configured** - Proper cross-origin resource sharing setup
+- **Health Monitoring** - Built-in health checks and status monitoring
+- **Streaming Support** - Real-time response streaming capabilities
 
 ---
 
