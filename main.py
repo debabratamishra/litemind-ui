@@ -25,6 +25,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app.backend.api import chat as chat_api
+from app.backend.core.config import DEFAULT_RAG_CONFIG
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
@@ -57,11 +58,7 @@ storage_dir = dynamic_config.get("storage_dir", Config.get_storage_path())
 CONFIG_PATH = Path(storage_dir) / "rag_config.json"
 Config.ensure_directories()
 
-DEFAULT_RAG_CONFIG = {
-    "provider": "huggingface",
-    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
-    "chunk_size": 500,
-}
+# DEFAULT_RAG_CONFIG is now imported from app.backend.core.config
 
 rag_service = None
 

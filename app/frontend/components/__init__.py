@@ -7,6 +7,16 @@ from .conversation_sidebar import (
     get_chat_sidebar, 
     get_rag_sidebar
 )
+from .shared_ui import (
+    GenerationConfig,
+    render_memory_indicator,
+    render_generation_settings,
+    render_reasoning_config,
+    render_memory_config,
+    validate_backend_setup,
+    create_simple_summary,
+    get_generation_config_from_session,
+)
 
 # Legacy imports for backward compatibility
 from .tts_playback import TTSPlayback, InlinePlayButton, check_tts_available
@@ -23,6 +33,15 @@ __all__ = [
     'ConversationHistorySidebar',
     'get_chat_sidebar',
     'get_rag_sidebar',
+    # Shared UI components
+    'GenerationConfig',
+    'render_memory_indicator',
+    'render_generation_settings',
+    'render_reasoning_config',
+    'render_memory_config',
+    'validate_backend_setup',
+    'create_simple_summary',
+    'get_generation_config_from_session',
     # Legacy (deprecated)
     'TTSPlayback',
     'InlinePlayButton',
