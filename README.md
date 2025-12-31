@@ -42,7 +42,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 - **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
 - **Realtime Voice Mode** - WebRTC voice chat with live transcription, barge-in, and streaming speech replies (Chat + RAG)
 - **Streaming TTS (Offline)** - Kokoro-based speech with expressive voice presets, sentence-level streaming, and local fallback
-   - **Voice Input** - Whisper-based speech-to-text (transformers or faster-whisper) for one-tap mic input
+   - **Voice Input** - Whisper-based speech-to-text (using transformers pipeline) for one-tap mic input
 - **Auto-Failover** - Intelligent backend detection with graceful fallbacks
 - **Multi-Model Support** - Access to popular models through vLLM or local Ollama models
 
@@ -268,7 +268,7 @@ mkdir -p uploads .streamlit
 Hold full voice conversations in Chat or RAG with live transcription and streaming replies.
 
 - Built on `streamlit-webrtc` with Pipecat Silero VAD (fallback to `webrtcvad`)
-- Uses Whisper STT (optionally `STT_BACKEND=faster-whisper` for lower latency)
+- Uses Whisper STT via transformers pipeline for accurate transcription
 - Streams Kokoro TTS audio sentence-by-sentence with barge-in support
 - Works in both Chat and RAG tabs with separate session memory
 

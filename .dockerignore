@@ -74,3 +74,30 @@ install.sh
 .env.*.local
 .streamlit/secrets.toml
 config.local.*
+
+# Virtual environments (IMPORTANT - saves gigabytes)
+.venv/
+venv/
+env/
+# Note: .python-version is NOT excluded as it's needed by uv sync
+
+# Logs
+logs/
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Large cache directories
+*.pyc
+__pycache__/
+.mypy_cache/
+.ruff_cache/

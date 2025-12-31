@@ -1,5 +1,5 @@
 # Multi-stage build for LiteMindUI FastAPI Backend
-FROM python:3.12-slim as base
+FROM python:3.12-slim AS base
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -28,7 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     espeak \
     espeak-ng \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Install uv (fast Python package manager)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
@@ -38,7 +39,7 @@ ENV UV_LINK_MODE=copy
 
 # Create app directory
 WORKDIR /app
-
+ 
 # Copy pyproject.toml, lockfile, and .python-version first for better caching
 COPY pyproject.toml uv.lock .python-version ./
 

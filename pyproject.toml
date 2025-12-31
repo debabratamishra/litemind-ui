@@ -53,16 +53,16 @@ backend = [
     
     # Web Search
     "crewai",
-    "google-search-results",
+    # Note: google-search-results removed - SerpAPI is called via httpx REST API directly
     
     # Text-to-Speech
-    "edge-tts",
+    # Note: edge-tts removed - TTS uses kokoro (primary) or pyttsx3 (fallback)
     "pyttsx3",
     "kokoro",
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     
-    # Speech-to-Text
-    "faster-whisper",
+    # Speech-to-Text (using transformers Whisper pipeline)
+    # Note: faster-whisper removed - using transformers + Whisper for simpler stack
     # Audio processing for STT
     "librosa",
     "soundfile",
@@ -146,16 +146,16 @@ backend = [
     
     # Web Search
     "crewai",
-    "google-search-results",
+    # Note: google-search-results removed - SerpAPI is called via httpx REST API directly
     
     # Text-to-Speech
-    "edge-tts",
+    # Note: edge-tts removed - TTS uses kokoro (primary) or pyttsx3 (fallback)
     "pyttsx3",
     "kokoro",
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     
-    # Speech-to-Text
-    "faster-whisper",
+    # Speech-to-Text (using transformers Whisper pipeline)
+    # Note: faster-whisper removed - using transformers + Whisper for simpler stack
     # Audio processing for STT
     "librosa",
     "soundfile",
