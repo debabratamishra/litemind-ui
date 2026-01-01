@@ -784,7 +784,10 @@ class VLLMService:
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 512
+        max_tokens: int = 512,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0
     ) -> AsyncGenerator[str, None]:
         """Stream chat completion from vLLM server."""
 
@@ -810,6 +813,9 @@ class VLLMService:
                 "stream": True,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "top_p": top_p,
+                "frequency_penalty": frequency_penalty,
+                "repetition_penalty": repetition_penalty,
             }
 
             logger.info(f"Sending request to vLLM at: {url_chat}")
@@ -844,6 +850,9 @@ class VLLMService:
                         "stream": True,
                         "temperature": temperature,
                         "max_tokens": max_tokens,
+                        "top_p": top_p,
+                        "frequency_penalty": frequency_penalty,
+                        "repetition_penalty": repetition_penalty,
                     }
                     logger.warning("/chat/completions returned 404. Falling back to /completions.")
                     logger.info(f"Sending request to vLLM at: {url_cmp}")

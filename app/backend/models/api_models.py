@@ -16,6 +16,9 @@ class ChatRequestEnhanced(BaseModel):
     model: Optional[str] = "default"
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2048  # Maximum tokens for LLM response generation
+    top_p: Optional[float] = 0.9  # Nucleus sampling parameter (0.0 to 1.0)
+    frequency_penalty: Optional[float] = 0.0  # Penalize frequent tokens (-2.0 to 2.0)
+    repetition_penalty: Optional[float] = 1.0  # Penalize repeated tokens (0.0 to 2.0)
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
     use_web_search: Optional[bool] = False
@@ -37,6 +40,9 @@ class RAGQueryRequestEnhanced(BaseModel):
     hf_token: Optional[str] = None
     temperature: Optional[float] = 0.7  # Temperature for LLM response generation
     max_tokens: Optional[int] = 2048  # Maximum tokens for LLM response generation
+    top_p: Optional[float] = 0.9  # Nucleus sampling parameter (0.0 to 1.0)
+    frequency_penalty: Optional[float] = 0.0  # Penalize frequent tokens (-2.0 to 2.0)
+    repetition_penalty: Optional[float] = 1.0  # Penalize repeated tokens (0.0 to 2.0)
     # Conversation memory fields
     session_id: Optional[str] = None  # Session ID for memory tracking
     conversation_summary: Optional[str] = None  # Summary of older messages

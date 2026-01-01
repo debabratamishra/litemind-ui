@@ -22,6 +22,9 @@ class StreamingHandler:
         model: str,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         placeholder: Optional[Any] = None,
@@ -38,6 +41,9 @@ class StreamingHandler:
             model: Model name
             temperature: Temperature for generation
             max_tokens: Maximum tokens to generate
+            top_p: Nucleus sampling parameter (0.0 to 1.0)
+            frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
+            repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
             backend: Backend to use (ollama/vllm)
             hf_token: HuggingFace token for vLLM
             placeholder: Streamlit placeholder for UI updates
@@ -57,6 +63,9 @@ class StreamingHandler:
                     model=model,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    repetition_penalty=repetition_penalty,
                     conversation_history=conversation_history,
                     conversation_summary=conversation_summary
                 )
@@ -67,6 +76,9 @@ class StreamingHandler:
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                repetition_penalty=repetition_penalty,
                 backend=backend,
                 hf_token=hf_token,
                 conversation_history=conversation_history,
@@ -103,7 +115,10 @@ class StreamingHandler:
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2048
+        max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0
     ) -> Optional[str]:
         """Stream a RAG response with reasoning segregation and conversation memory.
         
@@ -123,6 +138,9 @@ class StreamingHandler:
             session_id: Session identifier for memory tracking
             temperature: Temperature for LLM response generation
             max_tokens: Maximum tokens to generate
+            top_p: Nucleus sampling parameter (0.0 to 1.0)
+            frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
+            repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
         """
         
         try:
@@ -139,7 +157,10 @@ class StreamingHandler:
                 conversation_summary=conversation_summary,
                 session_id=session_id,
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                repetition_penalty=repetition_penalty
             )
             
             return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)
@@ -161,6 +182,9 @@ class StreamingHandler:
         model: str,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         placeholder: Optional[Any] = None,
@@ -180,6 +204,9 @@ class StreamingHandler:
                     model=model,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    repetition_penalty=repetition_penalty,
                     conversation_history=conversation_history,
                     conversation_summary=conversation_summary
                 )
@@ -190,6 +217,9 @@ class StreamingHandler:
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                repetition_penalty=repetition_penalty,
                 backend=backend,
                 hf_token=hf_token,
                 conversation_history=conversation_history,

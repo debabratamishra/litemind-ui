@@ -980,7 +980,7 @@ class RAGService:
         result_documents = [id_to_content[i] for i in top_text_ids if i in id_to_content]
         return result_documents
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048):
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048, top_p: float = 0.9, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0):
         """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama.
         
         Args:
@@ -993,6 +993,9 @@ class RAGService:
             conversation_summary: Summary of earlier conversation for context
             temperature: Temperature for LLM response generation (0.0 to 1.0)
             max_tokens: Maximum number of tokens to generate
+            top_p: Nucleus sampling parameter (0.0 to 1.0)
+            frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
+            repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
         """
         model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
         history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
@@ -1024,7 +1027,15 @@ class RAGService:
         llm_messages.append({"role": "system", "content": system_prompt})
         llm_messages.append({"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"})
         
-        async for chunk in stream_ollama(llm_messages, model=model_name, temperature=temperature, max_tokens=max_tokens):
+        async for chunk in stream_ollama(
+            llm_messages, 
+            model=model_name, 
+            temperature=temperature, 
+            max_tokens=max_tokens,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            repetition_penalty=repetition_penalty
+        ):
             yield chunk
 
 

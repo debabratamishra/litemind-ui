@@ -3,12 +3,20 @@ RAG page implementation with conversation memory support.
 """
 import logging
 import streamlit as st
-from typing import Dict, Optional, Any, List
+from typing import Dict, Any, List
 
 from ..components.voice_input import get_voice_input
 from ..components.text_renderer import render_llm_text
 from ..components.streaming_handler import streaming_handler
 from ..components.conversation_sidebar import get_rag_sidebar
+from ..components.shared_ui import (
+    render_memory_indicator,
+    render_generation_settings,
+    render_reasoning_config,
+    render_memory_config,
+    validate_backend_setup,
+    create_simple_summary,
+)
 from ..services.backend_service import backend_service
 from ..services.rag_service import rag_service
 from ..config import DEFAULT_RAG_SYSTEM_PROMPT, SUPPORTED_EXTENSIONS
@@ -87,23 +95,7 @@ class RAGPage:
     
     def _render_memory_indicator(self, stats):
         """Render a visual memory usage indicator."""
-        # Choose color based on usage
-        if stats.usage_percentage < 50:
-            color = "#4CAF50"  # green
-        elif stats.usage_percentage < 75:
-            color = "#FF9800"  # orange
-        else:
-            color = "#f44336"  # red
-        
-        summary_indicator = "📝" if stats.has_summary else ""
-        
-        st.markdown(
-            f"""<div style="font-size: 0.75em; color: #888; padding: 4px 0;">
-            <span style="color: {color};">●</span> 
-            Context: {stats.usage_percentage:.0f}% ({stats.total_messages} messages) {summary_indicator}
-            </div>""",
-            unsafe_allow_html=True
-        )
+        render_memory_indicator(stats)
     
     def _render_system_prompt_config(self):
         """Render system prompt configuration in main page."""
@@ -360,15 +352,9 @@ class RAGPage:
     def _process_rag_query(self, query: str):
         """Process RAG query and generate response with conversation memory."""
         backend_provider = st.session_state.get("current_backend", "ollama")
-        is_docker = st.session_state.get("is_docker_deployment", False)
         
-        # Validate setup - prevent vLLM usage in Docker
-        if backend_provider == "vllm" and is_docker:
-            st.error("❌ vLLM is not supported with Docker installation yet. Please use Ollama backend.")
-            return
-        
-        if backend_provider == "vllm" and not st.session_state.get("vllm_model"):
-            st.error("❌ Please configure and load a vLLM model first")
+        # Validate setup using shared function
+        if not validate_backend_setup(backend_provider):
             return
         
         # Get conversation context BEFORE adding the new message
@@ -394,6 +380,9 @@ class RAGPage:
         # Get temperature and max_tokens settings
         temperature = st.session_state.get("rag_temperature", 0.7)
         max_tokens = st.session_state.get("rag_max_tokens", 2048)
+        top_p = st.session_state.get("rag_top_p", 0.9)
+        frequency_penalty = st.session_state.get("rag_frequency_penalty", 0.0)
+        repetition_penalty = st.session_state.get("rag_repetition_penalty", 1.0)
         
         # Generate response
         with st.chat_message("assistant"):
@@ -416,7 +405,10 @@ class RAGPage:
                     conversation_summary=conversation_summary,
                     session_id=self.memory_manager.session_id,
                     temperature=temperature,
-                    max_tokens=max_tokens
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    repetition_penalty=repetition_penalty
                 )
 
         if response_text:
@@ -468,25 +460,8 @@ class RAGPage:
         # Base model selection for RAG (only when Ollama backend is selected)
         self._render_sidebar_base_model_selection()
         
-        # Temperature slider
-        temperature = st.sidebar.slider(
-            "Temperature:", 
-            0.0, 1.0, 
-            st.session_state.get("rag_temperature", 0.7), 
-            0.1,
-            help="Controls randomness in responses. Lower values = more focused, higher values = more creative"
-        )
-        st.session_state.rag_temperature = temperature
-        
-        # Max tokens slider
-        max_tokens = st.sidebar.slider(
-            "Max Tokens:", 
-            256, 8192, 
-            st.session_state.get("rag_max_tokens", 2048), 
-            256,
-            help="Maximum number of tokens to generate in the response"
-        )
-        st.session_state.rag_max_tokens = max_tokens
+        # Generation settings using shared component
+        render_generation_settings("rag", expanded=True)
 
         # RAG Configuration Section
         self._render_sidebar_rag_config()
@@ -494,11 +469,11 @@ class RAGPage:
         # Display status
         self._render_sidebar_status()
         
-        # Reasoning settings
-        self._render_sidebar_reasoning_config()
+        # Reasoning settings using shared component
+        render_reasoning_config(key_prefix="rag")
         
-        # Memory configuration
-        self._render_sidebar_memory_config()
+        # Memory configuration using shared component
+        render_memory_config(self.memory_manager, "rag", "history_enabled", "memory_enabled")
         
         # System management
         self._render_sidebar_system_management()
@@ -649,26 +624,6 @@ class RAGPage:
                 key="selected_rag_model"
             )
     
-    def _render_sidebar_reasoning_config(self):
-        """Render reasoning configuration in sidebar."""
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Reasoning Display")
-        
-        st.session_state.show_reasoning_expanded = st.sidebar.checkbox(
-            "Expand reasoning by default",
-            value=st.session_state.get("show_reasoning_expanded", False),
-            help="Show model reasoning sections expanded by default",
-            key="rag_reasoning_expanded"
-        )
-        
-        hide_reasoning = st.sidebar.checkbox(
-            "Hide reasoning completely",
-            value=st.session_state.get("hide_reasoning", False),
-            help="Completely hide reasoning sections from responses",
-            key="rag_hide_reasoning"
-        )
-        st.session_state.hide_reasoning = hide_reasoning
-    
     def _render_sidebar_system_prompt(self):
         """Render system prompt configuration in sidebar."""
         st.sidebar.markdown("---")
@@ -735,47 +690,6 @@ class RAGPage:
                 st.error(f"❌ {message}")
                 st.session_state.show_reset_confirm = False
     
-    def _render_sidebar_memory_config(self):
-        """Render conversation memory configuration in sidebar."""
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Conversation Settings")
-        
-        # History persistence toggle
-        history_enabled = st.sidebar.checkbox(
-            "Save conversation history",
-            value=st.session_state.get("rag_history_enabled", True),
-            help="Persist conversations for later access"
-        )
-        st.session_state.rag_history_enabled = history_enabled
-        
-        # Memory toggle
-        memory_enabled = st.sidebar.checkbox(
-            "Enable context memory",
-            value=st.session_state.get("rag_memory_enabled", True),
-            help="Remember context from earlier in the conversation"
-        )
-        st.session_state.rag_memory_enabled = memory_enabled
-        
-        if memory_enabled:
-            # Display memory stats
-            stats = self.memory_manager.get_stats()
-            
-            # Progress bar for context usage
-            usage_label = f"Context: {stats.usage_percentage:.0f}%"
-            st.sidebar.progress(min(stats.usage_percentage / 100, 1.0), text=usage_label)
-            
-            col1, col2 = st.sidebar.columns(2)
-            with col1:
-                st.sidebar.caption(f"📝 {stats.total_messages} msgs")
-            with col2:
-                st.sidebar.caption(f"🎯 ~{stats.total_tokens} tokens")
-            
-            if stats.has_summary:
-                st.sidebar.success("📋 Conversation summarized", icon="✅")
-            
-            if stats.needs_summarization:
-                st.sidebar.warning("Context near limit - will summarize soon")
-    
     def _check_and_trigger_summarization(self):
         """Check if summarization is needed and trigger it."""
         if not st.session_state.get("rag_memory_enabled", True):
@@ -790,48 +704,14 @@ class RAGPage:
             messages_to_summarize = self.memory_manager.prune_for_summarization()
             
             if messages_to_summarize:
-                # Create a simple summary
-                simple_summary = self._create_simple_summary(messages_to_summarize)
+                # Create a simple summary using shared function
+                simple_summary = create_simple_summary(
+                    messages_to_summarize,
+                    self.memory_manager.summary
+                )
                 
                 self.memory_manager.set_summary(simple_summary)
                 logger.info(f"Created RAG summary with {len(simple_summary)} characters")
-    
-    def _create_simple_summary(self, messages: List[Dict[str, str]]) -> str:
-        """
-        Create a simple extractive summary of messages for RAG context.
-        """
-        existing_summary = self.memory_manager.summary
-        
-        # Extract key points from messages
-        summary_parts = []
-        
-        if existing_summary:
-            summary_parts.append(f"Previous context: {existing_summary[:500]}")
-        
-        # Summarize user queries and key assistant responses
-        for msg in messages:
-            content = msg.get("content", "")
-            role = msg.get("role", "")
-            
-            # Truncate long messages
-            if len(content) > 200:
-                content = content[:200] + "..."
-            
-            if role == "user":
-                summary_parts.append(f"User asked about: {content}")
-            elif role == "assistant":
-                # Take first sentence or first 100 chars
-                first_sentence = content.split('.')[0] if '.' in content else content[:100]
-                summary_parts.append(f"Assistant explained: {first_sentence}")
-        
-        # Combine and limit total length
-        combined = " | ".join(summary_parts)
-        
-        # Limit to ~2000 characters (roughly 500 tokens)
-        if len(combined) > 2000:
-            combined = combined[:2000] + "..."
-        
-        return combined
 
 
 def render_rag_page():

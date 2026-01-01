@@ -25,6 +25,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app.backend.api import chat as chat_api
+from app.backend.core.config import DEFAULT_RAG_CONFIG
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
@@ -57,11 +58,7 @@ storage_dir = dynamic_config.get("storage_dir", Config.get_storage_path())
 CONFIG_PATH = Path(storage_dir) / "rag_config.json"
 Config.ensure_directories()
 
-DEFAULT_RAG_CONFIG = {
-    "provider": "huggingface",
-    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
-    "chunk_size": 500,
-}
+# DEFAULT_RAG_CONFIG is now imported from app.backend.core.config
 
 rag_service = None
 
@@ -85,6 +82,15 @@ class RAGQueryRequestEnhanced(BaseModel):
     use_hybrid_search: Optional[bool] = False
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
+    # Advanced LLM generation parameters
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 2048
+    top_p: Optional[float] = 0.9
+    frequency_penalty: Optional[float] = 0.0
+    repetition_penalty: Optional[float] = 1.0
+    # Conversation memory fields
+    session_id: Optional[str] = None
+    conversation_summary: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -685,7 +691,15 @@ async def rag_query(request: RAGQueryRequestEnhanced):
 
             # Stream response
             async def event_generator():
-                async for chunk in vllm_service.stream_vllm_chat(messages=messages, model=request.model):
+                async for chunk in vllm_service.stream_vllm_chat(
+                    messages=messages, 
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    top_p=request.top_p,
+                    frequency_penalty=request.frequency_penalty,
+                    repetition_penalty=request.repetition_penalty
+                ):
                     yield chunk + "\n"
 
             return StreamingResponse(event_generator(), media_type="text/plain")
@@ -715,8 +729,18 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                     # Use regular RAG
                     logger.info("Using standard RAG without multi-agent orchestration")
                     async for chunk in rag_service.query(
-                        request.query, request.system_prompt, request.messages,
-                        request.n_results, request.use_hybrid_search, request.model
+                        request.query, 
+                        request.system_prompt, 
+                        request.messages,
+                        request.n_results, 
+                        request.use_hybrid_search, 
+                        request.model,
+                        request.conversation_summary,
+                        request.temperature,
+                        request.max_tokens,
+                        request.top_p,
+                        request.frequency_penalty,
+                        request.repetition_penalty
                     ):
                         yield chunk + "\n"
 

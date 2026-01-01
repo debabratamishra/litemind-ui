@@ -24,6 +24,9 @@ class ChatService:
         model: str = "default", 
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None
@@ -34,7 +37,10 @@ class ChatService:
                 "message": message, 
                 "model": model, 
                 "temperature": temperature,
-                "max_tokens": max_tokens
+                "max_tokens": max_tokens,
+                "top_p": top_p,
+                "frequency_penalty": frequency_penalty,
+                "repetition_penalty": repetition_penalty
             }
             
             # Add conversation history if provided
@@ -64,6 +70,9 @@ class ChatService:
         model: str = "default",
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
@@ -76,6 +85,9 @@ class ChatService:
             "model": model,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_p": top_p,
+            "frequency_penalty": frequency_penalty,
+            "repetition_penalty": repetition_penalty,
             "backend": backend
         }
         
@@ -105,6 +117,9 @@ class ChatService:
         model: str,
         temperature: float,
         max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None
     ) -> str:
@@ -132,7 +147,10 @@ class ChatService:
                 messages, 
                 model=model, 
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                repetition_penalty=repetition_penalty
             ):
                 acc += chunk
             return acc
@@ -145,6 +163,9 @@ class ChatService:
         model: str = "default",
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
         backend: str = "ollama",
         hf_token: Optional[str] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
@@ -157,6 +178,9 @@ class ChatService:
             "model": model,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_p": top_p,
+            "frequency_penalty": frequency_penalty,
+            "repetition_penalty": repetition_penalty,
             "backend": backend,
             "use_web_search": True
         }

@@ -15,6 +15,9 @@ import asyncio
 import httpx
 from dataclasses import dataclass
 
+# Import shared environment detection
+from app.core.environment import environment as env_detector
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,67 +56,13 @@ class HostServiceManager:
     """
     
     def __init__(self):
-        self.is_containerized = self._detect_container_environment()
+        # Use shared environment detection
+        self.is_containerized = env_detector.is_containerized
         self.environment_config = self._build_environment_config()
         self._service_cache: Dict[str, ServiceStatus] = {}
         
         logger.info(f"Host Service Manager initialized - Containerized: {self.is_containerized}")
         logger.info(f"Environment config: {self.environment_config}")
-    
-    def _detect_container_environment(self) -> bool:
-        """
-        Detect if the application is running inside a container.
-        
-        Uses multiple detection methods for reliability:
-        1. Check for /.dockerenv file (Docker-specific)
-        2. Check cgroup information
-        3. Check environment variables
-        4. Check for container-specific mount points
-        
-        Returns:
-            bool: True if running in a container, False otherwise
-        """
-        # Method 1: Check for Docker-specific file
-        if Path("/.dockerenv").exists():
-            logger.info("Container detected via /.dockerenv file")
-            return True
-        
-        # Method 2: Check cgroup information
-        try:
-            with open("/proc/1/cgroup", "r") as f:
-                cgroup_content = f.read()
-                if "docker" in cgroup_content or "containerd" in cgroup_content:
-                    logger.info("Container detected via cgroup information")
-                    return True
-        except (FileNotFoundError, PermissionError):
-            # /proc/1/cgroup might not exist on non-Linux systems
-            pass
-        
-        # Method 3: Check environment variables
-        container_env_vars = [
-            "DOCKER_CONTAINER",
-            "KUBERNETES_SERVICE_HOST",
-            "CONTAINER_NAME"
-        ]
-        
-        for env_var in container_env_vars:
-            if os.getenv(env_var):
-                logger.info(f"Container detected via environment variable: {env_var}")
-                return True
-        
-        # Method 4: Check for container-specific mount points (Linux)
-        if platform.system() == "Linux":
-            try:
-                with open("/proc/mounts", "r") as f:
-                    mounts = f.read()
-                    if "overlay" in mounts or "aufs" in mounts:
-                        logger.info("Container detected via filesystem mounts")
-                        return True
-            except (FileNotFoundError, PermissionError):
-                pass
-        
-        logger.info("Native execution environment detected")
-        return False
     
     def _get_os_specific_cache_paths(self) -> Tuple[Path, Path]:
         """
@@ -122,24 +71,8 @@ class HostServiceManager:
         Returns:
             Tuple[Path, Path]: (huggingface_cache_path, ollama_cache_path)
         """
-        system = platform.system().lower()
-        
-        if system == "darwin":  # macOS
-            hf_cache = Path.home() / ".cache" / "huggingface"
-            ollama_cache = Path.home() / ".ollama"
-        elif system == "linux":
-            hf_cache = Path.home() / ".cache" / "huggingface"
-            ollama_cache = Path.home() / ".ollama"
-        elif system == "windows":
-            hf_cache = Path.home() / ".cache" / "huggingface"
-            ollama_cache = Path.home() / ".ollama"
-        else:
-            # Fallback for unknown systems
-            hf_cache = Path.home() / ".cache" / "huggingface"
-            ollama_cache = Path.home() / ".ollama"
-        
-        logger.info(f"OS-specific cache paths - HF: {hf_cache}, Ollama: {ollama_cache}")
-        return hf_cache, ollama_cache
+        # Use shared environment module for cache paths
+        return env_detector.get_cache_paths()
     
     def _build_environment_config(self) -> EnvironmentConfig:
         """

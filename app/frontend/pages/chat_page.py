@@ -11,6 +11,15 @@ from ..components.streaming_handler import streaming_handler
 from ..components.web_search_toggle import WebSearchToggle
 from ..components.tts_player import render_tts_button
 from ..components.conversation_sidebar import get_chat_sidebar
+from ..components.shared_ui import (
+    render_memory_indicator,
+    render_generation_settings,
+    render_reasoning_config,
+    render_memory_config,
+    validate_backend_setup,
+    create_simple_summary,
+    get_generation_config_from_session,
+)
 from ..services.backend_service import backend_service
 from ..utils.memory_manager import ChatMemoryManager
 
@@ -120,23 +129,7 @@ class ChatPage:
     
     def _render_memory_indicator(self, stats):
         """Render a visual memory usage indicator."""
-        # Choose color based on usage
-        if stats.usage_percentage < 50:
-            color = "#4CAF50"  # green
-        elif stats.usage_percentage < 75:
-            color = "#FF9800"  # orange
-        else:
-            color = "#f44336"  # red
-        
-        summary_indicator = "📝" if stats.has_summary else ""
-        
-        st.markdown(
-            f"""<div style="font-size: 0.75em; color: #888; padding: 4px 0;">
-            <span style="color: {color};">●</span> 
-            Context: {stats.usage_percentage:.0f}% ({stats.total_messages} messages) {summary_indicator}
-            </div>""",
-            unsafe_allow_html=True
-        )
+        render_memory_indicator(stats)
     
     def _display_chat_history(self):
         if st.session_state.chat_messages:
@@ -201,6 +194,9 @@ class ChatPage:
                         model=config["model"],
                         temperature=config["temperature"],
                         max_tokens=config["max_tokens"],
+                        top_p=config["top_p"],
+                        frequency_penalty=config["frequency_penalty"],
+                        repetition_penalty=config["repetition_penalty"],
                         backend=backend_provider,
                         hf_token=config.get("hf_token"),
                         placeholder=out,
@@ -222,6 +218,9 @@ class ChatPage:
                         model=config["model"],
                         temperature=config["temperature"],
                         max_tokens=config["max_tokens"],
+                        top_p=config["top_p"],
+                        frequency_penalty=config["frequency_penalty"],
+                        repetition_penalty=config["repetition_penalty"],
                         backend=backend_provider,
                         hf_token=config.get("hf_token"),
                         placeholder=out,
@@ -254,26 +253,13 @@ class ChatPage:
             # Don't rerun on error - let user try again naturally
     
     def _validate_setup(self, backend_provider: str) -> bool:
-        is_docker = st.session_state.get("is_docker_deployment", False)
-        
-        # Prevent vLLM usage in Docker
-        if backend_provider == "vllm" and is_docker:
-            st.error("❌ vLLM is not supported with Docker installation yet. Please use Ollama backend.")
-            return False
-        
-        if backend_provider == "vllm":
-            vllm_model = st.session_state.get("vllm_model")
-            if not vllm_model:
-                st.error("❌ Please configure and load a vLLM model first")
-                return False
-        return True
+        """Validate backend setup for the current provider."""
+        return validate_backend_setup(backend_provider)
     
     def _get_chat_config(self, backend_provider: str) -> Dict:
-        config = {
-            "temperature": st.session_state.get("chat_temperature", 0.7),
-            "max_tokens": st.session_state.get("chat_max_tokens", 2048),
-            "hf_token": st.session_state.get("hf_token") if backend_provider == "vllm" else None
-        }
+        """Get chat configuration for the current backend."""
+        config = get_generation_config_from_session("chat")
+        config["hf_token"] = st.session_state.get("hf_token") if backend_provider == "vllm" else None
         
         if backend_provider == "vllm":
             config["model"] = st.session_state.get("vllm_model", "no-model")
@@ -321,22 +307,14 @@ class ChatPage:
         else:
             self._render_ollama_model_config()
         
-        # Temperature slider
-        temperature = st.sidebar.slider("Temperature:", 0.0, 1.0, 0.7, 0.1)
-        st.session_state.chat_temperature = temperature
+        # Generation settings using shared component
+        render_generation_settings("chat", expanded=True)
         
-        # Max tokens slider
-        max_tokens = st.sidebar.slider(
-            "Max Tokens:", 
-            256, 8192, 
-            st.session_state.get("chat_max_tokens", 2048), 
-            256,
-            help="Maximum number of tokens to generate in the response"
-        )
-        st.session_state.chat_max_tokens = max_tokens
+        # Reasoning settings using shared component
+        render_reasoning_config()
         
-        # Reasoning settings
-        self._render_reasoning_config()
+        # Memory configuration using shared component
+        render_memory_config(self.memory_manager, "chat", "history_enabled", "memory_enabled")
         
         # Clear chat (clears current session, not history)
         if st.sidebar.button("🗑️ Clear Current Chat", type="secondary"):
@@ -368,67 +346,6 @@ class ChatPage:
             key="selected_chat_model"
         )
     
-    def _render_reasoning_config(self):
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Reasoning Display")
-        
-        st.session_state.show_reasoning_expanded = st.sidebar.checkbox(
-            "Expand reasoning by default",
-            value=st.session_state.get("show_reasoning_expanded", False),
-            help="Show model reasoning sections expanded by default"
-        )
-        
-        hide_reasoning = st.sidebar.checkbox(
-            "Hide reasoning completely",
-            value=st.session_state.get("hide_reasoning", False),
-            help="Completely hide reasoning sections from responses"
-        )
-        st.session_state.hide_reasoning = hide_reasoning
-        
-        # Memory configuration
-        self._render_memory_config()
-    
-    def _render_memory_config(self):
-        """Render conversation memory configuration in sidebar."""
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Conversation Settings")
-        
-        # History persistence toggle
-        history_enabled = st.sidebar.checkbox(
-            "Save conversation history",
-            value=st.session_state.get("chat_history_enabled", True),
-            help="Persist conversations for later access"
-        )
-        st.session_state.chat_history_enabled = history_enabled
-        
-        # Memory toggle
-        memory_enabled = st.sidebar.checkbox(
-            "Enable context memory",
-            value=st.session_state.get("chat_memory_enabled", True),
-            help="Remember context from earlier in the conversation"
-        )
-        st.session_state.chat_memory_enabled = memory_enabled
-        
-        if memory_enabled:
-            # Display memory stats
-            stats = self.memory_manager.get_stats()
-            
-            # Progress bar for context usage
-            usage_label = f"Context: {stats.usage_percentage:.0f}%"
-            st.sidebar.progress(min(stats.usage_percentage / 100, 1.0), text=usage_label)
-            
-            col1, col2 = st.sidebar.columns(2)
-            with col1:
-                st.sidebar.caption(f"📝 {stats.total_messages} msgs")
-            with col2:
-                st.sidebar.caption(f"🎯 ~{stats.total_tokens} tokens")
-            
-            if stats.has_summary:
-                st.sidebar.success("📋 Conversation summarized", icon="✅")
-            
-            if stats.needs_summarization:
-                st.sidebar.warning("Context near limit - will summarize soon")
-    
     def _check_and_trigger_summarization(self):
         """Check if summarization is needed and trigger it."""
         if not st.session_state.get("chat_memory_enabled", True):
@@ -449,50 +366,13 @@ class ChatPage:
                     self.memory_manager.summary
                 )
                 
-                simple_summary = self._create_simple_summary(messages_to_summarize)
+                simple_summary = create_simple_summary(
+                    messages_to_summarize,
+                    self.memory_manager.summary
+                )
                 
                 self.memory_manager.set_summary(simple_summary)
                 logger.info(f"Created summary with {len(simple_summary)} characters")
-    
-    def _create_simple_summary(self, messages: List[Dict[str, str]]) -> str:
-        """
-        Create a simple extractive summary of messages.
-        
-        In production, this would call the LLM for a better summary,
-        but we use a simple approach for immediate functionality.
-        """
-        existing_summary = self.memory_manager.summary
-        
-        # Extract key points from messages
-        summary_parts = []
-        
-        if existing_summary:
-            summary_parts.append(f"Previous context: {existing_summary[:500]}")
-        
-        # Summarize user queries and key assistant responses
-        for msg in messages:
-            content = msg.get("content", "")
-            role = msg.get("role", "")
-            
-            # Truncate long messages
-            if len(content) > 200:
-                content = content[:200] + "..."
-            
-            if role == "user":
-                summary_parts.append(f"User asked about: {content}")
-            elif role == "assistant":
-                # Take first sentence or first 100 chars
-                first_sentence = content.split('.')[0] if '.' in content else content[:100]
-                summary_parts.append(f"Assistant explained: {first_sentence}")
-        
-        # Combine and limit total length
-        combined = " | ".join(summary_parts)
-        
-        # Limit to ~2000 characters (roughly 500 tokens)
-        if len(combined) > 2000:
-            combined = combined[:2000] + "..."
-        
-        return combined
 
 
 def render_chat_page():
