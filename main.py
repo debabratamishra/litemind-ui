@@ -82,6 +82,15 @@ class RAGQueryRequestEnhanced(BaseModel):
     use_hybrid_search: Optional[bool] = False
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
+    # Advanced LLM generation parameters
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 2048
+    top_p: Optional[float] = 0.9
+    frequency_penalty: Optional[float] = 0.0
+    repetition_penalty: Optional[float] = 1.0
+    # Conversation memory fields
+    session_id: Optional[str] = None
+    conversation_summary: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
