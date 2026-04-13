@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import io
 import logging
+import re
 from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Generator
@@ -90,25 +91,81 @@ class EnhancedImageProcessor:
             })
         
         return extracted_content if extracted_content else [self._create_fallback_content(metadata)]
+
+    def _build_ocr_variants(self, img_array: np.ndarray) -> List[np.ndarray]:
+        """Create a small set of OCR-friendly image variants."""
+        variants = [img_array]
+
+        if img_array.ndim == 3:
+            if CV2_AVAILABLE:
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = np.array(Image.fromarray(img_array).convert("L"))
+        else:
+            gray = img_array
+
+        variants.append(gray)
+
+        if CV2_AVAILABLE:
+            denoised = cv2.fastNlMeansDenoising(gray)
+            _, otsu = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            adaptive = cv2.adaptiveThreshold(
+                denoised,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                31,
+                11,
+            )
+            variants.extend([denoised, otsu, adaptive])
+
+            if min(gray.shape[:2]) < 900:
+                variants.append(cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC))
+        elif min(gray.shape[:2]) < 900:
+            upscaled = Image.fromarray(gray).resize(
+                (gray.shape[1] * 2, gray.shape[0] * 2),
+                Image.Resampling.LANCZOS,
+            )
+            variants.append(np.array(upscaled))
+
+        return variants
     
     def _extract_ocr_text(self, img_array: np.ndarray, metadata: dict) -> Optional[dict]:
         """Extract text using OCR."""
         try:
-            ocr_results = self.ocr_reader.readtext(img_array)
+            ocr_results = []
+            for variant in self._build_ocr_variants(img_array):
+                try:
+                    ocr_results.extend(self.ocr_reader.readtext(variant))
+                except Exception as exc:
+                    logger.debug(f"OCR variant failed: {exc}")
             
             if ocr_results:
                 extracted_text = []
                 high_confidence_text = []
+                seen_text = set()
+                confidences = []
                 
-                for (bbox, text, confidence) in ocr_results:
-                    if confidence > 0.3:  # Include lower confidence for more text
-                        extracted_text.append(text)
-                    if confidence > 0.7:  # High confidence text
-                        high_confidence_text.append(text)
+                for (bbox, text, confidence) in sorted(ocr_results, key=lambda item: item[2], reverse=True):
+                    normalized = re.sub(r'\s+', ' ', str(text)).strip()
+                    if not normalized:
+                        continue
+
+                    dedupe_key = normalized.lower()
+                    if dedupe_key in seen_text:
+                        continue
+
+                    if confidence > 0.25:
+                        seen_text.add(dedupe_key)
+                        extracted_text.append(normalized)
+                        confidences.append(float(confidence))
+                    if confidence > 0.7:
+                        high_confidence_text.append(normalized)
                 
                 if extracted_text:
                     all_text = " ".join(extracted_text)
                     high_conf_text = " ".join(high_confidence_text)
+                    average_confidence = sum(confidences) / len(confidences) if confidences else 0.0
                     
                     content = f"""OCR EXTRACTED TEXT from {metadata.get('filename', 'image')}:
                         HIGH CONFIDENCE TEXT: {high_conf_text}
@@ -122,7 +179,8 @@ class EnhancedImageProcessor:
                             **metadata,
                             "content_type": "ocr_text",
                             "text_blocks_count": len(extracted_text),
-                            "high_confidence_blocks": len(high_confidence_text)
+                            "high_confidence_blocks": len(high_confidence_text),
+                            "ocr_average_confidence": round(average_confidence, 4)
                         }
                     }
         except Exception as e:

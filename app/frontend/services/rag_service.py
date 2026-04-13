@@ -179,6 +179,7 @@ class RAGService:
         top_p: float = 0.9,
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
+        is_voice_mode: bool = False
     ) -> requests.Response:
         """Stream a RAG response from the backend with conversation memory support."""
         payload = {
@@ -194,6 +195,7 @@ class RAGService:
             "top_p": top_p,
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
+            "is_voice_mode": is_voice_mode
         }
         
         if backend == "vllm":

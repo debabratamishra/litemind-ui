@@ -73,6 +73,11 @@ MIN_TTS_CHUNK_SIZE = 15  # Reduced for faster first audio (was 30)
 # Greeting message for when realtime voice starts
 REALTIME_GREETING_CHAT = "Good day! How can I help you today?"
 REALTIME_GREETING_RAG = "Good day! Ask me anything about your documents."
+
+# Thread-safe cache for greeting audio (not using Streamlit session state)
+# This avoids ScriptRunContext warnings when caching from background threads
+_greeting_audio_cache = {}
+_greeting_cache_lock = threading.Lock()
 GREETING_CACHE_KEY = "realtime_greeting_audio_cached"
 
 
@@ -407,19 +412,21 @@ def _get_or_cache_greeting_audio(page_key: str = "chat") -> Optional[bytes]:
     Get cached greeting audio or synthesize and cache it.
     
     This pre-caches the greeting audio to eliminate TTS latency on startup.
+    Uses a thread-safe cache to avoid ScriptRunContext warnings from background threads.
     
     Args:
         page_key: The page key ("chat" or "rag") to determine appropriate greeting.
     """
-    cache_key = f"{GREETING_CACHE_KEY}_{page_key}"
+    cache_key = f"greeting_{page_key}"
     greeting_text = _get_realtime_greeting(page_key)
     
-    # Check if we already have cached greeting in session state
-    if cache_key in st.session_state:
-        cached = st.session_state[cache_key]
-        if cached:
-            logger.debug(f"Using cached greeting audio for {page_key}")
-            return cached
+    # Check thread-safe cache first
+    with _greeting_cache_lock:
+        if cache_key in _greeting_audio_cache:
+            cached = _greeting_audio_cache[cache_key]
+            if cached:
+                logger.debug(f"Using cached greeting audio for {page_key}")
+                return cached
     
     # Synthesize greeting audio
     try:
@@ -430,7 +437,9 @@ def _get_or_cache_greeting_audio(page_key: str = "chat") -> Optional[bytes]:
             timeout=30,
         )
         if resp.status_code == 200 and resp.content:
-            st.session_state[cache_key] = resp.content
+            # Store in thread-safe cache
+            with _greeting_cache_lock:
+                _greeting_audio_cache[cache_key] = resp.content
             logger.info(f"Greeting audio cached: {len(resp.content)} bytes")
             return resp.content
         else:
@@ -580,6 +589,16 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     `st.session_state.chat_messages` history for continuity with the Chat page.
     """
     realtime_mode_key = f"realtime_voice_mode_{page_key}"
+    initializing_key = f"realtime_initializing_{page_key}"
+    
+    # Handle first-time initialization with a loading state
+    # This gives the WebRTC component time to load its JavaScript assets
+    if st.session_state.get(initializing_key, False):
+        st.session_state[initializing_key] = False
+        # Show a brief loading message, then auto-refresh to load WebRTC properly
+        st.info("🎤 Starting voice chat... Please wait.")
+        time.sleep(0.5)  # Brief pause to let the page settle
+        st.rerun()
 
     # Check for required packages
     try:
@@ -1037,38 +1056,61 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     # Session state key to track if greeting has been played
     greeting_played_key = f"realtime_greeting_played_{page_key}"
     
-    # Pre-cache greeting audio on page load (runs in background)
-    cache_key = f"{GREETING_CACHE_KEY}_{page_key}"
-    if cache_key not in st.session_state:
-        # Start background thread to cache greeting audio
-        def cache_greeting_async():
-            _get_or_cache_greeting_audio(page_key)
-        
-        threading.Thread(target=cache_greeting_async, daemon=True).start()
+    # Track if this is the first render of the WebRTC component
+    # We defer greeting cache to after WebRTC is initialized to avoid blocking component loading
+    webrtc_initialized_key = f"webrtc_initialized_{page_key}"
     
     col_center = st.columns([1, 2, 1])[1]
     with col_center:
-        webrtc_ctx = webrtc_streamer(
-            key=f"realtime_voice_webrtc_{page_key}",
-            mode=webrtc_mode,
-            audio_processor_factory=ProcessorClass,
-            media_stream_constraints={
-                "audio": {
-                    "echoCancellation": True,
-                    "noiseSuppression": True,
-                    "autoGainControl": True,
-                    "sampleRate": 48000,
+        # Show loading hint for first-time WebRTC initialization
+        if not st.session_state.get(webrtc_initialized_key, False):
+            st.info("🎤 Initializing voice chat... Please wait a moment.")
+        
+        try:
+            webrtc_ctx = webrtc_streamer(
+                key=f"realtime_voice_webrtc_{page_key}",
+                mode=webrtc_mode,
+                audio_processor_factory=ProcessorClass,
+                media_stream_constraints={
+                    "audio": {
+                        "echoCancellation": True,
+                        "noiseSuppression": True,
+                        "autoGainControl": True,
+                        "sampleRate": 48000,
+                    },
+                    "video": False
                 },
-                "video": False
-            },
-            async_processing=False,
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        )
+                async_processing=False,
+                rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+            )
+        except Exception as e:
+            logger.error(f"WebRTC initialization error: {e}")
+            st.error(
+                "Voice chat component failed to load. This can happen on first access due to network latency. "
+                "Please refresh the page to try again."
+            )
+            if st.button("🔄 Refresh Page"):
+                st.rerun()
+            return
         
         with st.expander("Audio Settings", expanded=False):
             backend_info = "Pipecat Silero VAD" if use_pipecat else "webrtcvad"
             st.info(f"Using: {backend_info}")
             st.caption("Audio output is handled by your browser.")
+    
+    # Pre-cache greeting audio AFTER WebRTC component is rendered
+    # This avoids blocking the component loading on first page access
+    # We add a small delay to ensure WebRTC JS assets have time to load
+    cache_key = f"greeting_{page_key}"
+    if not st.session_state.get(webrtc_initialized_key, False):
+        st.session_state[webrtc_initialized_key] = True
+        # Start background thread to cache greeting audio only after first render
+        # Add delay to let WebRTC component assets load first
+        if cache_key not in _greeting_audio_cache:
+            def cache_greeting_async():
+                time.sleep(2.0)  # Wait for WebRTC component to fully initialize
+                _get_or_cache_greeting_audio(page_key)
+            threading.Thread(target=cache_greeting_async, daemon=True).start()
     
     # ========================================================================
     # Play Greeting When Session Starts

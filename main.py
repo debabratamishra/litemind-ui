@@ -88,6 +88,7 @@ class RAGQueryRequestEnhanced(BaseModel):
     top_p: Optional[float] = 0.9
     frequency_penalty: Optional[float] = 0.0
     repetition_penalty: Optional[float] = 1.0
+    is_voice_mode: Optional[bool] = False
     # Conversation memory fields
     session_id: Optional[str] = None
     conversation_summary: Optional[str] = None
@@ -683,9 +684,18 @@ async def rag_query(request: RAGQueryRequestEnhanced):
             except Exception as e:
                 logger.warning(f"Vector query failed: {e}")
 
+            # Use voice-optimized prompt if in voice mode
+            system_prompt = request.system_prompt
+            if request.is_voice_mode and system_prompt == "You are a helpful assistant.":
+                from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+                system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+            
+            # Adjust max_tokens for voice mode
+            max_tokens = min(request.max_tokens, 300) if request.is_voice_mode else request.max_tokens
+
             # Create messages
             messages = request.messages + [
-                {"role": "system", "content": request.system_prompt},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"}
             ]
 
@@ -695,7 +705,7 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                     messages=messages, 
                     model=request.model,
                     temperature=request.temperature,
-                    max_tokens=request.max_tokens,
+                    max_tokens=max_tokens,
                     top_p=request.top_p,
                     frequency_penalty=request.frequency_penalty,
                     repetition_penalty=request.repetition_penalty
@@ -740,7 +750,8 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                         request.max_tokens,
                         request.top_p,
                         request.frequency_penalty,
-                        request.repetition_penalty
+                        request.repetition_penalty,
+                        request.is_voice_mode
                     ):
                         yield chunk + "\n"
 

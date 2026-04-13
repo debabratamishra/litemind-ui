@@ -260,17 +260,14 @@ async def _handle_vllm_rag_query(request: RAGQueryRequestEnhanced, rag_service):
         vllm_service.set_hf_token(request.hf_token)
 
     # Get context from RAG
-    context = ""
+    source_records = []
     try:
-        if request.use_hybrid_search and getattr(rag_service, "bm25_model", None):
-            documents = rag_service.hybrid_search(request.query, request.n_results)
-            context = " ".join(documents)
-        else:
-            text_collection = getattr(rag_service, "text_collection", None)
-            if text_collection:
-                results = text_collection.query(query_texts=[request.query], n_results=request.n_results)
-                if results and results.get('documents'):
-                    context = " ".join(results['documents'][0])
+        retrieval_query = rag_service.build_retrieval_query(request.query, request.messages)
+        source_records = rag_service.get_retrieval_records(
+            retrieval_query,
+            request.n_results,
+            request.use_hybrid_search,
+        )
     except Exception as e:
         logger.warning(f"Vector query failed: {e}")
 
@@ -289,7 +286,18 @@ async def _handle_vllm_rag_query(request: RAGQueryRequestEnhanced, rag_service):
     
     # Add system prompt and current query with context
     messages.append({"role": "system", "content": request.system_prompt})
-    messages.append({"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"})
+    messages.append({
+        "role": "system",
+        "content": "Do not include citations, source numbers, filenames, bracketed references, or a Sources section unless the user explicitly asks for sources.",
+    })
+    messages.append({
+        "role": "user",
+        "content": rag_service.build_grounded_user_prompt(
+            request.query,
+            source_records,
+            voice_mode=request.is_voice_mode,
+        ),
+    })
 
     # Stream response with temperature and max_tokens
     async def event_generator():

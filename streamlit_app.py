@@ -9,11 +9,10 @@ import logging
 import streamlit as st
 from pathlib import Path
 import os
+from importlib import import_module
 
 from app.frontend.services.backend_service import backend_service
 from app.frontend.components.vllm_config import setup_vllm_backend
-from app.frontend.pages.chat_page import render_chat_page
-from app.frontend.pages.rag_page import render_rag_page
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -161,6 +160,30 @@ class StreamlitApp:
                 st.sidebar.info("🦙 Ollama Mode Active")
         else:
             st.sidebar.warning("⚠️ Using Local Backend")
+
+    def _render_page_module(self, module_name: str, render_name: str, class_name: str):
+        """Load a page module lazily and render it using the exported helper or class."""
+        module = import_module(module_name)
+
+        render_fn = getattr(module, render_name, None)
+        if callable(render_fn):
+            render_fn()
+            return
+
+        page_class = getattr(module, class_name, None)
+        if page_class is None:
+            raise ImportError(
+                f"{module_name} does not export {render_name} or {class_name}"
+            )
+
+        page = page_class()
+        if hasattr(page, "render_sidebar_config"):
+            page.render_sidebar_config()
+        if hasattr(page, "render"):
+            page.render()
+            return
+
+        raise AttributeError(f"{class_name} in {module_name} does not implement render()")
     
     def run(self):
         self.render_sidebar_header()
@@ -171,13 +194,25 @@ class StreamlitApp:
         # Route to the appropriate page
         try:
             if selected_page == "Chat":
-                render_chat_page()
+                self._render_page_module(
+                    "app.frontend.pages.chat_page",
+                    "render_chat_page",
+                    "ChatPage",
+                )
             elif selected_page == "RAG":
-                render_rag_page()
+                self._render_page_module(
+                    "app.frontend.pages.rag_page",
+                    "render_rag_page",
+                    "RAGPage",
+                )
             else:
                 # Fallback to chat if invalid page
                 st.session_state.selected_page = "Chat"
-                render_chat_page()
+                self._render_page_module(
+                    "app.frontend.pages.chat_page",
+                    "render_chat_page",
+                    "ChatPage",
+                )
         except Exception as e:
             # Error handling for page rendering
             st.error(f"Error loading {selected_page}: {str(e)}")

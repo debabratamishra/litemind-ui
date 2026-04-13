@@ -3,8 +3,10 @@ import os
 import re
 from fastapi import HTTPException, UploadFile
 
+from app.core.rag_formats import ALLOWED_UPLOAD_EXTENSIONS
+
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
-ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx", ".doc", ".csv", ".md", ".json", ".xml", ".html"}
+ALLOWED_EXTENSIONS = ALLOWED_UPLOAD_EXTENSIONS
 _CHUNK_SIZE = 1024 * 1024  # 1MB
 
 

@@ -17,7 +17,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 ![vLLM](https://img.shields.io/badge/vLLM-HuggingFace-FF6B35)
 ![RAG](https://img.shields.io/badge/RAG-Document%20Q&A-32CD32)
 ![API](https://img.shields.io/badge/API-REST%20%2B%20Streaming-007ACC)
-![Multi-format](https://img.shields.io/badge/Documents-PDF%20%7C%20DOCX%20%7C%20TXT-FFA500)
+![Multi-format](https://img.shields.io/badge/Documents-PDF%20%7C%20Office%20%7C%20Web%20%7C%20Data-FFA500)
 ![Voice](https://img.shields.io/badge/Voice-Realtime%20%2B%20TTS-8A2BE2)
 
 ## 🚀 Architecture
@@ -37,7 +37,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 
 - **High-Performance API** - Async FastAPI backend for scalable LLM processing
 - **Dual Backend Support** - Seamlessly switch between Ollama (local) and vLLM (Hugging Face) backends
-- **RAG Integration** - Upload documents (PDFs, DOCX, TXT) with enhanced extraction and query with context-aware responses
+- **RAG Integration** - Upload PDFs, Office documents, HTML/XML, spreadsheets, structured text files, and images with enhanced local extraction and context-aware responses
 - **Generation Controls** - Per-chat and per-RAG sliders for temperature and max tokens (hard cut-off) with both Ollama and vLLM backends
 - **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
 - **Realtime Voice Mode** - WebRTC voice chat with live transcription, barge-in, and streaming speech replies (Chat + RAG)
@@ -150,7 +150,7 @@ make version     # Show version management options
 
 ### Option 3: Native (Local Python) Installation
 
-Use this if you prefer to run services locally without Docker. These instructions assume Python 3.12+ and a virtual environment.
+Use this if you prefer to run services locally without Docker. These instructions assume Python 3.13+ and a virtual environment.
 
 1. Clone the repository
 
@@ -165,7 +165,10 @@ cd litemind-ui
 # Install uv if you haven't already
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create virtual environment and install all feature groups (backend + frontend + voice)
+# Create virtual environment and install all dependencies for local development (backend + frontend)
+uv sync --group all
+
+# Or install specific groups separately
 uv sync --group backend --group frontend
 
 # Or manually create venv and install editable package with groups
@@ -273,7 +276,7 @@ Hold full voice conversations in Chat or RAG with live transcription and streami
 - Works in both Chat and RAG tabs with separate session memory
 
 How to use:
-1. Make sure the backend is running (FastAPI) and voice deps are installed (`uv sync --group backend --group frontend` for native installs; Docker images already include them).
+1. Make sure the backend is running (FastAPI) and voice deps are installed (`uv sync --group all` for native installs; Docker images already include them).
 2. Open **Chat** or **RAG** and click the 📞 button beside the input box.
 3. Allow microphone access when prompted.
 4. Speak naturally; live transcript appears while you talk.
@@ -297,7 +300,7 @@ To use TTS on any response:
 ### Document Q\&A (RAG)
 
 1. Switch to the **RAG** tab
-2. Upload PDF, TXT, or DOCX files
+2. Upload PDF, Office, spreadsheet, HTML/XML, JSON/YAML/TOML, or image files
 3. **Choose Backend:** RAG works with both Ollama and vLLM backends
 4. Query your documents with natural language
 5. Get contextually relevant answers
@@ -415,6 +418,20 @@ LiteMindUI supports optional web search integration powered by SerpAPI. When ena
 
 **Note:** Web search is currently available in the Chat interface. RAG integration is planned for a future release.
 
+## RAG Extraction Pipeline
+
+The RAG ingestion stack is local-first and built on open-source packages that run on a single computer.
+
+- PDF, DOCX, and EPUB use the enhanced document processor.
+- PPTX extraction includes slide text, speaker notes, tables, chart titles, and embedded images.
+- XLSX, CSV, and TSV use sheet-aware and row-aware extraction.
+- HTML, HTM, and XML use cleaned local content extraction.
+- RTF and ODT use open-source local parsers.
+- TXT, Markdown, Org, RST, JSON, JSONL, YAML, TOML, INI, CFG, and LOG are treated as structured text sources.
+- Standalone images continue through the OCR and image-analysis path.
+
+For legacy binary Office formats (`.doc`, `.ppt`, `.xls`), LiteMindUI uses headless LibreOffice when it is installed locally. LibreOffice is open-source and runs entirely on a single machine. If it is not available, the backend falls back to best-effort local parsing.
+
 ## 🎯 Advanced Features
 
 - **Backend Detection:** Automatic FastAPI availability checking with local fallback
@@ -439,7 +456,9 @@ LiteMindUI supports optional web search integration powered by SerpAPI. When ena
 - **Model loading errors:** Check model compatibility and available GPU memory
 
 **Native Installation Issues:**
-- **Module not found:** Reinstall dependencies with `uv sync`
+- **Module not found:** Reinstall all dependencies with `uv sync --group all` for local development
+- **Missing backend packages:** Run `uv sync --group backend` 
+- **Missing frontend packages:** Run `uv sync --group frontend`
 - **Streamlit not starting:** Check if port 8501 is available
 - **FastAPI errors:** Verify Python 3.12+ and check logs in terminal
 

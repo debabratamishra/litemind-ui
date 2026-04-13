@@ -628,16 +628,16 @@ class ConversationDatabase:
             rows = cursor.fetchall()
             return [Conversation.from_row(tuple(row)) for row in rows]
     
-    def generate_title_from_message(self, message: str, max_words: int = 5) -> str:
+    def generate_title_from_message(self, message: str, max_words: int = 3) -> str:
         """
         Generate a brief conversation title from the first message.
         
         Args:
             message: The first message content
-            max_words: Maximum number of words in title (default 5)
+            max_words: Maximum number of words in title (default 3)
             
         Returns:
-            Generated title string (brief, max 5 words)
+            Generated title string (brief, max 3 words)
         """
         # Clean the message
         title = message.strip()

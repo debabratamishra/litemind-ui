@@ -388,6 +388,9 @@ class RAGPage:
         with st.chat_message("assistant"):
             status = self._build_status_message(config, backend_provider)
             
+            # Check if realtime voice mode is active
+            is_voice_mode = st.session_state.get("realtime_voice_mode_rag", False)
+            
             out = st.empty()
             with st.spinner(status):
                 model = self._get_model_for_backend(backend_provider)
@@ -408,7 +411,8 @@ class RAGPage:
                     max_tokens=max_tokens,
                     top_p=top_p,
                     frequency_penalty=frequency_penalty,
-                    repetition_penalty=repetition_penalty
+                    repetition_penalty=repetition_penalty,
+                    is_voice_mode=is_voice_mode
                 )
 
         if response_text:

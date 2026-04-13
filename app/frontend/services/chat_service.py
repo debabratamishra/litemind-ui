@@ -77,7 +77,8 @@ class ChatService:
         hf_token: Optional[str] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        is_voice_mode: bool = False
     ) -> requests.Response:
         """Stream a chat response from the backend with conversation memory."""
         payload = {
@@ -88,7 +89,8 @@ class ChatService:
             "top_p": top_p,
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
-            "backend": backend
+            "backend": backend,
+            "is_voice_mode": is_voice_mode
         }
         
         if backend == "vllm" and hf_token:
