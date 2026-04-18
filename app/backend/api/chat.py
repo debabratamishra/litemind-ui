@@ -25,6 +25,7 @@ router = APIRouter(tags=["chat"])
 def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str, str]]:
     """
     Build the messages list including conversation history and summary.
+    Also applies voice mode optimizations if is_voice_mode is True.
     
     Args:
         request: The chat request with optional history/summary
@@ -33,6 +34,14 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
         List of messages ready for LLM
     """
     messages = []
+    
+    # Add voice mode system prompt if voice mode is active
+    if request.is_voice_mode:
+        from app.frontend.config import DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
+        messages.append({
+            "role": "system",
+            "content": DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
+        })
     
     # Add conversation summary as system context if available
     if request.conversation_summary:
@@ -145,12 +154,15 @@ async def _handle_vllm_chat(request: ChatRequestEnhanced) -> ChatResponse:
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
+    # Adjust max_tokens for voice mode (shorter responses)
+    max_tokens = 300 if request.is_voice_mode else request.max_tokens
+    
     response_text = ""
     async for chunk in vllm_service.stream_vllm_chat(
         messages=messages, 
         model=request.model, 
         temperature=request.temperature,
-        max_tokens=request.max_tokens,
+        max_tokens=max_tokens,
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
         repetition_penalty=request.repetition_penalty
@@ -165,12 +177,15 @@ async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
+    # Adjust max_tokens for voice mode (shorter responses)
+    max_tokens = 300 if request.is_voice_mode else request.max_tokens
+    
     response_text = ""
     async for chunk in stream_ollama(
         messages, 
         model=request.model, 
         temperature=request.temperature, 
-        max_tokens=request.max_tokens,
+        max_tokens=max_tokens,
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
         repetition_penalty=request.repetition_penalty
@@ -195,11 +210,14 @@ async def _stream_vllm_chat(request: ChatRequestEnhanced):
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
+    # Adjust max_tokens for voice mode (shorter responses)
+    max_tokens = 300 if request.is_voice_mode else request.max_tokens
+    
     async for chunk in vllm_service.stream_vllm_chat(
         messages=messages, 
         model=request.model, 
         temperature=request.temperature,
-        max_tokens=request.max_tokens,
+        max_tokens=max_tokens,
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
         repetition_penalty=request.repetition_penalty
@@ -212,11 +230,14 @@ async def _stream_ollama_chat(request: ChatRequestEnhanced):
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
+    # Adjust max_tokens for voice mode (shorter responses)
+    max_tokens = 300 if request.is_voice_mode else request.max_tokens
+    
     async for chunk in stream_ollama(
         messages, 
         model=request.model, 
         temperature=request.temperature, 
-        max_tokens=request.max_tokens,
+        max_tokens=max_tokens,
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
         repetition_penalty=request.repetition_penalty

@@ -1,5 +1,5 @@
 # Multi-stage build for LiteMindUI FastAPI Backend
-FROM python:3.12-slim AS base
+FROM python:3.13-slim AS base
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -36,12 +36,13 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/profile
 ENV PATH="/root/.local/bin:${PATH}"
 ENV UV_LINK_MODE=copy
+ENV UV_PYTHON=3.13
 
 # Create app directory
 WORKDIR /app
  
-# Copy pyproject.toml, lockfile, and .python-version first for better caching
-COPY pyproject.toml uv.lock .python-version ./
+# Copy dependency metadata first for better caching
+COPY pyproject.toml uv.lock ./
 
 # Install only backend dependencies (not frontend, not dev)
 RUN --mount=type=cache,target=/root/.cache/uv \

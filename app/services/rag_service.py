@@ -8,30 +8,28 @@ from chromadb.config import Settings
 from .ollama import stream_ollama
 import os
 import re
+import hashlib
 from config import Config
 from crewai import Agent, LLM
 import httpx
 import shutil
 import logging
 import asyncio
+import base64
 from rank_bm25 import BM25Okapi
-import nltk
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
 import string
-from typing import List, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 import numpy as np
 from pathlib import Path
 from PIL import Image
 import gc
 import json
-import importlib.util
+import importlib
 from typing import Optional
 
-# Import enhanced extractors
-from app.ingestion.enhanced_extractors import extract_csv_enhanced, process_images_enhanced, get_image_processor, get_csv_processor
-from app.ingestion.file_ingest import ingest_file
-from app.ingestion.enhanced_document_processor import get_document_processor, extract_pdf_enhanced, extract_docx_enhanced, extract_epub_enhanced
+from app.core.rag_formats import SUPPORTED_EXTENSIONS
+from app.ingestion.enhanced_extractors import process_images_enhanced
+from app.ingestion.file_ingest import get_ingestion_capabilities, ingest_file
 
 # Configuration flags
 ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"
@@ -41,13 +39,43 @@ MAX_IMAGES_PER_DOC = int(os.getenv("MAX_IMAGES_PER_DOC", "10"))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Download NLTK data if needed
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('punkt')
-    nltk.download('stopwords')
+DEFAULT_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "for", "from",
+    "had", "has", "have", "he", "her", "hers", "him", "his", "i", "if", "in", "into",
+    "is", "it", "its", "me", "my", "of", "on", "or", "our", "ours", "she", "so",
+    "that", "the", "their", "theirs", "them", "they", "this", "those", "to", "too",
+    "us", "was", "we", "were", "what", "when", "where", "which", "who", "why", "with",
+    "you", "your", "yours",
+}
+
+_stopwords_fallback_logged = False
+_tokenizer_fallback_logged = False
+
+
+def _module_importable(module_name: str) -> bool:
+    try:
+        importlib.import_module(module_name)
+        return True
+    except Exception:
+        return False
+
+
+def _load_stop_words() -> set[str]:
+    global _stopwords_fallback_logged
+
+    if not _stopwords_fallback_logged:
+        logger.info("Using built-in stopword list for BM25 preprocessing")
+        _stopwords_fallback_logged = True
+    return set(DEFAULT_STOP_WORDS)
+
+
+def _tokenize_text(text: str) -> List[str]:
+    global _tokenizer_fallback_logged
+
+    if not _tokenizer_fallback_logged:
+        logger.info("Using regex tokenizer for BM25 preprocessing")
+        _tokenizer_fallback_logged = True
+    return re.findall(r"\b\w+\b", text)
 
 def _flatten_metadata(meta, prefix=""):
     """Flatten a (possibly nested) metadata mapping into a single-level dict.
@@ -124,9 +152,16 @@ class RAGService:
 
         self.client = self._get_or_create_client(self.chroma_db_path)
 
-        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name="all-MiniLM-L6-v2"
-        )
+        try:
+            self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="all-MiniLM-L6-v2"
+            )
+        except Exception as e:
+            logger.warning(f"SentenceTransformerEmbeddingFunction not available ({e}), using ChromaDB default")
+            try:
+                self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            except Exception:
+                self.embedding_function = None
 
         self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
 
@@ -140,12 +175,14 @@ class RAGService:
         self.bm25_model = None
         self.document_chunks = []  # original text chunks
         self.chunk_ids = []
+        self.chunk_metadata = []
+        self.chunk_metadata_by_id = {}
         
         # Track processed files to prevent duplicates
         self.processed_files = {}  # filename -> {hash, chunk_count, timestamp}
         self.file_hashes = {}  # hash -> filename (for duplicate detection)
 
-        self.stop_words = set(stopwords.words('english'))
+        self.stop_words = _load_stop_words()
 
         # Initialize image cache directory using environment-aware path
         upload_dir = self._get_upload_directory()
@@ -308,6 +345,14 @@ class RAGService:
             if all_docs and all_docs['documents']:
                 self.document_chunks = all_docs['documents']
                 self.chunk_ids = all_docs['ids']
+                raw_metadatas = all_docs.get('metadatas') or []
+                if len(raw_metadatas) < len(self.document_chunks):
+                    raw_metadatas = list(raw_metadatas) + [{}] * (len(self.document_chunks) - len(raw_metadatas))
+                self.chunk_metadata = [(metadata or {}) for metadata in raw_metadatas[:len(self.document_chunks)]]
+                self.chunk_metadata_by_id = {
+                    chunk_id: metadata
+                    for chunk_id, metadata in zip(self.chunk_ids, self.chunk_metadata)
+                }
                 
                 # Rebuild BM25 corpus
                 self.bm25_corpus = [self.preprocess_text(doc) for doc in self.document_chunks]
@@ -321,6 +366,8 @@ class RAGService:
             else:
                 self.document_chunks = []
                 self.chunk_ids = []
+                self.chunk_metadata = []
+                self.chunk_metadata_by_id = {}
                 self.bm25_corpus = []
                 self.bm25_model = None
                 
@@ -371,28 +418,19 @@ class RAGService:
 
     def get_capabilities(self) -> dict:
         """Report processing capabilities and supported extensions detected at runtime."""
-        ocr_available = any(
-            importlib.util.find_spec(name) is not None
-            for name in ("pytesseract", "easyocr")
-        )
+        ocr_available = _module_importable("pytesseract") or _module_importable("easyocr")
 
-        memory_optimized = True
-        enhanced_csv = True
+        ingestion_capabilities = get_ingestion_capabilities()
 
         return {
             "status": "ready",
-            "message": "Enhanced processing available",
+            "message": "Enhanced local extraction pipeline available",
             "capabilities": {
-                "enhanced_csv": enhanced_csv,
                 "ocr_available": ocr_available,
-                "memory_optimized": memory_optimized
+                "memory_optimized": True,
+                "local_pipeline": ingestion_capabilities.get("local_pipeline", {}),
             },
-            "supported_extensions": [
-                "pdf","doc","docx","ppt","pptx","rtf","odt","epub",
-                "xls","xlsx","csv","tsv",
-                "txt","md","html","htm","org","rst",
-                "png","jpg","jpeg","bmp","tiff","webp","gif","heic","svg"
-            ]
+            "supported_extensions": SUPPORTED_EXTENSIONS,
         }
 
 
@@ -404,7 +442,7 @@ class RAGService:
         # Clean text before tokenization
         text = self._clean_text_for_indexing(text)
         
-        tokens = word_tokenize(text.lower())
+        tokens = _tokenize_text(text.lower())
         tokens = [t for t in tokens if t not in self.stop_words and t not in string.punctuation and len(t) > 1]
         return tokens
     
@@ -423,49 +461,194 @@ class RAGService:
         return text.strip()
 
     def chunk_text(self, text, chunk_size=500):
-        """Split text into intelligent chunks with overlap, preserving sentence boundaries."""
+        """Split text into paragraph-aware chunks with overlap for indexing."""
         if not text or not text.strip():
             return []
-        
-        # Clean the text first
+
         text = self._clean_text_for_chunking(text)
-        
-        overlap = min(50, chunk_size // 10)
+
+        overlap = max(60, min(200, chunk_size // 6))
         chunks = []
-        
-        # Try to split on sentence boundaries when possible
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        
-        current_chunk = ""
-        for sentence in sentences:
-            # If adding this sentence would exceed chunk size
-            if len(current_chunk) + len(sentence) > chunk_size and current_chunk:
-                chunks.append(current_chunk.strip())
-                # Start new chunk with overlap from previous chunk
-                overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
-                current_chunk = overlap_text + " " + sentence
-            else:
-                current_chunk += (" " + sentence) if current_chunk else sentence
-        
-        # Add the last chunk
-        if current_chunk.strip():
-            chunks.append(current_chunk.strip())
-        
-        # Fallback to character-based chunking if sentence-based didn't work well
-        if not chunks or (len(chunks) == 1 and len(chunks[0]) > chunk_size * 1.5):
+
+        paragraphs = [paragraph.strip() for paragraph in re.split(r'\n\s*\n+', text) if paragraph.strip()]
+        if not paragraphs:
             return self._fallback_character_chunking(text, chunk_size, overlap)
-        
+
+        current_parts = []
+        current_length = 0
+
+        for paragraph in paragraphs:
+            paragraph_parts = self._split_paragraph_for_chunking(paragraph, chunk_size)
+            for part in paragraph_parts:
+                projected_length = current_length + len(part) + (2 if current_parts else 0)
+                if current_parts and projected_length > chunk_size:
+                    chunks.append("\n\n".join(current_parts).strip())
+                    overlap_parts = self._select_overlap_paragraphs(current_parts, overlap)
+                    current_parts = overlap_parts[:]
+                    current_length = len("\n\n".join(current_parts))
+                current_parts.append(part)
+                current_length = len("\n\n".join(current_parts))
+
+        if current_parts:
+            chunks.append("\n\n".join(current_parts).strip())
+
+        if not chunks:
+            return self._fallback_character_chunking(text, chunk_size, overlap)
+
         return chunks
     
     def _clean_text_for_chunking(self, text: str) -> str:
         """Clean text before chunking to improve formatting."""
-        # Normalize whitespace
-        text = re.sub(r'\s+', ' ', text)
-        # Remove excessive newlines but preserve paragraph breaks
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+        text = re.sub(r'[ \t]+', ' ', text)
         text = re.sub(r'\n{3,}', '\n\n', text)
-        # Clean up common formatting issues
-        text = re.sub(r'([.!?])\s*\n\s*([A-Z])', r'\1 \2', text)  # Join broken sentences
+        text = re.sub(r'(?m)^ +', '', text)
         return text.strip()
+
+    def _split_paragraph_for_chunking(self, paragraph: str, chunk_size: int) -> List[str]:
+        """Split oversized paragraphs while preserving sentence boundaries where possible."""
+        paragraph = paragraph.strip()
+        if not paragraph:
+            return []
+
+        if len(paragraph) <= chunk_size:
+            return [paragraph]
+
+        sentences = [segment.strip() for segment in re.split(r'(?<=[.!?])\s+', paragraph) if segment.strip()]
+        if not sentences:
+            return self._fallback_character_chunking(paragraph, chunk_size, max(40, chunk_size // 10))
+
+        parts = []
+        current = ""
+        for sentence in sentences:
+            if len(sentence) > chunk_size:
+                if current:
+                    parts.append(current.strip())
+                    current = ""
+                parts.extend(self._fallback_character_chunking(sentence, chunk_size, max(40, chunk_size // 10)))
+                continue
+
+            if current and len(current) + len(sentence) + 1 > chunk_size:
+                parts.append(current.strip())
+                current = sentence
+            else:
+                current = f"{current} {sentence}".strip() if current else sentence
+
+        if current:
+            parts.append(current.strip())
+
+        return parts or [paragraph]
+
+    def _select_overlap_paragraphs(self, paragraphs: List[str], overlap_chars: int) -> List[str]:
+        """Keep a short tail overlap to improve recall across chunk boundaries."""
+        selected = []
+        total = 0
+        for paragraph in reversed(paragraphs):
+            candidate = len(paragraph) + (2 if selected else 0)
+            if selected and total + candidate > overlap_chars:
+                break
+            selected.insert(0, paragraph)
+            total += candidate
+            if total >= overlap_chars:
+                break
+        return selected
+
+    def _derive_section_title(self, metadata: dict, content: str) -> str:
+        """Infer a stable section title to carry across derived chunks."""
+        content_type = str(metadata.get("content_type", "")).lower()
+        skip_generated_titles_for = {
+            "ocr_text",
+            "pdf_page_ocr",
+            "pdf_text_header",
+            "pdf_text_footer",
+            "pdf_image_enhanced",
+            "docx_image",
+            "image_analysis",
+            "image_reference",
+            "structured_content",
+        }
+
+        for key in ("section_title", "slide_title", "title", "heading", "sheet"):
+            value = metadata.get(key)
+            if isinstance(value, str) and self._is_meaningful_section_title(value, metadata):
+                return value.strip()
+
+        if content_type in skip_generated_titles_for:
+            return ""
+
+        first_line = content.splitlines()[0].strip() if content else ""
+        if (
+            first_line
+            and len(first_line) <= 120
+            and not first_line.endswith('.')
+            and self._is_meaningful_section_title(first_line, metadata)
+        ):
+            return first_line
+        return ""
+
+    def _apply_section_prefix(self, content: str, section_title: str) -> str:
+        """Prefix chunks with their section title when it adds grounding."""
+        if not section_title:
+            return content.strip()
+        stripped_content = content.strip()
+        if stripped_content.lower().startswith(section_title.lower()):
+            return stripped_content
+        return f"{section_title}\n\n{stripped_content}"
+
+    def _dedupe_chunk_key(self, content: str, metadata: dict) -> str:
+        """Generate a stable dedupe key for extracted content blocks."""
+        normalized_content = re.sub(r'\s+', ' ', content).strip().lower()
+        identity_parts = [
+            str(metadata.get('content_type', '')),
+            str(metadata.get('page_number', '')),
+            str(metadata.get('slide_number', '')),
+            str(metadata.get('sheet', '')),
+            normalized_content,
+        ]
+        return hashlib.sha1('|'.join(identity_parts).encode('utf-8')).hexdigest()
+
+    def _prepare_extracted_chunks(self, extracted_chunks: List, doc_id: str, file_path: str, chunk_size: int) -> List[dict]:
+        """Normalize, split, and deduplicate extracted blocks before indexing."""
+        prepared_chunks = []
+        seen_keys = set()
+
+        for source_index, chunk in enumerate(extracted_chunks):
+            if isinstance(chunk, dict):
+                content = chunk.get('content', '')
+                metadata = {**chunk.get('metadata', {})}
+            else:
+                content = str(chunk)
+                metadata = {'content_type': 'legacy_text'}
+
+            clean_content = self._clean_text_for_chunking(content)
+            if not clean_content:
+                continue
+
+            section_title = self._derive_section_title(metadata, clean_content)
+            subchunks = self.chunk_text(clean_content, chunk_size=chunk_size)
+            if not subchunks:
+                subchunks = [clean_content]
+
+            for chunk_index, subchunk in enumerate(subchunks):
+                final_content = self._apply_section_prefix(subchunk, section_title)
+                dedupe_key = self._dedupe_chunk_key(final_content, metadata)
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+
+                prepared_chunks.append({
+                    'content': final_content,
+                    'metadata': {
+                        **metadata,
+                        'doc_id': doc_id,
+                        'file_path': str(file_path),
+                        'source_index': source_index,
+                        'chunk_index': chunk_index,
+                        'section_title': section_title,
+                    },
+                })
+
+        return prepared_chunks
     
     def _fallback_character_chunking(self, text: str, chunk_size: int, overlap: int) -> List[str]:
         """Fallback character-based chunking when sentence-based fails."""
@@ -500,6 +683,38 @@ class RAGService:
         logger.info(f"Created {len(references)} image references")
         return references
 
+    def _collect_embedded_image_records(self, extracted_chunks: List[dict]) -> List[dict]:
+        """Recover embedded document images so they can pass through the OCR pipeline."""
+        embedded_records = []
+
+        for chunk in extracted_chunks or []:
+            if not isinstance(chunk, dict):
+                continue
+
+            metadata = chunk.get("metadata", {}) or {}
+            content_type = metadata.get("content_type", "")
+            image_b64 = metadata.get("image_bytes")
+
+            if content_type not in {"pdf_image_enhanced", "docx_image"} or not image_b64:
+                continue
+
+            try:
+                image_bytes = base64.b64decode(image_b64)
+            except Exception as exc:
+                logger.warning(f"Failed to decode embedded image bytes for {metadata.get('filename', 'unknown')}: {exc}")
+                continue
+
+            clean_metadata = {k: v for k, v in metadata.items() if k != "image_bytes"}
+            clean_metadata["embedded_image"] = True
+            clean_metadata["source_content_type"] = content_type
+
+            embedded_records.append({
+                "image_bytes": image_bytes,
+                "metadata": clean_metadata,
+            })
+
+        return embedded_records
+
     def _index_chunk_batch(self, chunk_batch: List[dict], doc_id: str):
         """Index a batch of text chunks into ChromaDB and update the BM25 corpus."""
         try:
@@ -528,6 +743,9 @@ class RAGService:
                 self.bm25_corpus.append(tokens)
                 self.document_chunks.append(text)
                 self.chunk_ids.append(ids[i])
+                metadata = metadatas[i] if i < len(metadatas) else {}
+                self.chunk_metadata.append(metadata)
+                self.chunk_metadata_by_id[ids[i]] = metadata
             
             if self.bm25_corpus:
                 self.bm25_model = BM25Okapi(self.bm25_corpus)
@@ -559,6 +777,8 @@ class RAGService:
             self.bm25_corpus.append(tokens)
             self.document_chunks.append(content)
             self.chunk_ids.append(chunk_id)
+            self.chunk_metadata.append(metadata)
+            self.chunk_metadata_by_id[chunk_id] = metadata
             
             if self.bm25_corpus:
                 self.bm25_model = BM25Okapi(self.bm25_corpus)
@@ -569,44 +789,26 @@ class RAGService:
 
     def _ingest_file_with_enhancement(self, path: Path):
         """Extract text, tables, and image metadata using enhanced processors when available."""
-        ext = path.suffix.lower()
-        
-        if ext == '.pdf':
-            logger.info(f"Using enhanced PDF processing for {path.name}")
-            text_chunks = extract_pdf_enhanced(path)
-            text_chunks = self._filter_enhanced_content(text_chunks)
-            image_records = []
-            table_texts = []
-        elif ext in ['.docx', '.doc']:
-            logger.info(f"Using enhanced DOCX processing for {path.name}")
-            text_chunks = extract_docx_enhanced(path)
-            text_chunks = self._filter_enhanced_content(text_chunks)
-            image_records = []
-            table_texts = []
-        elif ext == '.epub':
-            logger.info(f"Using enhanced EPUB processing for {path.name}")
-            text_chunks = extract_epub_enhanced(path)
-            text_chunks = self._filter_enhanced_content(text_chunks)
-            image_records = []
-            table_texts = []
-        elif ext in ['.csv', '.tsv']:
-            logger.info(f"Using enhanced CSV processing for {path.name}")
-            from app.ingestion.enhanced_extractors import extract_csv_enhanced
-            text_chunks = extract_csv_enhanced(path)
-            text_chunks = self._filter_enhanced_content(text_chunks)
-            image_records = []
-            table_texts = []
-        else:
-            text_chunks, image_records, table_texts = ingest_file(path)
-            # Apply enhanced processing for images
-            if image_records:
-                logger.info(f"Processing {len(image_records)} images with enhanced extraction")
-                enhanced_image_content = process_images_enhanced(image_records)
-                # Apply filtering to image content as well
-                enhanced_image_content = self._filter_enhanced_content(enhanced_image_content)
-                text_chunks.extend(enhanced_image_content)
-                image_records.clear()
-                gc.collect()
+        text_chunks, image_records, table_texts = ingest_file(path)
+        text_chunks = list(text_chunks or [])
+        image_records = list(image_records or [])
+        table_texts = list(table_texts or [])
+
+        embedded_image_records = self._collect_embedded_image_records(text_chunks)
+        if embedded_image_records:
+            logger.info(f"Recovered {len(embedded_image_records)} embedded document images for OCR")
+            image_records.extend(embedded_image_records)
+
+        text_chunks = self._filter_enhanced_content(text_chunks)
+        table_texts = self._filter_enhanced_content(table_texts)
+
+        if image_records:
+            logger.info(f"Processing {len(image_records)} images with enhanced extraction")
+            enhanced_image_content = process_images_enhanced(image_records)
+            enhanced_image_content = self._filter_enhanced_content(enhanced_image_content)
+            text_chunks.extend(enhanced_image_content)
+            image_records.clear()
+            gc.collect()
 
         return text_chunks, image_records, table_texts
 
@@ -624,6 +826,7 @@ class RAGService:
             'pdf_document_analysis',
             'document_metadata',
             'document_overview',
+            'pdf_image_enhanced',
             
             # Image metadata types
             'image_analysis',
@@ -639,6 +842,7 @@ class RAGService:
             # DOCX metadata types
             'document_analysis',
             'docx_metadata',
+            'docx_image',
             
             # EPUB metadata types  
             'epub_metadata',
@@ -659,6 +863,7 @@ class RAGService:
             'pdf_table_camelot',
             'pdf_table_pdfplumber',
             'pdf_content_block',
+            'pdf_page_ocr',
             
             # Image content types
             'ocr_text',
@@ -776,54 +981,21 @@ class RAGService:
 
             logger.info(f"Processing document with enhanced extraction: {doc_id}")
             
-            ext = path.suffix.lower()
-            
-            if ext in {'.csv', '.tsv'}:
-                logger.info(f"Using enhanced CSV processing for {path.name}")
-                chunks = await asyncio.to_thread(extract_csv_enhanced, path)
-                text_chunks, image_records, table_texts = chunks, [], []
-                gc.collect()
-            else:
-                text_chunks, image_records, table_texts = await asyncio.to_thread(
-                    self._ingest_file_with_enhancement, path
-                )
-            
-            all_chunks = []
-            
-            for chunk in text_chunks:
-                if isinstance(chunk, dict):
-                    chunk_data = {
-                        "content": chunk["content"],
-                        "metadata": {
-                            **chunk.get("metadata", {}),
-                            "doc_id": doc_id,
-                            "file_path": str(file_path)
-                        }
-                    }
-                else:
-                    chunk_data = {
-                        "content": str(chunk),
-                        "metadata": {
-                            "doc_id": doc_id,
-                            "file_path": str(file_path),
-                            "content_type": "legacy_text"
-                        }
-                    }
-                all_chunks.append(chunk_data)
-            
-            for table in table_texts:
-                if isinstance(table, dict):
-                    table_content = table.get("content", str(table))
-                else:
-                    table_content = str(table)
-                all_chunks.append({
-                    "content": table_content,
-                    "metadata": {
-                        "doc_id": doc_id,
-                        "file_path": str(file_path),
-                        "content_type": "table"
-                    }
-                })
+            text_chunks, image_records, table_texts = await asyncio.to_thread(
+                self._ingest_file_with_enhancement, path
+            )
+            gc.collect()
+
+            all_chunks = self._prepare_extracted_chunks(text_chunks, doc_id, str(file_path), chunk_size)
+            all_chunks.extend(self._prepare_extracted_chunks(table_texts, doc_id, str(file_path), chunk_size))
+
+            if not all_chunks:
+                logger.warning(f"No extractable content found in {doc_id}")
+                return {
+                    "status": "error",
+                    "message": f"No extractable content found in {doc_id}",
+                    "chunks_created": 0,
+                }
             
             logger.info(f"Total chunks to index: {len(all_chunks)}")
             
@@ -863,6 +1035,8 @@ class RAGService:
         self.bm25_model = None
         self.document_chunks = []
         self.chunk_ids = []
+        self.chunk_metadata = []
+        self.chunk_metadata_by_id = {}
 
         for file_path in self.file_paths:
             doc_id = os.path.basename(file_path)
@@ -893,6 +1067,10 @@ class RAGService:
             # Clear chunk_ids if it exists
             if hasattr(self, 'chunk_ids'):
                 self.chunk_ids.clear()
+            if hasattr(self, 'chunk_metadata'):
+                self.chunk_metadata.clear()
+            if hasattr(self, 'chunk_metadata_by_id'):
+                self.chunk_metadata_by_id.clear()
 
             # Clear file tracking to allow re-uploads after reset
             self.processed_files.clear()
@@ -926,6 +1104,37 @@ class RAGService:
         
         return results
 
+    def _build_search_record(
+        self,
+        chunk_id: str,
+        content: str,
+        score: float,
+        metadata: Optional[Dict[str, Any]] = None,
+        retrieval_method: str = "semantic",
+    ) -> Dict[str, Any]:
+        """Normalize search results into a source-aware record."""
+        return {
+            "id": chunk_id,
+            "content": content,
+            "score": float(score),
+            "metadata": metadata or {},
+            "retrieval_method": retrieval_method,
+        }
+
+    def bm25_search_records(self, query: str, n_results: int = 3) -> List[Dict[str, Any]]:
+        """Run BM25 keyword search and preserve metadata for citation formatting."""
+        raw_results = self.bm25_search(query, n_results)
+        return [
+            self._build_search_record(
+                chunk_id,
+                content,
+                score,
+                self.chunk_metadata_by_id.get(chunk_id, {}),
+                retrieval_method="bm25",
+            )
+            for chunk_id, content, score in raw_results
+        ]
+
     def vector_search_text(self, query: str, n_results: int = 3) -> List[Tuple[str, str, float]]:
         """Run semantic search over text chunks and return (chunk_id, text, similarity)."""
         try:
@@ -947,10 +1156,52 @@ class RAGService:
             logger.error(f"Vector text search error: {str(e)}")
             return []
 
+    def vector_search_records(self, query: str, n_results: int = 3) -> List[Dict[str, Any]]:
+        """Run semantic search over text chunks and preserve metadata for citation formatting."""
+        try:
+            results = self.text_collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                include=["documents", "metadatas", "distances"],
+            )
+            ids = results.get("ids") or [[]]
+            documents = results.get("documents") or [[]]
+            metadatas = results.get("metadatas") or [[]]
+            distances = results.get("distances") or [[]]
+
+            if not ids[0] or not documents[0]:
+                return []
+
+            out = []
+            for index, doc_id in enumerate(ids[0]):
+                document = documents[0][index] if index < len(documents[0]) else ""
+                metadata = metadatas[0][index] if metadatas and index < len(metadatas[0]) else {}
+                distance = distances[0][index] if distances and index < len(distances[0]) else None
+                similarity = 1 - distance if distance is not None else 0.0
+                out.append(
+                    self._build_search_record(
+                        doc_id,
+                        document,
+                        similarity,
+                        metadata,
+                        retrieval_method="semantic",
+                    )
+                )
+
+            return out
+        except Exception as e:
+            logger.error(f"Vector text search error: {str(e)}")
+            return []
+
     def reciprocal_rank_fusion(self, bm25_results: List[Tuple], vector_results: List[Tuple], k: int = 60) -> List[str]:
         """Fuse BM25 and vector results using Reciprocal Rank Fusion and return sorted IDs."""
-        bm25_scores = {doc_id: 1 / (k + rank + 1) for rank, (doc_id, *_rest) in enumerate(bm25_results)}
-        vector_scores = {doc_id: 1 / (k + rank + 1) for rank, (doc_id, *_rest) in enumerate(vector_results)}
+        def extract_id(result: Any) -> str:
+            if isinstance(result, dict):
+                return result.get("id", "")
+            return result[0]
+
+        bm25_scores = {extract_id(result): 1 / (k + rank + 1) for rank, result in enumerate(bm25_results) if extract_id(result)}
+        vector_scores = {extract_id(result): 1 / (k + rank + 1) for rank, result in enumerate(vector_results) if extract_id(result)}
         
         all_doc_ids = set(bm25_scores.keys()) | set(vector_scores.keys())
         combined_scores = {}
@@ -961,10 +1212,10 @@ class RAGService:
         sorted_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
         return [doc_id for doc_id, _ in sorted_results]
 
-    def hybrid_search(self, query: str, n_results: int = 3) -> List[str]:
-        """Combine BM25 and semantic search via RRF and return the top document texts."""
-        bm25_results = self.bm25_search(query, n_results * 2)
-        vec_text_results = self.vector_search_text(query, n_results * 2)
+    def hybrid_search_records(self, query: str, n_results: int = 3) -> List[Dict[str, Any]]:
+        """Combine BM25 and semantic search via RRF and keep source metadata intact."""
+        bm25_results = self.bm25_search_records(query, n_results * 2)
+        vec_text_results = self.vector_search_records(query, n_results * 2)
 
         if not (bm25_results or vec_text_results):
             return []
@@ -972,15 +1223,161 @@ class RAGService:
         fused_text_ids = self.reciprocal_rank_fusion(bm25_results, vec_text_results)
         top_text_ids = fused_text_ids[:n_results]
 
-        id_to_content = {}
-        for doc_id, content, _ in bm25_results + vec_text_results:
-            if doc_id not in id_to_content:
-                id_to_content[doc_id] = content
+        id_to_record = {}
+        for record in vec_text_results + bm25_results:
+            if record["id"] not in id_to_record:
+                id_to_record[record["id"]] = record
 
-        result_documents = [id_to_content[i] for i in top_text_ids if i in id_to_content]
-        return result_documents
+        return [id_to_record[chunk_id] for chunk_id in top_text_ids if chunk_id in id_to_record]
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=[], n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048, top_p: float = 0.9, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0):
+    def hybrid_search(self, query: str, n_results: int = 3) -> List[str]:
+        """Combine BM25 and semantic search via RRF and return the top document texts."""
+        return [record["content"] for record in self.hybrid_search_records(query, n_results)]
+
+    def build_retrieval_query(self, query_text: str, messages: Optional[List[Dict[str, str]]] = None) -> str:
+        """Build a retrieval query that includes non-system conversation history."""
+        messages = messages or []
+        history_context = "\n".join(
+            f"{msg['role']}: {msg['content']}"
+            for msg in messages
+            if msg.get('role') != 'system' and msg.get('content')
+        )
+        return f"{history_context}\nUser: {query_text}" if history_context else query_text
+
+    def get_retrieval_records(self, query: str, n_results: int = 3, use_hybrid_search: bool = False) -> List[Dict[str, Any]]:
+        """Retrieve source-aware records for grounded prompt construction."""
+        if use_hybrid_search and self.bm25_model:
+            logger.info("Using hybrid search (BM25 + semantic)")
+            return self.hybrid_search_records(query, n_results)
+
+        logger.info("Using semantic vector search")
+        return self.vector_search_records(query, n_results)
+
+    def _format_source_locator(self, label: str, value: Any) -> Optional[str]:
+        """Format a single source location field for display."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        return f"{label} {value}"
+
+    def _is_meaningful_section_title(self, title: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Filter out boilerplate section titles that make citations noisy."""
+        normalized = re.sub(r"\s+", " ", str(title or "")).strip().strip(":").strip()
+        if not normalized:
+            return False
+
+        filename = str((metadata or {}).get("filename") or "").strip().lower()
+        generic_patterns = [
+            r"^ocr extracted text\b",
+            r"^ocr page text\b",
+            r"^page\s+\d+\s+headers?\b",
+            r"^page\s+\d+\s+footers?\b",
+            r"^table\s+\d+\b",
+            r"^enhanced pdf image analysis\b",
+            r"^word document image\b",
+            r"^image analysis\b",
+            r"^document structure analysis\b",
+            r"^document overview\b",
+        ]
+
+        if any(re.match(pattern, normalized, re.IGNORECASE) for pattern in generic_patterns):
+            return False
+        if filename and filename in normalized.lower():
+            return False
+        return True
+
+    def _format_source_kind(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Add a short, human-readable content hint when a section title is not useful."""
+        content_type = str((metadata or {}).get("content_type") or "").lower()
+        content_type_labels = {
+            "ocr_text": "OCR text",
+            "pdf_page_ocr": "OCR page",
+            "pdf_table_camelot": "table",
+            "pdf_table_pdfplumber": "table",
+            "pdf_table_structured": "table",
+            "docx_table": "table",
+            "structured_content": "structured content",
+        }
+        return content_type_labels.get(content_type)
+
+    def _format_source_label(self, metadata: Optional[Dict[str, Any]], fallback_index: int) -> str:
+        """Create a compact label for a retrieved chunk."""
+        metadata = metadata or {}
+        filename = str(metadata.get("filename") or metadata.get("doc_id") or f"Source {fallback_index}")
+
+        location_parts = []
+        for label, key in (("page", "page_number"), ("slide", "slide_number"), ("sheet", "sheet")):
+            locator = self._format_source_locator(label, metadata.get(key))
+            if locator:
+                location_parts.append(locator)
+
+        section_title = str(metadata.get("section_title") or "").strip()
+        if self._is_meaningful_section_title(section_title, metadata):
+            location_parts.append(f"section {section_title[:80]}")
+        else:
+            source_kind = self._format_source_kind(metadata)
+            if source_kind:
+                location_parts.append(source_kind)
+
+        if location_parts:
+            return f"{filename}, {', '.join(location_parts)}"
+        return filename
+
+    def _truncate_source_content(self, content: str, max_chars: int = 1600) -> str:
+        """Keep prompt source blocks readable and bounded."""
+        normalized = re.sub(r'\n{3,}', '\n\n', content.strip())
+        if len(normalized) <= max_chars:
+            return normalized
+        return normalized[: max_chars - 3].rstrip() + "..."
+
+    def build_grounded_user_prompt(self, query_text: str, source_records: List[Dict[str, Any]], voice_mode: bool = False) -> str:
+        """Create a grounded prompt without exposing citation markers in the answer."""
+        if voice_mode:
+            instruction_block = (
+                "Answer only from the provided context passages. "
+                "Do not mention source numbers, filenames, citations, or a sources section unless the user explicitly asks. "
+                "If the context is insufficient, say so briefly."
+            )
+        else:
+            instruction_block = (
+                "Answer only from the provided context passages. "
+                "Write a clean, direct answer and do not mention source numbers, filenames, citations, or a sources section unless the user explicitly asks. "
+                "If the context is insufficient, say so clearly."
+            )
+
+        if not source_records:
+            return (
+                f"{instruction_block}\n\n"
+                "No relevant context was retrieved from the uploaded documents.\n\n"
+                f"User question: {query_text}"
+            )
+
+        context_blocks = [
+            self._truncate_source_content(record.get("content", ""))
+            for record in source_records
+            if record.get("content", "").strip()
+        ]
+
+        return (
+            f"{instruction_block}\n\n"
+            f"Context passages:\n\n---\n{('\n\n---\n').join(context_blocks)}\n\n"
+            f"User question: {query_text}"
+        )
+
+    def build_cited_user_prompt(self, query_text: str, source_records: List[Dict[str, Any]], voice_mode: bool = False) -> str:
+        """Backward-compatible alias for grounded prompts after citation removal."""
+        return self.build_grounded_user_prompt(query_text, source_records, voice_mode=voice_mode)
+
+    def build_sources_footer(self, source_records: List[Dict[str, Any]], voice_mode: bool = False) -> str:
+        """RAG citations are disabled, so no footer is appended."""
+        return ""
+
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=None, n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048, top_p: float = 0.9, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, is_voice_mode: bool = False):
         """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama.
         
         Args:
@@ -996,19 +1393,12 @@ class RAGService:
             top_p: Nucleus sampling parameter (0.0 to 1.0)
             frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
             repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
+            is_voice_mode: Whether this is voice mode (uses shorter, conversational responses)
         """
+        messages = messages or []
         model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
-        history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
-        full_query = f"{history_context}\nUser: {query_text}" if history_context else query_text
-
-        if use_hybrid_search and self.bm25_model:
-            logger.info("Using hybrid search (BM25 + semantic)")
-            text_docs = self.hybrid_search(full_query, n_results)
-            context = " ".join(text_docs)
-        else:
-            logger.info("Using semantic vector search")
-            results = self.text_collection.query(query_texts=[full_query], n_results=n_results)
-            context = " ".join(results['documents'][0]) if results.get('documents') else ""
+        full_query = self.build_retrieval_query(query_text, messages)
+        source_records = self.get_retrieval_records(full_query, n_results, use_hybrid_search)
 
         # Build messages with conversation memory support
         llm_messages = []
@@ -1023,9 +1413,25 @@ class RAGService:
         # Add conversation history
         llm_messages.extend(messages)
         
+        # Use voice-optimized system prompt if in voice mode
+        if is_voice_mode and system_prompt == "You are a helpful assistant.":
+            from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+            system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+        
+        # Adjust max_tokens for voice mode
+        if is_voice_mode:
+            max_tokens = min(max_tokens, 300)
+        
         # Add system prompt and current query with context
         llm_messages.append({"role": "system", "content": system_prompt})
-        llm_messages.append({"role": "user", "content": f"Context: {context}\n\nQuery: {query_text}"})
+        llm_messages.append({
+            "role": "system",
+            "content": "Do not include citations, source numbers, filenames, bracketed references, or a Sources section unless the user explicitly asks for sources.",
+        })
+        llm_messages.append({
+            "role": "user",
+            "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
+        })
         
         async for chunk in stream_ollama(
             llm_messages, 

@@ -18,9 +18,17 @@ import threading
 import warnings
 from typing import Optional, Generator, Tuple, Callable
 
-import librosa
 import numpy as np
-import torch
+
+try:
+    import librosa
+except Exception:
+    librosa = None
+
+try:
+    import torch
+except Exception:
+    torch = None
 
 # Suppress the FutureWarning from transformers about 'inputs' deprecation
 # This is an internal transformers issue that will be fixed in a future version
@@ -31,9 +39,13 @@ warnings.filterwarnings(
     module="transformers.*"
 )
 
-from transformers import pipeline
-
 logger = logging.getLogger(__name__)
+
+
+def _get_transformers_pipeline():
+    from transformers import pipeline as transformers_pipeline
+
+    return transformers_pipeline
 
 
 class SpeechService:
@@ -61,12 +73,13 @@ class SpeechService:
             return
             
         try:
+            pipeline = _get_transformers_pipeline()
             logger.info(f"Loading transformers Whisper model: {self.model_name}")
             self.pipe = pipeline(
                 "automatic-speech-recognition",
                 model=self.model_name,
-                device=0 if torch.cuda.is_available() else -1,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device=0 if torch and torch.cuda.is_available() else -1,
+                torch_dtype=torch.float16 if torch and torch.cuda.is_available() else (torch.float32 if torch else None),
                 # Enable return_timestamps for long-form audio (>30s)
                 return_timestamps=True,
             )

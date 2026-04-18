@@ -33,7 +33,6 @@ from app.services.tts_service import get_tts_service, preload_tts_model
 from app.services.vllm_service import vllm_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
-from sentence_transformers import SentenceTransformer
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
 
 try:
@@ -88,6 +87,7 @@ class RAGQueryRequestEnhanced(BaseModel):
     top_p: Optional[float] = 0.9
     frequency_penalty: Optional[float] = 0.0
     repetition_penalty: Optional[float] = 1.0
+    is_voice_mode: Optional[bool] = False
     # Conversation memory fields
     session_id: Optional[str] = None
     conversation_summary: Optional[str] = None
@@ -127,6 +127,7 @@ class LocalHFEmbeddingFunction:
     """Local HuggingFace embedding function with batching"""
 
     def __init__(self, model_name: str, device: str = None, batch_size: int = 64):
+        from sentence_transformers import SentenceTransformer
         if device is None:
             device = "cuda" if torch and torch.cuda.is_available() else "cpu"
         self.model = SentenceTransformer(model_name, device=device)
@@ -190,8 +191,12 @@ async def lifespan(app: FastAPI):
 
     # Initialize services
     global rag_service
-    rag_service = RAGService()
-    logger.info("RAG service ready")
+    try:
+        rag_service = RAGService()
+        logger.info("RAG service ready")
+    except Exception as e:
+        logger.warning(f"RAG service initialization failed: {e}")
+        rag_service = None
 
     # Restore configuration
     try:
@@ -226,9 +231,16 @@ async def lifespan(app: FastAPI):
     # Preload speech models for reduced latency
     # This now runs synchronously to ensure models are ready before "startup complete"
     preload_enabled = os.getenv("PRELOAD_SPEECH_MODELS", "1").strip().lower() not in {"0", "false", "no"}
-    preload_async = os.getenv("PRELOAD_SPEECH_MODELS_ASYNC", "0").strip().lower() in {"1", "true", "yes"}
+    preload_async_raw = os.getenv("PRELOAD_SPEECH_MODELS_ASYNC")
+    preload_async = (
+        preload_async_raw.strip().lower() in {"1", "true", "yes"}
+        if preload_async_raw is not None
+        else bool(config_info["is_containerized"])
+    )
     
     if preload_enabled:
+        if preload_async_raw is None and config_info["is_containerized"]:
+            logger.info("Containerized environment detected; speech models will preload in background by default")
         logger.info("=" * 60)
         logger.info("LOADING SPEECH MODELS (this may take a moment)...")
         logger.info("=" * 60)
@@ -683,9 +695,18 @@ async def rag_query(request: RAGQueryRequestEnhanced):
             except Exception as e:
                 logger.warning(f"Vector query failed: {e}")
 
+            # Use voice-optimized prompt if in voice mode
+            system_prompt = request.system_prompt
+            if request.is_voice_mode and system_prompt == "You are a helpful assistant.":
+                from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+                system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+            
+            # Adjust max_tokens for voice mode
+            max_tokens = min(request.max_tokens, 300) if request.is_voice_mode else request.max_tokens
+
             # Create messages
             messages = request.messages + [
-                {"role": "system", "content": request.system_prompt},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"}
             ]
 
@@ -695,7 +716,7 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                     messages=messages, 
                     model=request.model,
                     temperature=request.temperature,
-                    max_tokens=request.max_tokens,
+                    max_tokens=max_tokens,
                     top_p=request.top_p,
                     frequency_penalty=request.frequency_penalty,
                     repetition_penalty=request.repetition_penalty
@@ -740,7 +761,8 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                         request.max_tokens,
                         request.top_p,
                         request.frequency_penalty,
-                        request.repetition_penalty
+                        request.repetition_penalty,
+                        request.is_voice_mode
                     ):
                         yield chunk + "\n"
 

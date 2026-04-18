@@ -1,5 +1,5 @@
 # Dockerfile for Streamlit Frontend
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -27,12 +27,13 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/profile
 ENV PATH="/root/.local/bin:${PATH}"
 ENV UV_LINK_MODE=copy
+ENV UV_PYTHON=3.13
 
 # Create app directory
 WORKDIR /app
 
-# Copy pyproject.toml, .python-version, and uv.lock first for better caching
-COPY pyproject.toml .python-version uv.lock ./
+# Copy dependency metadata first for better caching
+COPY pyproject.toml uv.lock ./
 
 # Install only frontend dependencies (not backend, not dev)
 RUN --mount=type=cache,target=/root/.cache/uv \

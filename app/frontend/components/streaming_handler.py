@@ -32,7 +32,8 @@ class StreamingHandler:
         tts_callback: Optional[Callable[[str], None]] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        is_voice_mode: bool = False
     ) -> Optional[str]:
         """Stream a chat response with reasoning segregation and conversation memory.
         
@@ -53,6 +54,7 @@ class StreamingHandler:
             conversation_history: Previous messages in the conversation
             conversation_summary: Summary of earlier messages
             session_id: Session identifier for memory tracking
+            is_voice_mode: Whether this is voice mode (uses conversational agent)
         """
         
         try:
@@ -83,7 +85,8 @@ class StreamingHandler:
                 hf_token=hf_token,
                 conversation_history=conversation_history,
                 conversation_summary=conversation_summary,
-                session_id=session_id
+                session_id=session_id,
+                is_voice_mode=is_voice_mode
             )
             
             return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)
@@ -118,7 +121,8 @@ class StreamingHandler:
         max_tokens: int = 2048,
         top_p: float = 0.9,
         frequency_penalty: float = 0.0,
-        repetition_penalty: float = 1.0
+        repetition_penalty: float = 1.0,
+        is_voice_mode: bool = False
     ) -> Optional[str]:
         """Stream a RAG response with reasoning segregation and conversation memory.
         
@@ -141,6 +145,7 @@ class StreamingHandler:
             top_p: Nucleus sampling parameter (0.0 to 1.0)
             frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
             repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
+            is_voice_mode: Whether this is voice mode (uses conversational agent)
         """
         
         try:
@@ -160,7 +165,8 @@ class StreamingHandler:
                 max_tokens=max_tokens,
                 top_p=top_p,
                 frequency_penalty=frequency_penalty,
-                repetition_penalty=repetition_penalty
+                repetition_penalty=repetition_penalty,
+                is_voice_mode=is_voice_mode
             )
             
             return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)

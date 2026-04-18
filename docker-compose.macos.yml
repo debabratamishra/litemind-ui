@@ -31,6 +31,7 @@ services:
       - OLLAMA_MODELS=${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PRELOAD_SPEECH_MODELS_ASYNC=1
       # Performance tuning
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
       - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}

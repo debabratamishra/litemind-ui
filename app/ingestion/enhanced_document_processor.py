@@ -3,13 +3,29 @@ import pandas as pd
 import numpy as np
 import cv2
 import base64
+import io
 import logging
+import os
 from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 import re
 from collections import defaultdict
-import easyocr
+
+# Optional EasyOCR import - may fail with certain PyTorch versions
+if os.getenv("LITEMIND_DISABLE_EASYOCR", "").strip().lower() in {"1", "true", "yes", "on"}:
+    EASYOCR_AVAILABLE = False
+    easyocr = None
+    logging.info("EasyOCR disabled via LITEMIND_DISABLE_EASYOCR")
+else:
+    try:
+        import easyocr
+        EASYOCR_AVAILABLE = True
+    except Exception as e:
+        EASYOCR_AVAILABLE = False
+        easyocr = None
+        logging.warning(f"EasyOCR not available (will use fallback text extraction): {e}")
+
 from docx import Document
 from docx.shared import Inches
 import zipfile
@@ -32,8 +48,13 @@ class EnhancedDocumentProcessor:
     def __init__(self):
         try:
             # Initialize OCR reader for fallback text extraction
-            self.ocr_reader = easyocr.Reader(['en'], gpu=False)
-            self.ocr_available = True
+            if EASYOCR_AVAILABLE:
+                self.ocr_reader = easyocr.Reader(['en'], gpu=False)
+                self.ocr_available = True
+            else:
+                self.ocr_reader = None
+                self.ocr_available = False
+                logger.info("OCR not available - will use PyMuPDF text extraction only")
         except Exception as e:
             logger.warning(f"OCR initialization failed: {e}")
             self.ocr_reader = None
@@ -168,12 +189,17 @@ class EnhancedDocumentProcessor:
                 text_content = self._extract_page_text_enhanced(page, page_num + 1, path.name)
                 if text_content:
                     content_blocks.extend(text_content)
+
+                ocr_fallback = self._extract_page_ocr_fallback(page, page_num + 1, path.name, text_content)
+                if ocr_fallback:
+                    content_blocks.append(ocr_fallback)
                 
                 # Enhanced image extraction with context
                 image_content = self._extract_page_images_enhanced(page, page_num + 1, path.name)
                 content_blocks.extend(image_content)
                 
                 # Extract page-level metadata and structure (with error handling)
+                page_analysis = None
                 try:
                     page_analysis = self._analyze_page_layout(page, page_num + 1, path.name)
                     if page_analysis:
@@ -182,9 +208,6 @@ class EnhancedDocumentProcessor:
                     logger.debug(f"Page layout analysis not available for page {page_num + 1}")
                 except Exception as e:
                     logger.debug(f"Page layout analysis failed for page {page_num + 1}: {e}")
-
-                if page_analysis:
-                    content_blocks.append(page_analysis)
             
             doc.close()
             
@@ -234,6 +257,87 @@ class EnhancedDocumentProcessor:
             logger.warning(f"Enhanced text extraction failed for page {page_num}: {e}")
         
         return text_blocks
+
+    def _extract_page_ocr_fallback(self, page, page_num: int, filename: str, text_blocks: List[dict]) -> Optional[dict]:
+        """Run OCR on text-light PDF pages to recover content from scanned pages."""
+        if not self.ocr_available or not self.ocr_reader:
+            return None
+
+        existing_text = " ".join(
+            block.get("content", "")
+            for block in text_blocks or []
+            if isinstance(block, dict)
+        )
+        normalized_existing = re.sub(r'\s+', ' ', existing_text).strip()
+        if len(normalized_existing) >= 80:
+            return None
+
+        try:
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            image = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+            pix = None
+
+            ocr_text, text_block_count = self._run_page_ocr(image)
+            if not ocr_text or len(ocr_text) < 40:
+                return None
+
+            if normalized_existing and normalized_existing.lower() in ocr_text.lower():
+                return None
+
+            return {
+                "content": f"""OCR PAGE TEXT from {filename}:
+                Page: {page_num}
+                OCR Extracted Text: {ocr_text}
+                """,
+                "metadata": {
+                    "filename": filename,
+                    "page_number": page_num,
+                    "content_type": "pdf_page_ocr",
+                    "ocr_text_blocks": text_block_count,
+                    "extraction_method": "page_ocr_fallback",
+                },
+            }
+        except Exception as e:
+            logger.debug(f"Page OCR fallback failed for page {page_num}: {e}")
+            return None
+
+    def _run_page_ocr(self, image: Image.Image) -> Tuple[str, int]:
+        """Apply a few OCR-friendly variants to a rendered PDF page."""
+        rgb = np.array(image)
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        variants = [rgb, gray]
+
+        denoised = cv2.fastNlMeansDenoising(gray)
+        variants.append(denoised)
+        _, otsu = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        variants.append(otsu)
+
+        if min(gray.shape[:2]) < 1200:
+            variants.append(cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC))
+
+        seen = set()
+        extracted = []
+
+        for variant in variants:
+            try:
+                results = self.ocr_reader.readtext(variant)
+            except Exception as exc:
+                logger.debug(f"PDF OCR variant failed: {exc}")
+                continue
+
+            for _, text, confidence in results:
+                cleaned = re.sub(r'\s+', ' ', str(text)).strip()
+                if confidence <= 0.25 or len(cleaned) < 2:
+                    continue
+
+                dedupe_key = cleaned.lower()
+                if dedupe_key in seen:
+                    continue
+
+                seen.add(dedupe_key)
+                extracted.append(cleaned)
+
+        return " ".join(extracted), len(extracted)
     
     def _analyze_text_layout(self, text_dict: dict) -> dict:
         """Analyze text layout characteristics."""

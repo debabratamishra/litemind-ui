@@ -210,6 +210,9 @@ class ChatPage:
                 if web_search_status["enabled"] and not web_search_status["token_valid"]:
                     st.warning("⚠️ SerpAPI token is required to perform Web search. Defaulting to local results")
                 
+                # Check if realtime voice mode is active
+                is_voice_mode = st.session_state.get("realtime_voice_mode_chat", False)
+                
                 status_text = self._get_status_text(backend_provider, config.get("model", "default"))
                 
                 with st.spinner(status_text):
@@ -227,7 +230,8 @@ class ChatPage:
                         use_fastapi=self.backend_available,
                         conversation_history=conversation_history,
                         conversation_summary=conversation_summary,
-                        session_id=self.memory_manager.session_id
+                        session_id=self.memory_manager.session_id,
+                        is_voice_mode=is_voice_mode
                     )
         
         if reply:

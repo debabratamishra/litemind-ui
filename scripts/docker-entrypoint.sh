@@ -171,7 +171,7 @@ start_application() {
     log_info "Application started with PID: $app_pid"
     
     # Wait for the application to be ready
-    if wait_for_condition "check_service 'FastAPI' 'http://localhost:8000/health'" 30 "FastAPI backend to be ready"; then
+    if wait_for_condition "check_service 'FastAPI' 'http://localhost:8000/health'" 120 "FastAPI backend to be ready"; then
         log_success "🎉 Application is ready and serving requests"
     else
         log_error "❌ Application failed to become ready"

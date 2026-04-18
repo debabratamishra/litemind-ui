@@ -83,6 +83,8 @@ class VoiceInput:
             st.session_state[self.realtime_mode_key] = True
             st.session_state[self.audio_mode_key] = False
             st.session_state[self.audio_processed_key] = False
+            # Mark that we're initializing realtime mode for the first time
+            st.session_state[f"realtime_initializing_{self.page_key}"] = True
             st.rerun()
         
         # Handle microphone click

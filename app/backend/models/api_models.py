@@ -22,6 +22,7 @@ class ChatRequestEnhanced(BaseModel):
     backend: Optional[str] = "ollama"
     hf_token: Optional[str] = None
     use_web_search: Optional[bool] = False
+    is_voice_mode: Optional[bool] = False  # True for voice agent, False for text agent
     # Conversation memory fields
     session_id: Optional[str] = None  # Session ID for memory tracking
     conversation_history: Optional[List[ChatMessage]] = None  # Previous messages
@@ -43,6 +44,7 @@ class RAGQueryRequestEnhanced(BaseModel):
     top_p: Optional[float] = 0.9  # Nucleus sampling parameter (0.0 to 1.0)
     frequency_penalty: Optional[float] = 0.0  # Penalize frequent tokens (-2.0 to 2.0)
     repetition_penalty: Optional[float] = 1.0  # Penalize repeated tokens (0.0 to 2.0)
+    is_voice_mode: Optional[bool] = False  # True for voice agent, False for text agent
     # Conversation memory fields
     session_id: Optional[str] = None  # Session ID for memory tracking
     conversation_summary: Optional[str] = None  # Summary of older messages

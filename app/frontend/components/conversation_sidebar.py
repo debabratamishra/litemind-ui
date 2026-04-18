@@ -249,12 +249,13 @@ class ConversationHistorySidebar:
         """Set the currently active conversation ID."""
         st.session_state[f"{self.conversation_type}_active_conversation_id"] = value
     
-    def create_new_conversation(self, first_message: Optional[str] = None) -> Conversation:
+    def create_new_conversation(self, first_message: Optional[str] = None, clear_session: bool = True) -> Conversation:
         """
         Create a new conversation and set it as active.
         
         Args:
             first_message: Optional first message to generate title from
+            clear_session: Whether to clear session state (True for manual creation, False for auto-creation from message)
             
         Returns:
             The newly created Conversation
@@ -270,13 +271,15 @@ class ConversationHistorySidebar:
         
         self.active_conversation_id = conversation.id
         
-        # Clear current messages in session state
-        messages_key = "chat_messages" if self.conversation_type == "chat" else "rag_messages"
-        st.session_state[messages_key] = []
-        
-        # Clear summary
-        summary_key = f"{self.conversation_type}_conversation_summary"
-        st.session_state[summary_key] = None
+        # Only clear session state if explicitly requested (manual "New Conversation" button)
+        # Don't clear when auto-creating from first message save
+        if clear_session:
+            messages_key = "chat_messages" if self.conversation_type == "chat" else "rag_messages"
+            st.session_state[messages_key] = []
+            
+            # Clear summary
+            summary_key = f"{self.conversation_type}_conversation_summary"
+            st.session_state[summary_key] = None
         
         logger.info(f"Created new {self.conversation_type} conversation: {conversation.id}")
         return conversation
@@ -328,9 +331,11 @@ class ConversationHistorySidebar:
             metadata: Optional metadata
         """
         if not self.active_conversation_id:
-            # Create a new conversation with this as the first message
+            # Create a new conversation without clearing session state
+            # (session state already has the message we're about to save)
             conversation = self.create_new_conversation(
-                first_message=content if role == "user" else None
+                first_message=content if role == "user" else None,
+                clear_session=False  # Don't clear session state since messages are already there
             )
             self.active_conversation_id = conversation.id
         

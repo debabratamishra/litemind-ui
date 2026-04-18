@@ -27,11 +27,17 @@ psutil
 nltk
 streamlit
 streamlit-audiorecorder
+python-pptx
 transformers
 torch
 librosa
 soundfile
 wordfreq
+trafilatura
+striprtf
+odfpy
+openpyxl
+PyYAML
 # edge-tts removed - TTS uses kokoro (primary) or pyttsx3 (fallback)
 pyttsx3
 

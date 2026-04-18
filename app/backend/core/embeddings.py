@@ -4,7 +4,6 @@ Core embedding functionality
 import logging
 from typing import List, Union, Dict
 
-from sentence_transformers import SentenceTransformer
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
 try:
@@ -19,6 +18,7 @@ class LocalHFEmbeddingFunction:
     """Local HuggingFace embedding function with batching"""
 
     def __init__(self, model_name: str, device: str = None, batch_size: int = 64):
+        from sentence_transformers import SentenceTransformer
         if device is None:
             device = "cuda" if torch and torch.cuda.is_available() else "cpu"
         
