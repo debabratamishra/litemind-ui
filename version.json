@@ -1,8 +1,8 @@
 {
-  "version": "0.0.12",
+  "version": "0.0.13",
   "major": 0,
   "minor": 0,
-  "patch": 12,
-  "build_date": "2026-01-01T00:42:35Z",
-  "git_commit": "57881a6"
+  "patch": 13,
+  "build_date": "2026-04-18T11:19:34Z",
+  "git_commit": "04178e2"
 }
