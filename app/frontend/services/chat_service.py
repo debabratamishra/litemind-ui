@@ -29,7 +29,8 @@ class ChatService:
         repetition_penalty: float = 1.0,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        enable_generative_ui: bool = False,
     ) -> Optional[str]:
         """Call the non-streaming chat endpoint with conversation memory."""
         try:
@@ -40,7 +41,8 @@ class ChatService:
                 "max_tokens": max_tokens,
                 "top_p": top_p,
                 "frequency_penalty": frequency_penalty,
-                "repetition_penalty": repetition_penalty
+                "repetition_penalty": repetition_penalty,
+                "enable_generative_ui": enable_generative_ui,
             }
             
             # Add conversation history if provided
@@ -78,7 +80,8 @@ class ChatService:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None,
-        is_voice_mode: bool = False
+        is_voice_mode: bool = False,
+        enable_generative_ui: bool = False,
     ) -> requests.Response:
         """Stream a chat response from the backend with conversation memory."""
         payload = {
@@ -90,7 +93,8 @@ class ChatService:
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
             "backend": backend,
-            "is_voice_mode": is_voice_mode
+            "is_voice_mode": is_voice_mode,
+            "enable_generative_ui": enable_generative_ui,
         }
         
         if backend == "vllm" and hf_token:

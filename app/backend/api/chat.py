@@ -22,6 +22,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
 
+GENERATIVE_UI_SYSTEM_PROMPT = (
+    "You can embed rich UI components using fenced code blocks with a "
+    "ui: language tag and a JSON body.\n\n"
+    "EXAMPLE – comparison table:\n"
+    "```ui:data_table\n"
+    '{"title": "Model Comparison", "columns": ["Model", "Size", "Speed"], '
+    '"data": [["Gemma", "1B", "Fast"], ["Llama", "8B", "Medium"]]}\n'
+    "```\n\n"
+    "EXAMPLE – key metrics:\n"
+    "```ui:metric\n"
+    '{"metrics": [{"label": "Users", "value": "1,234", "delta": "+12%"}, '
+    '{"label": "Latency", "value": "45ms"}]}\n'
+    "```\n\n"
+    "Available components: data_table (columns + data), metric (label/value/delta), "
+    "chart (type/x/y), info_card (icon/title/content/color), "
+    "button_group (label/buttons with text/value), "
+    "alert (level/message), steps (steps/current), tabs (label/content), "
+    "callout (emoji/title/content), columns (items), json_viewer (title/data), "
+    "progress (value/label), link_cards (links).\n\n"
+    "Rules: valid JSON inside blocks, combine text with blocks, "
+    "use components only when structured display helps. "
+    "When comparing items, USE a data_table. When showing numbers, USE metric. "
+    "Otherwise respond with normal text."
+)
+
+
 def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str, str]]:
     """
     Build the messages list including conversation history and summary.
@@ -42,6 +68,12 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
             "role": "system",
             "content": DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
         })
+
+    if request.enable_generative_ui:
+        messages.append({
+            "role": "system",
+            "content": GENERATIVE_UI_SYSTEM_PROMPT
+        })
     
     # Add conversation summary as system context if available
     if request.conversation_summary:
@@ -58,8 +90,15 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
                 "content": msg.content
             })
     
-    # Add the current user message
-    messages.append({"role": "user", "content": request.message})
+    # Add the current user message (with optional generative UI hint)
+    user_content = request.message
+    if request.enable_generative_ui:
+        user_content += (
+            "\n\n[Formatting: use markdown tables for comparisons and "
+            "**Bold Label:** Value lines for key metrics. "
+            "Or use ```ui:data_table / ```ui:metric blocks if possible.]"
+        )
+    messages.append({"role": "user", "content": user_content})
     
     return messages
 

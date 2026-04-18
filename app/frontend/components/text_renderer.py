@@ -62,15 +62,21 @@ class TextRenderer:
     def __init__(self):
         self.thinking_renderer = ThinkingRenderer()
         
-    def render_llm_text(self, text: str) -> None:
+    def render_llm_text(self, text: str, msg_index: int = 0) -> None:
         """Render mixed Markdown and fenced code blocks in Streamlit with reasoning support."""
         text = unescape_text(text).strip()
         
         # Extract thinking/reasoning content first
         thinking_content, clean_text = extract_thinking_content(text)
         
-        # Clean up common formatting issues
-        clean_text = clean_text_formatting(clean_text)
+        # Skip whole-text clean_text_formatting when UI blocks are present
+        # to preserve JSON inside ```ui:... blocks; render_mixed_content
+        # applies cleaning per-segment instead.
+        # Also skip when generative UI is on so auto-enhancement can detect
+        # markdown tables before they are reformatted.
+        from .generative_ui import has_ui_blocks
+        if not has_ui_blocks(clean_text) and not st.session_state.get("enable_generative_ui", False):
+            clean_text = clean_text_formatting(clean_text)
         
         # Render the thinking section if present and not hidden
         if thinking_content:
@@ -78,10 +84,21 @@ class TextRenderer:
             st.markdown("---")  # Separator between thinking and answer
         
         # Render the main answer content
-        self._render_main_content(clean_text)
+        self._render_main_content(clean_text, msg_index=msg_index)
 
-    def _render_main_content(self, text: str) -> None:
-        """Render the main content with code blocks."""
+    def _render_main_content(self, text: str, msg_index: int = 0) -> None:
+        """Render the main content with code blocks and UI components."""
+        from .generative_ui import has_ui_blocks, render_mixed_content, auto_enhance_content
+
+        # When generative UI is on but the model didn't emit ui:* blocks,
+        # auto-detect markdown tables / metrics and convert them.
+        if st.session_state.get("enable_generative_ui", False) and not has_ui_blocks(text):
+            text = auto_enhance_content(text)
+
+        if has_ui_blocks(text):
+            render_mixed_content(text, msg_index=msg_index)
+            return
+
         code_fence = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
 
         pos = 0
@@ -186,11 +203,23 @@ class StreamingRenderer:
         """Render the answer content."""
         if self._answer_box is None:
             return
-            
-        cleaned = clean_text_formatting(self.answer_text)
-        cleaned = clean_markdown_text(cleaned)
-        cleaned = sanitize_links(unescape_text(cleaned))
-        self._answer_box.markdown(cleaned)
+
+        from .generative_ui import has_ui_blocks, render_mixed_content, auto_enhance_content
+
+        display_text = self.answer_text
+
+        # Auto-enhance when generative UI is on but model didn't emit blocks
+        if st.session_state.get("enable_generative_ui", False) and not has_ui_blocks(display_text):
+            display_text = auto_enhance_content(display_text)
+
+        if has_ui_blocks(display_text):
+            with self._answer_box.container():
+                render_mixed_content(display_text)
+        else:
+            cleaned = clean_text_formatting(display_text)
+            cleaned = clean_markdown_text(cleaned)
+            cleaned = sanitize_links(unescape_text(cleaned))
+            self._answer_box.markdown(cleaned)
 
     def _append_text(self, text: str) -> None:
         """Append text to the appropriate section."""
@@ -246,9 +275,9 @@ class StreamingRenderer:
 # Global renderer instances
 text_renderer = TextRenderer()
 
-def render_llm_text(text: str) -> None:
+def render_llm_text(text: str, msg_index: int = 0) -> None:
     """Render LLM text with reasoning support."""
-    text_renderer.render_llm_text(text)
+    text_renderer.render_llm_text(text, msg_index=msg_index)
 
 
 class PlainTextRenderer:

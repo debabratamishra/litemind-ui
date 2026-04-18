@@ -23,6 +23,7 @@ class ChatRequestEnhanced(BaseModel):
     hf_token: Optional[str] = None
     use_web_search: Optional[bool] = False
     is_voice_mode: Optional[bool] = False  # True for voice agent, False for text agent
+    enable_generative_ui: Optional[bool] = False
     # Conversation memory fields
     session_id: Optional[str] = None  # Session ID for memory tracking
     conversation_history: Optional[List[ChatMessage]] = None  # Previous messages

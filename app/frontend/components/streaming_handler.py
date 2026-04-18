@@ -33,7 +33,8 @@ class StreamingHandler:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None,
-        is_voice_mode: bool = False
+        is_voice_mode: bool = False,
+        enable_generative_ui: bool = False,
     ) -> Optional[str]:
         """Stream a chat response with reasoning segregation and conversation memory.
         
@@ -55,6 +56,7 @@ class StreamingHandler:
             conversation_summary: Summary of earlier messages
             session_id: Session identifier for memory tracking
             is_voice_mode: Whether this is voice mode (uses conversational agent)
+            enable_generative_ui: Whether to instruct the model to emit ui:* blocks
         """
         
         try:
@@ -86,7 +88,8 @@ class StreamingHandler:
                 conversation_history=conversation_history,
                 conversation_summary=conversation_summary,
                 session_id=session_id,
-                is_voice_mode=is_voice_mode
+                is_voice_mode=is_voice_mode,
+                enable_generative_ui=enable_generative_ui,
             )
             
             return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)

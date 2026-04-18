@@ -51,6 +51,10 @@ class ChatPage:
         # Initialize conversation history enabled state
         if "chat_history_enabled" not in st.session_state:
             st.session_state.chat_history_enabled = True
+        
+        # Initialize generative UI state
+        if "enable_generative_ui" not in st.session_state:
+            st.session_state.enable_generative_ui = False
     
     def _render_web_search_toggle(self) -> bool:
         """
@@ -119,6 +123,12 @@ class ChatPage:
         if not realtime_active:
             self._display_chat_history()
             
+            # Handle generative UI button interactions
+            pending_genui_input = st.session_state.pop("genui_pending_input", None)
+            if pending_genui_input:
+                self._process_user_input(pending_genui_input, backend_provider)
+                return
+            
             # Render web search toggle before voice input
             self._render_web_search_toggle()
         
@@ -141,7 +151,7 @@ class ChatPage:
                     elif msg_format == "plain":
                         render_plain_text(msg["content"])
                     else:
-                        render_llm_text(msg["content"])
+                        render_llm_text(msg["content"], msg_index=idx)
                     
                     # Add TTS play button for assistant messages (always show)
                     if msg["role"] == "assistant":
@@ -231,7 +241,8 @@ class ChatPage:
                         conversation_history=conversation_history,
                         conversation_summary=conversation_summary,
                         session_id=self.memory_manager.session_id,
-                        is_voice_mode=is_voice_mode
+                        is_voice_mode=is_voice_mode,
+                        enable_generative_ui=st.session_state.get("enable_generative_ui", False)
                     )
         
         if reply:
@@ -316,6 +327,13 @@ class ChatPage:
         
         # Reasoning settings using shared component
         render_reasoning_config()
+        
+        # Generative UI toggle
+        st.sidebar.checkbox(
+            "✨ Generative UI",
+            key="enable_generative_ui",
+            help="Enable rich UI components (charts, tables, metrics, buttons) in AI responses"
+        )
         
         # Memory configuration using shared component
         render_memory_config(self.memory_manager, "chat", "history_enabled", "memory_enabled")
