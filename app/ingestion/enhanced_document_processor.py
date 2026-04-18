@@ -5,6 +5,7 @@ import cv2
 import base64
 import io
 import logging
+import os
 from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -12,13 +13,18 @@ import re
 from collections import defaultdict
 
 # Optional EasyOCR import - may fail with certain PyTorch versions
-try:
-    import easyocr
-    EASYOCR_AVAILABLE = True
-except ImportError as e:
+if os.getenv("LITEMIND_DISABLE_EASYOCR", "").strip().lower() in {"1", "true", "yes", "on"}:
     EASYOCR_AVAILABLE = False
     easyocr = None
-    logging.warning(f"EasyOCR not available (will use fallback text extraction): {e}")
+    logging.info("EasyOCR disabled via LITEMIND_DISABLE_EASYOCR")
+else:
+    try:
+        import easyocr
+        EASYOCR_AVAILABLE = True
+    except Exception as e:
+        EASYOCR_AVAILABLE = False
+        easyocr = None
+        logging.warning(f"EasyOCR not available (will use fallback text extraction): {e}")
 
 from docx import Document
 from docx.shared import Inches

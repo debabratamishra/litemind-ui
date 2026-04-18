@@ -17,9 +17,6 @@ import logging
 import asyncio
 import base64
 from rank_bm25 import BM25Okapi
-import nltk
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
 import string
 from typing import Any, Dict, List, Tuple
 import numpy as np
@@ -27,7 +24,7 @@ from pathlib import Path
 from PIL import Image
 import gc
 import json
-import importlib.util
+import importlib
 from typing import Optional
 
 from app.core.rag_formats import SUPPORTED_EXTENSIONS
@@ -42,13 +39,43 @@ MAX_IMAGES_PER_DOC = int(os.getenv("MAX_IMAGES_PER_DOC", "10"))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Download NLTK data if needed
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('punkt')
-    nltk.download('stopwords')
+DEFAULT_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "for", "from",
+    "had", "has", "have", "he", "her", "hers", "him", "his", "i", "if", "in", "into",
+    "is", "it", "its", "me", "my", "of", "on", "or", "our", "ours", "she", "so",
+    "that", "the", "their", "theirs", "them", "they", "this", "those", "to", "too",
+    "us", "was", "we", "were", "what", "when", "where", "which", "who", "why", "with",
+    "you", "your", "yours",
+}
+
+_stopwords_fallback_logged = False
+_tokenizer_fallback_logged = False
+
+
+def _module_importable(module_name: str) -> bool:
+    try:
+        importlib.import_module(module_name)
+        return True
+    except Exception:
+        return False
+
+
+def _load_stop_words() -> set[str]:
+    global _stopwords_fallback_logged
+
+    if not _stopwords_fallback_logged:
+        logger.info("Using built-in stopword list for BM25 preprocessing")
+        _stopwords_fallback_logged = True
+    return set(DEFAULT_STOP_WORDS)
+
+
+def _tokenize_text(text: str) -> List[str]:
+    global _tokenizer_fallback_logged
+
+    if not _tokenizer_fallback_logged:
+        logger.info("Using regex tokenizer for BM25 preprocessing")
+        _tokenizer_fallback_logged = True
+    return re.findall(r"\b\w+\b", text)
 
 def _flatten_metadata(meta, prefix=""):
     """Flatten a (possibly nested) metadata mapping into a single-level dict.
@@ -125,9 +152,16 @@ class RAGService:
 
         self.client = self._get_or_create_client(self.chroma_db_path)
 
-        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name="all-MiniLM-L6-v2"
-        )
+        try:
+            self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="all-MiniLM-L6-v2"
+            )
+        except Exception as e:
+            logger.warning(f"SentenceTransformerEmbeddingFunction not available ({e}), using ChromaDB default")
+            try:
+                self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            except Exception:
+                self.embedding_function = None
 
         self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
 
@@ -148,7 +182,7 @@ class RAGService:
         self.processed_files = {}  # filename -> {hash, chunk_count, timestamp}
         self.file_hashes = {}  # hash -> filename (for duplicate detection)
 
-        self.stop_words = set(stopwords.words('english'))
+        self.stop_words = _load_stop_words()
 
         # Initialize image cache directory using environment-aware path
         upload_dir = self._get_upload_directory()
@@ -384,10 +418,7 @@ class RAGService:
 
     def get_capabilities(self) -> dict:
         """Report processing capabilities and supported extensions detected at runtime."""
-        ocr_available = any(
-            importlib.util.find_spec(name) is not None
-            for name in ("pytesseract", "easyocr")
-        )
+        ocr_available = _module_importable("pytesseract") or _module_importable("easyocr")
 
         ingestion_capabilities = get_ingestion_capabilities()
 
@@ -411,7 +442,7 @@ class RAGService:
         # Clean text before tokenization
         text = self._clean_text_for_indexing(text)
         
-        tokens = word_tokenize(text.lower())
+        tokens = _tokenize_text(text.lower())
         tokens = [t for t in tokens if t not in self.stop_words and t not in string.punctuation and len(t) > 1]
         return tokens
     

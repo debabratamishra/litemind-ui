@@ -2,19 +2,25 @@ import pandas as pd
 import numpy as np
 import io
 import logging
+import os
 import re
 from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Generator
 
 # Optional imports for enhanced features
-try:
-    import easyocr
-    EASYOCR_AVAILABLE = True
-except ImportError as e:
+if os.getenv("LITEMIND_DISABLE_EASYOCR", "").strip().lower() in {"1", "true", "yes", "on"}:
     easyocr = None
     EASYOCR_AVAILABLE = False
-    logging.warning(f"EasyOCR not available: {e}")
+    logging.info("EasyOCR disabled via LITEMIND_DISABLE_EASYOCR")
+else:
+    try:
+        import easyocr
+        EASYOCR_AVAILABLE = True
+    except Exception as e:
+        easyocr = None
+        EASYOCR_AVAILABLE = False
+        logging.warning(f"EasyOCR not available: {e}")
 
 try:
     import cv2

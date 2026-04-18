@@ -35,6 +35,7 @@ services:
       - RELOAD=1
       - LOG_LEVEL=DEBUG
       - ENVIRONMENT=development
+      - PRELOAD_SPEECH_MODELS_ASYNC=1
       # Development performance settings (lower for debugging)
       - OMP_NUM_THREADS=2
       - MKL_NUM_THREADS=2

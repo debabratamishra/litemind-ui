@@ -30,6 +30,7 @@ services:
       - DEBUG=0
       - LOG_LEVEL=INFO
       - ENVIRONMENT=production
+      - PRELOAD_SPEECH_MODELS_ASYNC=1
       # Production optimizations - use more threads for better performance
       - OMP_NUM_THREADS=${PROD_OMP_THREADS:-8}
       - MKL_NUM_THREADS=${PROD_MKL_THREADS:-8}
