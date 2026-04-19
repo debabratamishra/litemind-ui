@@ -23,28 +23,50 @@ router = APIRouter(tags=["chat"])
 
 
 GENERATIVE_UI_SYSTEM_PROMPT = (
-    "You can embed rich UI components using fenced code blocks with a "
-    "ui: language tag and a JSON body.\n\n"
+    "You can embed rich UI components in your responses using fenced code "
+    "blocks with a ui: language tag followed by a JSON body on the NEXT line.\n\n"
+    "FORMATTING RULES:\n"
+    "1. Start the block with ```ui:component_name\n"
+    "2. Put valid JSON props on the next line(s)\n"
+    "3. Close with ``` on its own line\n"
+    "4. Mix normal markdown text freely between component blocks\n\n"
     "EXAMPLE – comparison table:\n"
     "```ui:data_table\n"
     '{"title": "Model Comparison", "columns": ["Model", "Size", "Speed"], '
     '"data": [["Gemma", "1B", "Fast"], ["Llama", "8B", "Medium"]]}\n'
     "```\n\n"
-    "EXAMPLE – key metrics:\n"
+    "EXAMPLE – key metrics side by side:\n"
     "```ui:metric\n"
     '{"metrics": [{"label": "Users", "value": "1,234", "delta": "+12%"}, '
-    '{"label": "Latency", "value": "45ms"}]}\n'
+    '{"label": "Latency", "value": "45ms", "delta": "-5ms"}]}\n'
+    "```\n\n"
+    "EXAMPLE – bar chart:\n"
+    "```ui:chart\n"
+    '{"type": "bar", "title": "Quarterly Sales", '
+    '"x": ["Q1", "Q2", "Q3", "Q4"], "y": [100, 150, 200, 180]}\n'
+    "```\n\n"
+    "EXAMPLE – info card:\n"
+    "```ui:info_card\n"
+    '{"icon": "💡", "title": "Tip", "content": "Use streaming for faster responses", "color": "#4CAF50"}\n'
     "```\n\n"
     "Available components: data_table (columns + data), metric (label/value/delta), "
-    "chart (type/x/y), info_card (icon/title/content/color), "
+    "chart (type: bar/line/pie/scatter, x, y), info_card (icon/title/content/color), "
     "button_group (label/buttons with text/value), "
-    "alert (level/message), steps (steps/current), tabs (label/content), "
-    "callout (emoji/title/content), columns (items), json_viewer (title/data), "
-    "progress (value/label), link_cards (links).\n\n"
-    "Rules: valid JSON inside blocks, combine text with blocks, "
-    "use components only when structured display helps. "
-    "When comparing items, USE a data_table. When showing numbers, USE metric. "
-    "Otherwise respond with normal text."
+    "alert (level: info/success/warning/error, message), "
+    "steps (steps/current), tabs (tabs with label/content), "
+    "callout (emoji/title/content), columns (items with title/content/icon), "
+    "json_viewer (title/data), progress (value/label), "
+    "link_cards (links with title/url/description).\n\n"
+    "WHEN TO USE:\n"
+    "- Comparing items → data_table\n"
+    "- Key numbers/statistics → metric\n"
+    "- Trends over time → chart\n"
+    "- Step-by-step instructions → steps\n"
+    "- Important notices → alert or callout\n"
+    "- Simple text answers → just use normal markdown, no components needed\n\n"
+    "FALLBACK: If you are unsure about the component JSON syntax, use standard "
+    "markdown tables and **Bold Label:** Value lines instead – those will be "
+    "auto-converted to rich components."
 )
 
 
@@ -94,9 +116,12 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
     user_content = request.message
     if request.enable_generative_ui:
         user_content += (
-            "\n\n[Formatting: use markdown tables for comparisons and "
-            "**Bold Label:** Value lines for key metrics. "
-            "Or use ```ui:data_table / ```ui:metric blocks if possible.]"
+            "\n\n[Respond using rich UI components when helpful: "
+            "```ui:data_table for comparisons/tables, "
+            "```ui:metric for key numbers, "
+            "```ui:chart for trends. "
+            "If unsure about component syntax, use standard markdown tables "
+            "and **Bold Label:** Value lines instead.]"
         )
     messages.append({"role": "user", "content": user_content})
     

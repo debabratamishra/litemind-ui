@@ -200,26 +200,24 @@ class StreamingRenderer:
         )
 
     def _render_answer(self) -> None:
-        """Render the answer content."""
+        """Render the answer content.
+
+        During streaming, always use plain markdown for smooth rendering.
+        Rich generative-UI components (dataframes, charts, metrics) are
+        rendered after streaming completes on the next rerun via
+        ``TextRenderer.render_llm_text()``.
+        """
         if self._answer_box is None:
             return
 
-        from .generative_ui import has_ui_blocks, render_mixed_content, auto_enhance_content
-
         display_text = self.answer_text
-
-        # Auto-enhance when generative UI is on but model didn't emit blocks
-        if st.session_state.get("enable_generative_ui", False) and not has_ui_blocks(display_text):
-            display_text = auto_enhance_content(display_text)
-
-        if has_ui_blocks(display_text):
-            with self._answer_box.container():
-                render_mixed_content(display_text)
-        else:
-            cleaned = clean_text_formatting(display_text)
-            cleaned = clean_markdown_text(cleaned)
-            cleaned = sanitize_links(unescape_text(cleaned))
-            self._answer_box.markdown(cleaned)
+        # Skip heavy text-reformatting when generative UI is on so that
+        # markdown tables survive for native st.markdown() rendering.
+        if not st.session_state.get("enable_generative_ui", False):
+            display_text = clean_text_formatting(display_text)
+        cleaned = clean_markdown_text(display_text)
+        cleaned = sanitize_links(unescape_text(cleaned))
+        self._answer_box.markdown(cleaned)
 
     def _append_text(self, text: str) -> None:
         """Append text to the appropriate section."""

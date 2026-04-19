@@ -80,7 +80,6 @@ def render_ui_component(
 def render_mixed_content(text: str, msg_index: int = 0) -> None:
     """Render text that may interleave markdown, code blocks, and UI blocks."""
     from ..utils.text_processing import (
-        clean_text_formatting,
         clean_markdown_text,
         sanitize_links,
         unescape_text,
@@ -93,8 +92,10 @@ def render_mixed_content(text: str, msg_index: int = 0) -> None:
         # --- text segment before this fence ---
         before = text[pos : match.start()]
         if before.strip():
-            cleaned = clean_text_formatting(before)
-            cleaned = clean_markdown_text(cleaned)
+            # Don't apply clean_text_formatting here – it was already
+            # skipped at the top level for generative-UI content and
+            # re-applying it can break markdown tables in mixed content.
+            cleaned = clean_markdown_text(before)
             st.markdown(sanitize_links(unescape_text(cleaned)))
             rendered_any = True
 
@@ -104,7 +105,12 @@ def render_mixed_content(text: str, msg_index: int = 0) -> None:
         if lang.startswith("ui:"):
             component_type = lang[3:]
             try:
-                props = json.loads(content)
+                # Streaming can inject line-breaks inside the JSON body
+                # (e.g. Ollama flushes on sentence-ending punctuation like
+                # periods inside string values).  Collapse whitespace so
+                # that json.loads() can still parse the payload.
+                normalised = ' '.join(content.split())
+                props = json.loads(normalised)
                 render_ui_component(component_type, props, msg_index)
             except json.JSONDecodeError:
                 st.warning(f"Invalid JSON in UI component `{component_type}`")
@@ -121,8 +127,7 @@ def render_mixed_content(text: str, msg_index: int = 0) -> None:
     # --- trailing text ---
     tail = text[pos:]
     if tail.strip() or not rendered_any:
-        cleaned = clean_text_formatting(tail)
-        cleaned = clean_markdown_text(cleaned)
+        cleaned = clean_markdown_text(tail)
         st.markdown(sanitize_links(unescape_text(cleaned)))
 
 
@@ -435,10 +440,14 @@ _COMPONENT_REGISTRY: Dict[str, Callable] = {
 # ===================================================================
 
 # Matches a complete markdown table (header + separator + 1+ data rows).
+# Handles tables with or without leading/trailing pipes.
 _MD_TABLE_PATTERN = re.compile(
-    r'(\|[^\n]+\|\s*\n'           # header row
-    r'\|[\s:|-]+\|\s*\n'          # separator row
-    r'(?:\|[^\n]+\|\s*\n?)+)',    # data rows
+    r'('
+    r'[^\n]*\|[^\n]*\n'                            # header row: any line with |
+    r'[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*'              # separator first cell
+    r'(?:\|[ \t]*:?-{2,}:?[ \t]*)+\|?[ \t]*\n'     # separator remaining cells
+    r'(?:[^\n]*\|[^\n]*\n?)+'                        # data rows: contain |
+    r')',
 )
 
 # Matches a bold-label: value line  e.g.  "**Users:** 1,234" or "**Users**: 1,234"
@@ -454,13 +463,25 @@ def _parse_md_table(table_text: str) -> Optional[dict]:
         return None
 
     def _split_row(line: str) -> list:
-        return [c.strip() for c in line.strip().strip('|').split('|')]
+        stripped = line.strip().strip('|')
+        return [c.strip() for c in stripped.split('|')]
+
+    # Validate the separator row (line 1)
+    sep_cells = [c.strip() for c in lines[1].strip().strip('|').split('|')]
+    if not all(re.match(r'^:?-{2,}:?$', c.strip()) for c in sep_cells if c.strip()):
+        return None
 
     columns = _split_row(lines[0])
     data = [_split_row(l) for l in lines[2:]]
 
     if not columns or not data:
         return None
+
+    # Normalise column counts – pad shorter rows with empty strings
+    max_cols = max(len(columns), max((len(row) for row in data), default=0))
+    columns = columns + [''] * (max_cols - len(columns))
+    data = [row + [''] * (max_cols - len(row)) for row in data]
+
     return {"columns": columns, "data": data}
 
 
@@ -523,14 +544,13 @@ def auto_enhance_content(text: str) -> str:
 
 
 # ===================================================================
-# System prompt for Generative UI
+# System prompt for Generative UI  (reference only – the canonical
+# prompt used at runtime is in app/backend/api/chat.py)
 # ===================================================================
 
 GENERATIVE_UI_SYSTEM_PROMPT = (
-    "You can render rich UI components in responses using fenced code blocks "
-    "with a ui: prefix. Use them when structured data, comparisons, metrics, "
-    "or interactive choices would enhance your answer. "
-    "For simple text answers, respond normally.\n\n"
+    "You can embed rich UI components in your responses using fenced code "
+    "blocks with a ui: language tag followed by a JSON body on the NEXT line.\n\n"
     "Syntax: ```ui:component_type\\n{JSON props}\\n```\n\n"
     "Components:\n"
     '- data_table: {"title": "...", "columns": ["A","B"], "data": [["1","2"]]}\n'
@@ -547,6 +567,6 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     '- progress: {"value": 75, "label": "..."}\n'
     '- link_cards: {"links": [{"title": "...", "url": "https://...", "description": "..."}]}\n\n'
     "Rules: Use valid JSON in component blocks. Combine text with components. "
-    "button_group value fields become the user's next message. "
-    "Not every response needs components."
+    "If unsure about syntax, use standard markdown tables and "
+    "**Bold Label:** Value lines – they will be auto-converted."
 )
