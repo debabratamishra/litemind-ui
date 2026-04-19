@@ -89,6 +89,22 @@ class ModelListResponse(BaseModel):
     models: List[str]
 
 
+class OllamaModelInfo(BaseModel):
+    """Extended info for a single Ollama model."""
+    name: str
+    parameter_size: Optional[str] = None
+    quantization: Optional[str] = None
+    family: Optional[str] = None
+    is_local: bool = True
+    description: Optional[str] = None
+
+
+class EnhancedModelListResponse(BaseModel):
+    """Response with local + cloud model information."""
+    local_models: List[OllamaModelInfo]
+    cloud_models: List[OllamaModelInfo]
+
+
 class RAGStatusResponse(BaseModel):
     status: str
     uploaded_files: Optional[int] = None

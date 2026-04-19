@@ -7,9 +7,11 @@ import httpx
 
 from app.backend.models.api_models import (
     ModelListResponse, VLLMTokenRequest, VLLMModelRequest, 
-    VLLMStatusResponse, STTRequest, TranscriptionResponse
+    VLLMStatusResponse, STTRequest, TranscriptionResponse,
+    EnhancedModelListResponse, OllamaModelInfo,
 )
 from app.backend.core.config import backend_config
+from app.backend.core.ollama_models import build_enhanced_model_payload
 from app.services.vllm_service import vllm_service
 from app.services.speech_service import get_speech_service
 
@@ -35,6 +37,17 @@ async def get_available_models():
     except Exception as e:
         logger.error(f"Failed to fetch models: {e}")
         raise HTTPException(status_code=500, detail=f"Could not fetch models: {str(e)}")
+
+
+@router.get("/models/enhanced", response_model=EnhancedModelListResponse)
+async def get_enhanced_models():
+    """Return local models with metadata + cloud catalog with availability flags."""
+    ollama_url = backend_config.get_ollama_url()
+    payload = await build_enhanced_model_payload(ollama_url)
+    return EnhancedModelListResponse(
+        local_models=[OllamaModelInfo(**model) for model in payload["local_models"]],
+        cloud_models=[OllamaModelInfo(**model) for model in payload["cloud_models"]],
+    )
 
 
 # vLLM endpoints

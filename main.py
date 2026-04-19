@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from app.backend.api import chat as chat_api
 from app.backend.core.config import DEFAULT_RAG_CONFIG
+from app.backend.core.ollama_models import build_enhanced_model_payload
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
@@ -371,17 +372,21 @@ async def readiness_check():
         return JSONResponse(status_code=503, content={"status": "error", "error": str(e)})
 
 
+def _get_ollama_url() -> str:
+    """Resolve the Ollama base URL from config / host service manager."""
+    try:
+        from app.services.host_service_manager import host_service_manager
+        return host_service_manager.environment_config.ollama_url
+    except ImportError:
+        return Config.OLLAMA_API_URL
+
+
 # Model endpoints
 @app.get("/models")
 async def get_available_models():
-    """Get available Ollama models"""
+    """Get available Ollama models (flat list, backwards-compatible)."""
     try:
-        try:
-            from app.services.host_service_manager import host_service_manager
-            ollama_url = host_service_manager.environment_config.ollama_url
-        except ImportError:
-            ollama_url = Config.OLLAMA_API_URL
-        
+        ollama_url = _get_ollama_url()
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{ollama_url}/api/tags")
             resp.raise_for_status()
@@ -389,6 +394,13 @@ async def get_available_models():
             return {"models": [model["name"] for model in data.get("models", [])]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not fetch models: {str(e)}")
+
+
+@app.get("/models/enhanced")
+async def get_enhanced_models():
+    """Return local models (with metadata) + cloud catalog with availability flags."""
+    ollama_url = _get_ollama_url()
+    return await build_enhanced_model_payload(ollama_url)
 
 
 # NOTE: Chat endpoints have been moved to app/backend/api/chat.py
