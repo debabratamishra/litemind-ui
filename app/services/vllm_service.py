@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import sys
@@ -228,6 +229,21 @@ class VLLMService:
             env.pop(k, None)
         return env
 
+    def _validate_model_name_for_cli(self, model_name: str) -> str:
+        """Validate and normalize user-supplied model name for safe CLI usage."""
+        normalized = (model_name or "").strip()
+        if not normalized:
+            raise ValueError("Model name cannot be empty.")
+        if normalized.startswith("-"):
+            raise ValueError("Invalid model name.")
+        # Allow existing local paths as-is
+        if Path(normalized).exists():
+            return normalized
+        # Allow HF repo IDs / simple identifiers with safe characters only
+        if not re.fullmatch(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*", normalized):
+            raise ValueError("Invalid model name format.")
+        return normalized
+
     def _build_vllm_cmd(self, model_name: str, **kwargs) -> List[str]:
         """Build the command to start the vLLM OpenAI-compatible server.
         Handles both containerized and native execution environments."""
@@ -239,7 +255,8 @@ class VLLMService:
         vllm_cli = shutil.which("vllm")
         if vllm_cli:
             # Newer vLLM exposes `vllm serve <model>`
-            base_cmd = [vllm_cli, "serve", model_name]
+            # Insert `--` so user-controlled model_name cannot be parsed as an option.
+            base_cmd = [vllm_cli, "serve", "--", model_name]
             # host/port flags are supported by `vllm serve`
             base_cmd.extend(["--host", "0.0.0.0", "--port", "8001"])
         else:
@@ -519,6 +536,9 @@ class VLLMService:
                         f"Normalizing model name from '{model_name}' to '{stripped}' (treating as HF repo id)."
                     )
                     model_name = stripped
+
+            # Validate model name to prevent command-line argument injection
+            model_name = self._validate_model_name_for_cli(model_name)
 
             # Prepare command
             cmd = self._build_vllm_cmd(model_name, **kwargs)
