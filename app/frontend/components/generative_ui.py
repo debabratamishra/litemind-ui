@@ -6,10 +6,12 @@ component model. Renders rich, interactive UI elements from structured
 specifications embedded in LLM output.
 
 Protocol: LLM emits fenced code blocks with a ``ui:<component>`` language
-tag followed by a JSON props object.  The frontend parses these blocks and
-renders native Streamlit widgets.
+tag. Most components use a JSON props object. ``ui:webapp`` is the one
+exception: its block body is raw HTML/CSS/JS that is rendered inside a
+Streamlit iframe for interactive mini-apps.
 """
 
+import base64
 import html
 import json
 import logging
@@ -28,6 +30,32 @@ _UI_BLOCK_RE = re.compile(r"```ui:(\w+)\s*\n(.*?)```", re.DOTALL)
 
 # Matches ALL fenced code blocks (regular + UI) for mixed-content rendering.
 _FENCE_RE = re.compile(r"```([\w:.\-]*)\s*\n(.*?)```", re.DOTALL)
+
+_WEBAPP_HEIGHT_RE = re.compile(r"^\s*<!--\s*height\s*:\s*(\d{2,4})\s*-->\s*", re.IGNORECASE)
+
+_WEBAPP_CSS = """
+<style>
+/* Make sure the chat message content itself doesn't block events */
+[data-testid="stChatMessageContent"] {
+    pointer-events: auto !important;
+}
+
+/* Ensure iframe containers and the iframes themselves are interactive */
+[data-testid="stIFrame"],
+[data-testid="stIFrame"] > iframe,
+[data-testid="stCustomComponentV1"],
+[data-testid="stCustomComponentV1"] > iframe {
+    pointer-events: auto !important;
+}
+
+/* Disable interaction on Streamlit toolbars that might overlap the iframe */
+div[data-testid="stElementToolbar"],
+div[data-testid="stElementToolbar"] * {
+    pointer-events: none !important;
+    display: none !important;
+}
+</style>
+"""
 
 
 def has_ui_blocks(text: str) -> bool:
@@ -60,7 +88,7 @@ def _sanitize_url(url: str) -> str:
 
 def render_ui_component(
     component_type: str,
-    props: dict,
+    props: Any,
     msg_index: int = 0,
 ) -> bool:
     """Render a single UI component.  Returns *True* on success."""
@@ -105,6 +133,12 @@ def render_mixed_content(text: str, msg_index: int = 0) -> None:
         if lang.startswith("ui:"):
             component_type = lang[3:]
             try:
+                if component_type == "webapp":
+                    render_ui_component(component_type, content, msg_index)
+                    rendered_any = True
+                    pos = match.end()
+                    continue
+
                 # Streaming can inject line-breaks inside the JSON body
                 # (e.g. Ollama flushes on sentence-ending punctuation like
                 # periods inside string values).  Collapse whitespace so
@@ -414,6 +448,97 @@ def _render_callout(props: dict, msg_index: int = 0) -> None:
     )
 
 
+def _inject_webapp_css() -> None:
+    if st.session_state.get("_genui_webapp_css_injected"):
+        return
+
+    st.markdown(_WEBAPP_CSS, unsafe_allow_html=True)
+    st.session_state["_genui_webapp_css_injected"] = True
+
+
+def _clamp_webapp_height(height: int) -> int:
+    return max(240, min(height, 2000))
+
+
+def _extract_webapp_height(html_content: str, default_height: int = 520) -> tuple[int, str]:
+    match = _WEBAPP_HEIGHT_RE.match(html_content)
+    if match is None:
+        return default_height, html_content.strip()
+
+    hinted_height = _clamp_webapp_height(int(match.group(1)))
+    return hinted_height, html_content[match.end():].strip()
+
+
+def _wrap_webapp_html(html_content: str) -> str:
+    stripped = html_content.strip()
+    if not stripped:
+        return ""
+
+    if re.search(r"<html[\s>]", stripped, re.IGNORECASE):
+        return stripped
+
+    if re.search(r"<(head|body)[\s>]", stripped, re.IGNORECASE):
+        return (
+            "<!DOCTYPE html>\n"
+            "<html>\n"
+            f"{stripped}\n"
+            "</html>"
+        )
+
+    return (
+        "<!DOCTYPE html>\n"
+        "<html>\n"
+        "<head>\n"
+        "  <meta charset=\"utf-8\" />\n"
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n"
+        "  <style>\n"
+        "    html, body { margin: 0; padding: 0; }\n"
+        "    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; }\n"
+        "    * { box-sizing: border-box; }\n"
+        "  </style>\n"
+        "</head>\n"
+        "<body>\n"
+        f"{stripped}\n"
+        "</body>\n"
+        "</html>"
+    )
+
+
+def _build_webapp_iframe_src(html_content: str) -> str:
+    wrapped_html = _wrap_webapp_html(html_content)
+    if not wrapped_html:
+        return ""
+
+    encoded_html = base64.b64encode(wrapped_html.encode("utf-8")).decode("ascii")
+    return f"data:text/html;base64,{encoded_html}"
+
+
+def _render_webapp(props: Any, msg_index: int = 0) -> None:
+    explicit_height = None
+    if isinstance(props, dict):
+        html_content = str(props.get("html", "")).strip()
+        height_value = props.get("height")
+        if isinstance(height_value, int):
+            explicit_height = _clamp_webapp_height(height_value)
+    else:
+        html_content = str(props or "").strip()
+
+    hinted_height, html_content = _extract_webapp_height(html_content)
+    height = explicit_height or hinted_height
+
+    if not html_content:
+        st.info("Web app component is empty.")
+        return
+
+    iframe_src = _build_webapp_iframe_src(html_content)
+    if not iframe_src:
+        st.info("Web app component is empty.")
+        return
+
+    _inject_webapp_css()
+    st.iframe(iframe_src, height=height)
+
+
 # ===================================================================
 # Component Registry
 # ===================================================================
@@ -423,6 +548,7 @@ _COMPONENT_REGISTRY: Dict[str, Callable] = {
     "data_table": _render_data_table,
     "metric": _render_metric,
     "chart": _render_chart,
+    "webapp": _render_webapp,
     "button_group": _render_button_group,
     "progress": _render_progress,
     "alert": _render_alert,
@@ -556,6 +682,7 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     '- data_table: {"title": "...", "columns": ["A","B"], "data": [["1","2"]]}\n'
     '- metric: {"metrics": [{"label": "...", "value": "...", "delta": "+5%"}]}\n'
     '- chart: {"type": "bar|line|pie|scatter", "title": "...", "x": [...], "y": [...]}\n'
+    '- webapp: raw HTML/CSS/JS (not JSON), optionally starting with <!-- height: 640 -->\n'
     '- info_card: {"icon": "📊", "title": "...", "content": "...", "color": "#hex"}\n'
     '- button_group: {"label": "...", "buttons": [{"text": "...", "value": "user prompt"}]}\n'
     '- alert: {"level": "info|success|warning|error", "message": "..."}\n'

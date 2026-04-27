@@ -24,6 +24,18 @@ OLLAMA_CLOUD_CATALOG: list[dict[str, str]] = [
         "description": "Nemotron-3-Super is a large language model (LLM) trained by NVIDIA, designed to deliver strong agentic, reasoning, and conversational capabilities",
         "parameter_size": "120B",
         "family": "nemotron-3-super",
+    },
+    {
+        "name": "deepseek-v4-flash:cloud",
+        "description": "DeepSeek-V4-Flash is a preview of the DeepSeek-V4 series, a Mixture-of-Experts model with 284B total parameters and 13B activated, built for efficient reasoning across a 1M-token context window.",
+        "parameter_size": "284B",
+        "family": "deepseek-v4-flash",
+    },
+    {
+        "name": "kimi-k2.6:cloud",
+        "description": "Kimi K2.6 is an open-source, native multimodal agentic model that advances practical capabilities in long-horizon coding, coding-driven design, proactive autonomous execution, and swarm-based task orchestration.",
+        "parameter_size": "Unknown",
+        "family": "kimi-k2.6",
     }
 ]
 

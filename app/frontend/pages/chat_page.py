@@ -336,7 +336,7 @@ class ChatPage:
         
         # Generative UI toggle
         st.sidebar.checkbox(
-            "✨ Generative UI",
+            "Generative UI",
             key="enable_generative_ui",
             help="Enable rich UI components (charts, tables, metrics, buttons) in AI responses"
         )
