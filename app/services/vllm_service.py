@@ -229,6 +229,16 @@ class VLLMService:
             env.pop(k, None)
         return env
 
+    def _is_safe_local_model_path(self, candidate: str) -> bool:
+        """Return True if candidate resolves inside the allowed local models directory."""
+        try:
+            models_root = Path("models").resolve()
+            resolved_candidate = Path(candidate).resolve()
+            resolved_candidate.relative_to(models_root)
+            return True
+        except Exception:
+            return False
+
     def _validate_model_name_for_cli(self, model_name: str) -> str:
         """Validate and normalize user-supplied model name for safe CLI usage."""
         normalized = (model_name or "").strip()
@@ -236,9 +246,11 @@ class VLLMService:
             raise ValueError("Model name cannot be empty.")
         if normalized.startswith("-"):
             raise ValueError("Invalid model name.")
-        # Allow existing local paths as-is
-        if Path(normalized).exists():
+
+        # Allow existing local paths only if they are under the approved models directory.
+        if self._is_safe_local_model_path(normalized) and Path(normalized).exists():
             return normalized
+
         # Allow HF repo IDs / simple identifiers with safe characters only
         if not re.fullmatch(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*", normalized):
             raise ValueError("Invalid model name format.")
