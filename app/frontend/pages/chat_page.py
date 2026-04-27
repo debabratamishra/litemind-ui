@@ -26,6 +26,12 @@ from ..utils.memory_manager import ChatMemoryManager
 logger = logging.getLogger(__name__)
 
 
+def _is_embedding_model(name: str) -> bool:
+    """Return True for models that are embedding/reranking only (not usable for chat)."""
+    name_lower = name.lower()
+    return any(kw in name_lower for kw in ("embed", "rerank", "bge-", "e5-", "minilm", "gte-"))
+
+
 class ChatPage:
     """Chat interface controller with conversation memory support"""
     
@@ -51,6 +57,10 @@ class ChatPage:
         # Initialize conversation history enabled state
         if "chat_history_enabled" not in st.session_state:
             st.session_state.chat_history_enabled = True
+        
+        # Initialize generative UI state
+        if "enable_generative_ui" not in st.session_state:
+            st.session_state.enable_generative_ui = False
     
     def _render_web_search_toggle(self) -> bool:
         """
@@ -119,6 +129,12 @@ class ChatPage:
         if not realtime_active:
             self._display_chat_history()
             
+            # Handle generative UI button interactions
+            pending_genui_input = st.session_state.pop("genui_pending_input", None)
+            if pending_genui_input:
+                self._process_user_input(pending_genui_input, backend_provider)
+                return
+            
             # Render web search toggle before voice input
             self._render_web_search_toggle()
         
@@ -141,7 +157,7 @@ class ChatPage:
                     elif msg_format == "plain":
                         render_plain_text(msg["content"])
                     else:
-                        render_llm_text(msg["content"])
+                        render_llm_text(msg["content"], msg_index=idx)
                     
                     # Add TTS play button for assistant messages (always show)
                     if msg["role"] == "assistant":
@@ -231,7 +247,8 @@ class ChatPage:
                         conversation_history=conversation_history,
                         conversation_summary=conversation_summary,
                         session_id=self.memory_manager.session_id,
-                        is_voice_mode=is_voice_mode
+                        is_voice_mode=is_voice_mode,
+                        enable_generative_ui=st.session_state.get("enable_generative_ui", False)
                     )
         
         if reply:
@@ -317,6 +334,13 @@ class ChatPage:
         # Reasoning settings using shared component
         render_reasoning_config()
         
+        # Generative UI toggle
+        st.sidebar.checkbox(
+            "Generative UI",
+            key="enable_generative_ui",
+            help="Enable rich UI components (charts, tables, metrics, buttons) in AI responses"
+        )
+        
         # Memory configuration using shared component
         render_memory_config(self.memory_manager, "chat", "history_enabled", "memory_enabled")
         
@@ -340,15 +364,61 @@ class ChatPage:
     
     def _render_ollama_model_config(self):
         if self.backend_available:
-            available_models = backend_service.get_available_models()
+            enhanced = backend_service.get_enhanced_models()
+            # Exclude embedding / reranking models from the chat model list
+            local_models = [
+                m["name"] for m in enhanced.get("local_models", [])
+                if not _is_embedding_model(m["name"])
+            ]
+            cloud_models = enhanced.get("cloud_models", [])
         else:
-            available_models = ["gemma3:1b"]
-        
-        selected_model = st.sidebar.selectbox(
-            "Select Model:", 
-            available_models,
-            key="selected_chat_model"
+            local_models = []
+            cloud_models = []
+
+        # Build unified option list with indicators
+        options: list[str] = []
+        local_set: set[str] = set()
+        for name in local_models:
+            label = f"🟢 {name}"
+            options.append(label)
+            local_set.add(label)
+
+        for cm in cloud_models:
+            label = f"☁️ {cm['name']}"
+            desc = cm.get("description", "")
+            if desc:
+                label += f"  ({desc})"
+            options.append(label)
+
+        if not options:
+            # Backend unreachable — show a placeholder so the UI doesn't break
+            st.sidebar.warning("⚠️ No models available. Is Ollama running?")
+            st.session_state["selected_chat_model"] = "gemma3:1b"
+            return
+
+        selected_label = st.sidebar.selectbox(
+            "Select Model:",
+            options,
+            key="selected_chat_model_label",
+            help="🟢 = installed locally  ·  ☁️ = listed in cloud catalog",
         )
+
+        # Extract the raw model name from the label
+        raw_name = selected_label
+        for prefix in ("🟢 ", "☁️ "):
+            if raw_name.startswith(prefix):
+                raw_name = raw_name[len(prefix):]
+                break
+        # Strip description suffix if present
+        if "  (" in raw_name:
+            raw_name = raw_name[:raw_name.index("  (")]
+
+        # Cloud models are catalog entries only (no pull action in UI)
+        if selected_label not in local_set:
+            st.sidebar.info(f"☁️ **{raw_name}** is from the cloud catalog.")
+
+        # Always store the raw model name for use by the chat pipeline
+        st.session_state["selected_chat_model"] = raw_name
     
     def _check_and_trigger_summarization(self):
         """Check if summarization is needed and trigger it."""

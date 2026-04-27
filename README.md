@@ -26,7 +26,6 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 
 - **FastAPI Backend** (`localhost:8000`) - Entry point at `main.py` with high-performance async API and comprehensive endpoints suitable for asynchronous workload
 - **Streamlit Frontend** (`localhost:8501`) - Entry point at `streamlit_app.py` with intuitive web interface and automatic backend detection
-- **Modular Services** - Includes `rag_service.py`, `ollama.py`, `file_ingest.py`, `enhanced_extractors.py`, and `enhanced_document_processor.py` for specialized functionalities
 - **Intelligent Fallback** - Seamlessly switches between FastAPI and local processing based on backend availability
 
 ---
@@ -41,10 +40,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 - **Generation Controls** - Per-chat and per-RAG sliders for temperature and max tokens (hard cut-off) with both Ollama and vLLM backends
 - **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
 - **Realtime Voice Mode** - WebRTC voice chat with live transcription, barge-in, and streaming speech replies (Chat + RAG)
-- **Streaming TTS (Offline)** - Kokoro-based speech with expressive voice presets, sentence-level streaming, and local fallback
-   - **Voice Input** - Whisper-based speech-to-text (using transformers pipeline) for one-tap mic input
-- **Auto-Failover** - Intelligent backend detection with graceful fallbacks
-- **Multi-Model Support** - Access to popular models through vLLM or local Ollama models
+- **Multi-Model Support** - Access to popular models through vLLM or local/cloud Ollama models
 
 ### 🛠 **Developer Experience**
 
@@ -331,36 +327,36 @@ print(response.json()["response"])
 
 ```javascript
 const fetch = require('node-fetch');
-
+LiteMindUI is a local-first interface for working with large language models through a FastAPI backend and Streamlit frontend. It supports chat, retrieval-augmented generation, streaming responses, optional web search, realtime voice workflows, and structured generative UI rendering.
 fetch('http://localhost:8000/api/chat', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ message: 'Hello, world!', model: 'llama3.1' })
 })
-  .then(res => res.json())
-  .then(data => console.log(data.response))
-  .catch(err => console.error(err));
-```
-
-For a complete list of endpoints and request/response formats, visit the [Swagger UI](http://localhost:8000/docs):
+- FastAPI backend on `localhost:8000`
+- Streamlit frontend on `localhost:8501`
+- Ollama and vLLM backends
+- RAG for PDFs, Office files, structured text, HTML/XML, spreadsheets, and images
+- Realtime voice, local speech-to-text, and offline text-to-speech
+- Streaming chat and structured generative UI components such as tables, metrics, charts, and callouts
 
 ![Swagger UI](Swagger.png)
 
-## 🔧 Configuration
-
-### Streamlit Settings
-
-Create `.streamlit/config.toml`:
-
-```toml
+- Chat and RAG workflows in a single interface
+- Backend switching between Ollama and vLLM
+- Streaming responses with conversation memory
+- Document upload and retrieval across common file formats
+- Optional SerpAPI-backed web search in chat
+- Realtime voice mode with Whisper STT and Kokoro TTS
+- API-first backend with Swagger docs at `/docs`
 [server]
 address = "localhost"
 port = 8501
-```
-
-### Environment Variables
-
-```bash
+- `main.py`: FastAPI entry point
+- `streamlit_app.py`: Streamlit entry point
+- `app/backend/`: API routes and backend-facing models
+- `app/frontend/`: Streamlit pages, components, and services
+- `app/services/`: shared services including Ollama, RAG, speech, TTS, and search
 export OLLAMA_BASE_URL="http://localhost:11434"
 export UPLOAD_FOLDER="./uploads"
 ```
@@ -414,27 +410,9 @@ LiteMindUI supports optional web search integration powered by SerpAPI. When ena
 
 **Fallback Behavior:**
 - If the SerpAPI token is missing or invalid, the system automatically falls back to local LLM processing
-- An error message will be displayed: "SerpAPI token is required to perform Web search. Defaulting to local results"
-
-**Note:** Web search is currently available in the Chat interface. RAG integration is planned for a future release.
-
-## RAG Extraction Pipeline
 
 The RAG ingestion stack is local-first and built on open-source packages that run on a single computer.
 
-- PDF, DOCX, and EPUB use the enhanced document processor.
-- PPTX extraction includes slide text, speaker notes, tables, chart titles, and embedded images.
-- XLSX, CSV, and TSV use sheet-aware and row-aware extraction.
-- HTML, HTM, and XML use cleaned local content extraction.
-- RTF and ODT use open-source local parsers.
-- TXT, Markdown, Org, RST, JSON, JSONL, YAML, TOML, INI, CFG, and LOG are treated as structured text sources.
-- Standalone images continue through the OCR and image-analysis path.
-
-For legacy binary Office formats (`.doc`, `.ppt`, `.xls`), LiteMindUI uses headless LibreOffice when it is installed locally. LibreOffice is open-source and runs entirely on a single machine. If it is not available, the backend falls back to best-effort local parsing.
-
-## 🎯 Advanced Features
-
-- **Backend Detection:** Automatic FastAPI availability checking with local fallback
 - **Dynamic Models:** Real-time model list fetching from Ollama backend
 - **Streaming Responses:** Real-time token streaming for better UX
 - **Document Processing:** Multi-format document ingestion and vectorization performed at ingestion for faster retrieval
@@ -458,16 +436,9 @@ For legacy binary Office formats (`.doc`, `.ppt`, `.xls`), LiteMindUI uses headl
 **Native Installation Issues:**
 - **Module not found:** Reinstall all dependencies with `uv sync --group all` for local development
 - **Missing backend packages:** Run `uv sync --group backend` 
-- **Missing frontend packages:** Run `uv sync --group frontend`
-- **Streamlit not starting:** Check if port 8501 is available
-- **FastAPI errors:** Verify Python 3.12+ and check logs in terminal
 
 **General Issues:**
 - **Models not loading:** Verify Ollama is running and models are pulled
-- **Upload failures:** Check `uploads` directory permissions
-- **RAG not working:** Ensure documents are uploaded and processed successfully
-
-📖 **For comprehensive troubleshooting guides:**
 - Docker issues: [DOCKER.md](DOCKER.md)
 - Health checks: [DOCKER_HEALTH_CHECKS.md](DOCKER_HEALTH_CHECKS.md)
 

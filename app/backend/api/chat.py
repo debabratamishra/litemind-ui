@@ -22,6 +22,88 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
 
+GENERATIVE_UI_SYSTEM_PROMPT = (
+    "You can embed rich UI components in your responses using fenced code "
+    "blocks with a ui: language tag followed by a JSON body on the NEXT line.\n\n"
+    "FORMATTING RULES:\n"
+    "1. Start the block with ```ui:component_name\n"
+    "2. Put valid JSON props on the next line(s)\n"
+    "3. Close with ``` on its own line\n"
+    "4. Mix normal markdown text freely between component blocks\n"
+    "5. Exception: ```ui:webapp uses raw HTML/CSS/JS instead of JSON\n\n"
+    "EXAMPLE – comparison table:\n"
+    "```ui:data_table\n"
+    '{"title": "Model Comparison", "columns": ["Model", "Size", "Speed"], '
+    '"data": [["Gemma", "1B", "Fast"], ["Llama", "8B", "Medium"]]}\n'
+    "```\n\n"
+    "EXAMPLE – interactive webapp:\n"
+    "```ui:webapp\n"
+    "<!-- height: 620 -->\n"
+    "<div class=\"toy-counter\">\n"
+    "  <h3>Toy Counter</h3>\n"
+    "  <p id=\"count\">0</p>\n"
+    "  <button id=\"increment\">Increment</button>\n"
+    "  <button id=\"reset\">Reset</button>\n"
+    "</div>\n"
+    "<style>\n"
+    "  .toy-counter { display: grid; gap: 12px; justify-items: start; }\n"
+    "  .toy-counter button { border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; }\n"
+    "</style>\n"
+    "<script>\n"
+    "  const countEl = document.getElementById(\"count\");\n"
+    "  let count = 0;\n"
+    "  document.getElementById(\"increment\").addEventListener(\"click\", () => {\n"
+    "    count += 1;\n"
+    "    countEl.textContent = String(count);\n"
+    "  });\n"
+    "  document.getElementById(\"reset\").addEventListener(\"click\", () => {\n"
+    "    count = 0;\n"
+    "    countEl.textContent = \"0\";\n"
+    "  });\n"
+    "</script>\n"
+    "```\n\n"
+    "EXAMPLE – key metrics side by side:\n"
+    "```ui:metric\n"
+    '{"metrics": [{"label": "Users", "value": "1,234", "delta": "+12%"}, '
+    '{"label": "Latency", "value": "45ms", "delta": "-5ms"}]}\n'
+    "```\n\n"
+    "EXAMPLE – bar chart:\n"
+    "```ui:chart\n"
+    '{"type": "bar", "title": "Quarterly Sales", '
+    '"x": ["Q1", "Q2", "Q3", "Q4"], "y": [100, 150, 200, 180]}\n'
+    "```\n\n"
+    "EXAMPLE – info card:\n"
+    "```ui:info_card\n"
+    '{"icon": "💡", "title": "Tip", "content": "Use streaming for faster responses", "color": "#4CAF50"}\n'
+    "```\n\n"
+    "Available components: data_table (columns + data), metric (label/value/delta), "
+    "chart (type: bar/line/pie/scatter, x, y), info_card (icon/title/content/color), "
+    "webapp (self-contained HTML/CSS/JS mini-apps with inline styles/scripts), "
+    "button_group (label/buttons with text/value), "
+    "alert (level: info/success/warning/error, message), "
+    "steps (steps/current), tabs (tabs with label/content), "
+    "callout (emoji/title/content), columns (items with title/content/icon), "
+    "json_viewer (title/data), progress (value/label), "
+    "link_cards (links with title/url/description).\n\n"
+    "WHEN TO USE:\n"
+    "- Comparing items → data_table\n"
+    "- Key numbers/statistics → metric\n"
+    "- Trends over time → chart\n"
+    "- Step-by-step instructions → steps\n"
+    "- Important notices → alert or callout\n"
+    "- Tiny interactive tools/games/demos → webapp\n"
+    "- Simple text answers → just use normal markdown, no components needed\n\n"
+    "WEBAPP RULES:\n"
+    "- Keep webapps self-contained with inline HTML/CSS/JS\n"
+    "- Do not rely on external CDNs, npm packages, or build steps\n"
+    "- Ensure buttons and controls work with client-side JavaScript only\n"
+    "- Prefer small toy apps that fit comfortably in the chat response\n\n"
+    "FALLBACK: If you are unsure about the component JSON syntax, use standard "
+    "markdown tables and **Bold Label:** Value lines instead – those will be "
+    "auto-converted to rich components."
+)
+
+
 def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str, str]]:
     """
     Build the messages list including conversation history and summary.
@@ -42,6 +124,12 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
             "role": "system",
             "content": DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
         })
+
+    if request.enable_generative_ui:
+        messages.append({
+            "role": "system",
+            "content": GENERATIVE_UI_SYSTEM_PROMPT
+        })
     
     # Add conversation summary as system context if available
     if request.conversation_summary:
@@ -58,8 +146,19 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
                 "content": msg.content
             })
     
-    # Add the current user message
-    messages.append({"role": "user", "content": request.message})
+    # Add the current user message (with optional generative UI hint)
+    user_content = request.message
+    if request.enable_generative_ui:
+        user_content += (
+            "\n\n[Respond using rich UI components when helpful: "
+            "```ui:data_table for comparisons/tables, "
+            "```ui:metric for key numbers, "
+            "```ui:chart for trends. "
+            "```ui:webapp for self-contained HTML/CSS/JS mini-apps. "
+            "If unsure about component syntax, use standard markdown tables "
+            "and **Bold Label:** Value lines instead.]"
+        )
+    messages.append({"role": "user", "content": user_content})
     
     return messages
 

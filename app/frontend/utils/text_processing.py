@@ -127,7 +127,8 @@ def clean_text_formatting(text: str) -> str:
     text = re.sub(r'([a-z])\s*\n\s*(#{1,6}\s+[A-Z])', r'\1\n\n\2', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r'\s{2,}([.!?,:;])', r' \1', text)
-    text = re.sub(r'([.!?])\s*\n\s*([a-z])', r'\1 \2', text)
+    # Join sentences across a single line break (not paragraph breaks).
+    text = re.sub(r'([.!?])[ \t]*\n(?!\n)[ \t]*([a-z])', r'\1 \2', text)
     text = re.sub(r'(https?://[^\s]+)([A-Z][a-z])', r'\1 \2', text)
     
     return text

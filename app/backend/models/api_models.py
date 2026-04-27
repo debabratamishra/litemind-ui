@@ -23,6 +23,7 @@ class ChatRequestEnhanced(BaseModel):
     hf_token: Optional[str] = None
     use_web_search: Optional[bool] = False
     is_voice_mode: Optional[bool] = False  # True for voice agent, False for text agent
+    enable_generative_ui: Optional[bool] = False
     # Conversation memory fields
     session_id: Optional[str] = None  # Session ID for memory tracking
     conversation_history: Optional[List[ChatMessage]] = None  # Previous messages
@@ -86,6 +87,22 @@ class HealthResponse(BaseModel):
 
 class ModelListResponse(BaseModel):
     models: List[str]
+
+
+class OllamaModelInfo(BaseModel):
+    """Extended info for a single Ollama model."""
+    name: str
+    parameter_size: Optional[str] = None
+    quantization: Optional[str] = None
+    family: Optional[str] = None
+    is_local: bool = True
+    description: Optional[str] = None
+
+
+class EnhancedModelListResponse(BaseModel):
+    """Response with local + cloud model information."""
+    local_models: List[OllamaModelInfo]
+    cloud_models: List[OllamaModelInfo]
 
 
 class RAGStatusResponse(BaseModel):

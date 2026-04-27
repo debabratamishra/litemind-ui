@@ -25,6 +25,12 @@ from ..utils.memory_manager import RAGMemoryManager
 logger = logging.getLogger(__name__)
 
 
+def _is_embedding_model(name: str) -> bool:
+    """Return True for models that are embedding/reranking only (not usable for chat)."""
+    name_lower = name.lower()
+    return any(kw in name_lower for kw in ("embed", "rerank", "bge-", "e5-", "minilm", "gte-"))
+
+
 class RAGPage:
     """Handles the RAG interface and document processing with conversation memory."""
     
@@ -575,14 +581,50 @@ class RAGPage:
         # Only show Ollama base model selection when Ollama backend is selected
         elif backend_provider == "ollama" and st.session_state.get("backend_available", False):
             
-            available_models = backend_service.get_available_models()
-            if available_models:
-                st.sidebar.selectbox(
+            enhanced = backend_service.get_enhanced_models()
+            # Exclude embedding / reranking models from the base model list
+            local_models = [
+                m["name"] for m in enhanced.get("local_models", [])
+                if not _is_embedding_model(m["name"])
+            ]
+            cloud_models = enhanced.get("cloud_models", [])
+
+            # Build unified option list with indicators
+            options: list[str] = []
+            local_set: set[str] = set()
+            for name in local_models:
+                label = f"🟢 {name}"
+                options.append(label)
+                local_set.add(label)
+            for cm in cloud_models:
+                label = f"☁️ {cm['name']}"
+                desc = cm.get("description", "")
+                if desc:
+                    label += f"  ({desc})"
+                options.append(label)
+
+            if options:
+                selected_label = st.sidebar.selectbox(
                     "Select Base Model:",
-                    available_models,
-                    help="Language model used for generating RAG responses",
-                    key="selected_ollama_model"
+                    options,
+                    help="🟢 = installed locally  ·  ☁️ = listed in cloud catalog",
+                    key="selected_ollama_model_label",
                 )
+
+                # Extract raw model name
+                raw_name = selected_label
+                for prefix in ("🟢 ", "☁️ "):
+                    if raw_name.startswith(prefix):
+                        raw_name = raw_name[len(prefix):]
+                        break
+                if "  (" in raw_name:
+                    raw_name = raw_name[:raw_name.index("  (")]
+
+                # Cloud models are catalog entries only (no pull action in UI)
+                if selected_label not in local_set:
+                    st.sidebar.info(f"☁️ **{raw_name}** is from the cloud catalog.")
+
+                st.session_state["selected_ollama_model"] = raw_name
             else:
                 st.sidebar.warning("⚠️ No Ollama models available")
         elif backend_provider == "vllm":

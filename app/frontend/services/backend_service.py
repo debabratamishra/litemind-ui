@@ -46,6 +46,16 @@ class BackendService:
         except requests.RequestException:
             return ["default"]
 
+    def get_enhanced_models(self) -> Dict[str, Any]:
+        """Get local + cloud model listing with metadata."""
+        try:
+            response = requests.get(f"{self.base_url}/models/enhanced", timeout=self.timeout)
+            if response.status_code == 200:
+                return response.json()
+            return {"local_models": [], "cloud_models": []}
+        except requests.RequestException:
+            return {"local_models": [], "cloud_models": []}
+
     def get_vllm_models(self) -> Dict[str, List[str]]:
         """Get available vLLM models."""
         try:
