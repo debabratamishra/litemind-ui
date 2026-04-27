@@ -17,19 +17,51 @@ import json
 import logging
 import re
 import streamlit as st
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Regex helpers
+# Fence parsing helpers
 # ---------------------------------------------------------------------------
 
-# Detects complete ``ui:component`` fenced blocks.
-_UI_BLOCK_RE = re.compile(r"```ui:(\w+)\s*\n(.*?)```", re.DOTALL)
+def _is_valid_fence_info(info: str) -> bool:
+    """Return *True* when *info* matches the supported fenced-code syntax."""
+    return all(char.isalnum() or char == "_" or char in ":.-" for char in info)
 
-# Matches ALL fenced code blocks (regular + UI) for mixed-content rendering.
-_FENCE_RE = re.compile(r"```([\w:.\-]*)\s*\n(.*?)```", re.DOTALL)
+
+def _is_valid_ui_component_type(component_type: str) -> bool:
+    """Return *True* for supported ``ui:<component>`` fence tags."""
+    return bool(component_type) and all(
+        char.isalnum() or char == "_" for char in component_type
+    )
+
+
+def _iter_fenced_blocks(text: str) -> Iterator[tuple[int, int, str, str]]:
+    """Yield complete fenced blocks as ``(start, end, lang, content)`` tuples."""
+    search_start = 0
+    text_length = len(text)
+
+    while search_start < text_length:
+        fence_start = text.find("```", search_start)
+        if fence_start == -1:
+            return
+
+        header_end = text.find("\n", fence_start + 3)
+        if header_end == -1:
+            return
+
+        lang = text[fence_start + 3 : header_end].strip()
+        if lang and not _is_valid_fence_info(lang):
+            search_start = fence_start + 3
+            continue
+
+        fence_end = text.find("```", header_end + 1)
+        if fence_end == -1:
+            return
+
+        yield fence_start, fence_end + 3, lang, text[header_end + 1 : fence_end]
+        search_start = fence_end + 3
 
 _WEBAPP_HEIGHT_RE = re.compile(r"^\s*<!--\s*height\s*:\s*(\d{2,4})\s*-->\s*", re.IGNORECASE)
 
@@ -60,7 +92,10 @@ div[data-testid="stElementToolbar"] * {
 
 def has_ui_blocks(text: str) -> bool:
     """Return *True* if *text* contains at least one complete UI block."""
-    return bool(_UI_BLOCK_RE.search(text))
+    for _, _, lang, _ in _iter_fenced_blocks(text):
+        if lang.startswith("ui:") and _is_valid_ui_component_type(lang[3:]):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -116,9 +151,9 @@ def render_mixed_content(text: str, msg_index: int = 0) -> None:
     pos = 0
     rendered_any = False
 
-    for match in _FENCE_RE.finditer(text):
+    for fence_start, fence_end, lang, content in _iter_fenced_blocks(text):
         # --- text segment before this fence ---
-        before = text[pos : match.start()]
+        before = text[pos:fence_start]
         if before.strip():
             # Don't apply clean_text_formatting here – it was already
             # skipped at the top level for generative-UI content and
@@ -127,36 +162,35 @@ def render_mixed_content(text: str, msg_index: int = 0) -> None:
             st.markdown(sanitize_links(unescape_text(cleaned)))
             rendered_any = True
 
-        lang = (match.group(1) or "").strip()
-        content = match.group(2).strip()
+        ui_content = content.strip()
 
         if lang.startswith("ui:"):
             component_type = lang[3:]
             try:
                 if component_type == "webapp":
-                    render_ui_component(component_type, content, msg_index)
+                    render_ui_component(component_type, ui_content, msg_index)
                     rendered_any = True
-                    pos = match.end()
+                    pos = fence_end
                     continue
 
                 # Streaming can inject line-breaks inside the JSON body
                 # (e.g. Ollama flushes on sentence-ending punctuation like
                 # periods inside string values).  Collapse whitespace so
                 # that json.loads() can still parse the payload.
-                normalised = ' '.join(content.split())
+                normalised = ' '.join(ui_content.split())
                 props = json.loads(normalised)
                 render_ui_component(component_type, props, msg_index)
             except json.JSONDecodeError:
                 st.warning(f"Invalid JSON in UI component `{component_type}`")
-                st.code(content, language="json")
+                st.code(ui_content, language="json")
             rendered_any = True
         else:
             # Regular code block
-            code = match.group(2).strip("\n")
+            code = content.strip("\n")
             st.code(code, language=lang if lang else None)
             rendered_any = True
 
-        pos = match.end()
+        pos = fence_end
 
     # --- trailing text ---
     tail = text[pos:]
