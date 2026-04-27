@@ -599,21 +599,40 @@ _COMPONENT_REGISTRY: Dict[str, Callable] = {
 # Auto-enhancement: detect markdown patterns → UI blocks
 # ===================================================================
 
-# Matches a complete markdown table (header + separator + 1+ data rows).
-# Handles tables with or without leading/trailing pipes.
-_MD_TABLE_PATTERN = re.compile(
-    r'('
-    r'[^\n]*\|[^\n]*\n'                            # header row: any line with |
-    r'[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*'              # separator first cell
-    r'(?:\|[ \t]*:?-{2,}:?[ \t]*)+\|?[ \t]*\n'     # separator remaining cells
-    r'(?:[^\n]*\|[^\n]*\n?)+'                        # data rows: contain |
-    r')',
-)
-
 # Matches a bold-label: value line  e.g.  "**Users:** 1,234" or "**Users**: 1,234"
 _BOLD_KV_LINE_RE = re.compile(
     r'^\s*[-*]?\s*\*\*(.+?)\*\*\s*[:\-–]?\s*(.+?)\s*$',
 )
+
+
+def _split_md_row(line: str) -> list[str]:
+    """Split a markdown table row into trimmed cell values."""
+    stripped = line.strip().strip('|')
+    return [cell.strip() for cell in stripped.split('|')]
+
+
+def _looks_like_md_table_row(line: str) -> bool:
+    """Return *True* when a line can participate in a markdown table."""
+    stripped = line.strip()
+    return bool(stripped) and '|' in stripped
+
+
+def _is_md_table_separator_cell(cell: str) -> bool:
+    """Return *True* for ``---`` / ``:---:`` style markdown separator cells."""
+    stripped = cell.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(':'):
+        stripped = stripped[1:]
+    if stripped.endswith(':'):
+        stripped = stripped[:-1]
+    return len(stripped) >= 2 and all(char == '-' for char in stripped)
+
+
+def _is_md_table_separator_row(line: str) -> bool:
+    """Return *True* when a line is a markdown table separator row."""
+    cells = [cell for cell in _split_md_row(line) if cell]
+    return bool(cells) and all(_is_md_table_separator_cell(cell) for cell in cells)
 
 
 def _parse_md_table(table_text: str) -> Optional[dict]:
@@ -622,17 +641,12 @@ def _parse_md_table(table_text: str) -> Optional[dict]:
     if len(lines) < 3:
         return None
 
-    def _split_row(line: str) -> list:
-        stripped = line.strip().strip('|')
-        return [c.strip() for c in stripped.split('|')]
-
     # Validate the separator row (line 1)
-    sep_cells = [c.strip() for c in lines[1].strip().strip('|').split('|')]
-    if not all(re.match(r'^:?-{2,}:?$', c.strip()) for c in sep_cells if c.strip()):
+    if not _is_md_table_separator_row(lines[1]):
         return None
 
-    columns = _split_row(lines[0])
-    data = [_split_row(l) for l in lines[2:]]
+    columns = _split_md_row(lines[0])
+    data = [_split_md_row(line) for line in lines[2:]]
 
     if not columns or not data:
         return None
@@ -647,14 +661,50 @@ def _parse_md_table(table_text: str) -> Optional[dict]:
 
 def _auto_convert_tables(text: str) -> str:
     """Replace markdown tables with ``ui:data_table`` blocks."""
+    lines = text.splitlines(keepends=True)
+    if len(lines) < 3:
+        return text
 
-    def _replacer(m: re.Match) -> str:
-        props = _parse_md_table(m.group(0))
+    converted: list[str] = []
+    index = 0
+    total_lines = len(lines)
+
+    while index < total_lines:
+        if index + 2 >= total_lines:
+            converted.append(lines[index])
+            index += 1
+            continue
+
+        if not _looks_like_md_table_row(lines[index]):
+            converted.append(lines[index])
+            index += 1
+            continue
+
+        if not _is_md_table_separator_row(lines[index + 1]):
+            converted.append(lines[index])
+            index += 1
+            continue
+
+        if not _looks_like_md_table_row(lines[index + 2]):
+            converted.append(lines[index])
+            index += 1
+            continue
+
+        table_end = index + 3
+        while table_end < total_lines and _looks_like_md_table_row(lines[table_end]):
+            table_end += 1
+
+        table_text = ''.join(lines[index:table_end])
+        props = _parse_md_table(table_text)
         if props is None:
-            return m.group(0)
-        return f'\n```ui:data_table\n{json.dumps(props)}\n```\n'
+            converted.append(lines[index])
+            index += 1
+            continue
 
-    return _MD_TABLE_PATTERN.sub(_replacer, text)
+        converted.append(f'\n```ui:data_table\n{json.dumps(props)}\n```\n')
+        index = table_end
+
+    return ''.join(converted)
 
 
 def _auto_convert_metrics(text: str) -> str:
