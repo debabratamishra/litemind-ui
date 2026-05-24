@@ -1,6 +1,7 @@
 """
 Streaming handlers for chat and RAG responses with conversation memory support.
 """
+import json
 import logging
 import requests
 from typing import Optional, Any, Callable, List, Dict
@@ -15,6 +16,32 @@ logger = logging.getLogger(__name__)
 
 class StreamingHandler:
     """Handles streaming responses from various backends with conversation memory."""
+
+    @staticmethod
+    def _decode_stream_line(line: str) -> str:
+        """Decode a streamed line, supporting both raw text and SSE JSON payloads."""
+        if line.startswith("data:"):
+            payload = line[5:].lstrip()
+            if payload.strip() in ("[DONE]", ""):
+                return ""
+
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                # Backward compatibility for plain-text SSE payloads.
+                return payload
+
+            if isinstance(parsed, dict):
+                if parsed.get("error"):
+                    return f"Error: {parsed['error']}"
+                return str(parsed.get("chunk", ""))
+
+            if isinstance(parsed, str):
+                return parsed
+
+            return str(parsed)
+
+        return line
     
     def stream_chat_response(
         self,
@@ -267,15 +294,13 @@ class StreamingHandler:
         segregator = StreamingRenderer(placeholder) if placeholder is not None else None
 
         for line in response.iter_lines(decode_unicode=True, chunk_size=1):
-            if not line:
+            if line is None:
                 continue
-            if line.startswith("data:"):
-                payload = line[5:].lstrip()
-                if payload.strip() in ("[DONE]", ""):
-                    continue
-                line = payload
 
-            chunk = line + "\n"
+            chunk = self._decode_stream_line(line)
+            if chunk == "":
+                continue
+
             buf += chunk
             if segregator is not None:
                 segregator.feed(chunk)
@@ -302,17 +327,9 @@ class StreamingHandler:
             if line is None:
                 continue
 
-            if line.startswith("data:"):
-                payload = line[5:].lstrip()
-                if payload.strip() in ("[DONE]", ""):
-                    continue
-                line = payload
-
-            # Handle empty lines as newlines
-            if line == "":
-                chunk = "\n"
-            else:
-                chunk = line
+            chunk = self._decode_stream_line(line)
+            if chunk == "":
+                continue
 
             # Use the web search renderer for streaming
             if placeholder is not None:

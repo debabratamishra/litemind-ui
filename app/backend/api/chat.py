@@ -16,10 +16,17 @@ from app.services.vllm_service import vllm_service
 from app.services.web_search_service import WebSearchService
 from app.services.web_search_crew import WebSearchOrchestrator
 from app.services.conversation_memory import get_memory_service, generate_session_id
+import json
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
+
+# Minimum output-token budget enforced when Generative UI is active.
+# Complex artifacts (canvas games, dashboards) can easily need 8 000–12 000
+# tokens; 16 384 provides comfortable headroom without hitting most model
+# context-window limits.
+GENUI_MIN_MAX_TOKENS = 16_384
 
 
 GENERATIVE_UI_SYSTEM_PROMPT = (
@@ -30,7 +37,7 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     "2. Put valid JSON props on the next line(s)\n"
     "3. Close with ``` on its own line\n"
     "4. Mix normal markdown text freely between component blocks\n"
-    "5. Exception: ```ui:webapp uses raw HTML/CSS/JS instead of JSON\n\n"
+    "5. Exceptions: ```ui:webapp and ```ui:iframe_app use raw HTML/CSS/JS instead of JSON\n\n"
     "EXAMPLE – comparison table:\n"
     "```ui:data_table\n"
     '{"title": "Model Comparison", "columns": ["Model", "Size", "Speed"], '
@@ -62,6 +69,37 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     "  });\n"
     "</script>\n"
     "```\n\n"
+    "EXAMPLE – playable iframe app:\n"
+    "```ui:iframe_app\n"
+    "<!-- height: 720 -->\n"
+    "<div id=\"app\" data-autofocus>\n"
+    "  <canvas id=\"maze\" width=\"480\" height=\"480\" aria-label=\"Arcade demo\"></canvas>\n"
+    "  <p>Use the arrow keys to move.</p>\n"
+    "</div>\n"
+    "<style>\n"
+    "  #app { display: grid; place-items: center; gap: 12px; padding: 16px; background: #050816; color: #f8fafc; }\n"
+    "  canvas { background: #111827; border-radius: 16px; }\n"
+    "</style>\n"
+    "<script>\n"
+    "  const canvas = document.getElementById(\"maze\");\n"
+    "  const ctx = canvas.getContext(\"2d\");\n"
+    "  let x = 40;\n"
+    "  window.addEventListener(\"keydown\", (event) => {\n"
+    "    if (event.key === \"ArrowRight\") x = Math.min(x + 16, canvas.width - 24);\n"
+    "    if (event.key === \"ArrowLeft\") x = Math.max(x - 16, 8);\n"
+    "  });\n"
+    "  function draw() {\n"
+    "    ctx.clearRect(0, 0, canvas.width, canvas.height);\n"
+    "    ctx.fillStyle = \"#facc15\";\n"
+    "    ctx.beginPath();\n"
+    "    ctx.arc(x, 240, 18, 0.25 * Math.PI, 1.75 * Math.PI);\n"
+    "    ctx.lineTo(x, 240);\n"
+    "    ctx.fill();\n"
+    "    requestAnimationFrame(draw);\n"
+    "  }\n"
+    "  draw();\n"
+    "</script>\n"
+    "```\n\n"
     "EXAMPLE – key metrics side by side:\n"
     "```ui:metric\n"
     '{"metrics": [{"label": "Users", "value": "1,234", "delta": "+12%"}, '
@@ -79,6 +117,7 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     "Available components: data_table (columns + data), metric (label/value/delta), "
     "chart (type: bar/line/pie/scatter, x, y), info_card (icon/title/content/color), "
     "webapp (self-contained HTML/CSS/JS mini-apps with inline styles/scripts), "
+    "iframe_app (self-contained HTML/CSS/JS apps and games rendered in an iframe), "
     "button_group (label/buttons with text/value), "
     "alert (level: info/success/warning/error, message), "
     "steps (steps/current), tabs (tabs with label/content), "
@@ -91,13 +130,21 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     "- Trends over time → chart\n"
     "- Step-by-step instructions → steps\n"
     "- Important notices → alert or callout\n"
-    "- Tiny interactive tools/games/demos → webapp\n"
+    "- Lightweight interactive snippets → webapp\n"
+    "- Playable games, dashboards, calculators, editors, and simulations → iframe_app\n"
     "- Simple text answers → just use normal markdown, no components needed\n\n"
-    "WEBAPP RULES:\n"
-    "- Keep webapps self-contained with inline HTML/CSS/JS\n"
+    "EMBEDDED APP RULES:\n"
+    "- Keep webapps and iframe apps self-contained with inline HTML/CSS/JS\n"
     "- Do not rely on external CDNs, npm packages, or build steps\n"
-    "- Ensure buttons and controls work with client-side JavaScript only\n"
-    "- Prefer small toy apps that fit comfortably in the chat response\n\n"
+    "- Ensure buttons, animations, and controls work with client-side JavaScript only\n"
+    "- Never return bare HTML or ```html fences when Generative UI is enabled; always wrap app output in ```ui:webapp or ```ui:iframe_app\n"
+    "- Use ```ui:iframe_app when the user explicitly asks for an app, game, simulator, or playground inside the chat\n"
+    "- Put any explanation outside the ui block; do not append notes after </html> inside the block\n"
+    "- Make the first frame visibly non-empty even before JavaScript runs: include a heading, button, canvas, text, or loading label in the HTML body\n"
+    "- Avoid full-screen blank black/white backgrounds with no visible text or controls\n"
+    "- Include a visible control hint for keyboard-driven apps\n"
+    "- Prefer an explicit <!-- height: N --> comment for taller apps\n"
+    "- Return one complete runnable block for the app itself; keep any explanation outside the block\n\n"
     "FALLBACK: If you are unsure about the component JSON syntax, use standard "
     "markdown tables and **Bold Label:** Value lines instead – those will be "
     "auto-converted to rich components."
@@ -154,7 +201,8 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
             "```ui:data_table for comparisons/tables, "
             "```ui:metric for key numbers, "
             "```ui:chart for trends. "
-            "```ui:webapp for self-contained HTML/CSS/JS mini-apps. "
+            "```ui:webapp for lightweight interactive snippets. "
+            "```ui:iframe_app for runnable apps, games, dashboards, editors, and simulations inside the chat iframe. "
             "If unsure about component syntax, use standard markdown tables "
             "and **Bold Label:** Value lines instead.]"
         )
@@ -228,16 +276,19 @@ async def chat_stream(request: ChatRequestEnhanced):
         try:
             if request.backend == "vllm":
                 async for chunk in _stream_vllm_chat(request):
-                    yield chunk + "\n"
+                    payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
             else:
                 async for chunk in _stream_ollama_chat(request):
-                    yield chunk + "\n"
+                    payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
                     
         except Exception as e:
             logger.error(f"Chat streaming error: {e}")
-            yield f"Error: {str(e)}\n"
+            payload = json.dumps({"error": str(e)}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/plain")
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 async def _handle_vllm_chat(request: ChatRequestEnhanced) -> ChatResponse:
@@ -253,8 +304,13 @@ async def _handle_vllm_chat(request: ChatRequestEnhanced) -> ChatResponse:
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
-    # Adjust max_tokens for voice mode (shorter responses)
-    max_tokens = 300 if request.is_voice_mode else request.max_tokens
+    # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
+    if request.is_voice_mode:
+        max_tokens = 300
+    elif request.enable_generative_ui:
+        max_tokens = max(request.max_tokens or 2048, GENUI_MIN_MAX_TOKENS)
+    else:
+        max_tokens = request.max_tokens
     
     response_text = ""
     async for chunk in vllm_service.stream_vllm_chat(
@@ -276,8 +332,13 @@ async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
-    # Adjust max_tokens for voice mode (shorter responses)
-    max_tokens = 300 if request.is_voice_mode else request.max_tokens
+    # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
+    if request.is_voice_mode:
+        max_tokens = 300
+    elif request.enable_generative_ui:
+        max_tokens = max(request.max_tokens or 2048, GENUI_MIN_MAX_TOKENS)
+    else:
+        max_tokens = request.max_tokens
     
     response_text = ""
     async for chunk in stream_ollama(
@@ -309,8 +370,13 @@ async def _stream_vllm_chat(request: ChatRequestEnhanced):
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
-    # Adjust max_tokens for voice mode (shorter responses)
-    max_tokens = 300 if request.is_voice_mode else request.max_tokens
+    # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
+    if request.is_voice_mode:
+        max_tokens = 300
+    elif request.enable_generative_ui:
+        max_tokens = max(request.max_tokens or 2048, GENUI_MIN_MAX_TOKENS)
+    else:
+        max_tokens = request.max_tokens
     
     async for chunk in vllm_service.stream_vllm_chat(
         messages=messages, 
@@ -329,8 +395,13 @@ async def _stream_ollama_chat(request: ChatRequestEnhanced):
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
-    # Adjust max_tokens for voice mode (shorter responses)
-    max_tokens = 300 if request.is_voice_mode else request.max_tokens
+    # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
+    if request.is_voice_mode:
+        max_tokens = 300
+    elif request.enable_generative_ui:
+        max_tokens = max(request.max_tokens or 2048, GENUI_MIN_MAX_TOKENS)
+    else:
+        max_tokens = request.max_tokens
     
     async for chunk in stream_ollama(
         messages, 

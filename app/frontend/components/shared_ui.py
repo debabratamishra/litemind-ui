@@ -103,13 +103,13 @@ def render_generation_settings(
         )
         st.session_state[f"{prefix}_temperature"] = temperature
         
-        # Max tokens slider
+        # Max tokens slider — upper bound lifted to 16 384 for GenUI artifacts
         max_tokens = st.slider(
             "Max Tokens:", 
-            256, 8192, 
+            256, 16384, 
             st.session_state.get(f"{prefix}_max_tokens", 2048), 
             256,
-            help="Maximum number of tokens to generate in the response"
+            help="Maximum tokens to generate. GenUI mode auto-raises this to 16 384 at the backend so complex apps generate fully."
         )
         st.session_state[f"{prefix}_max_tokens"] = max_tokens
         

@@ -338,7 +338,7 @@ fetch('http://localhost:8000/api/chat', {
 - Ollama and vLLM backends
 - RAG for PDFs, Office files, structured text, HTML/XML, spreadsheets, and images
 - Realtime voice, local speech-to-text, and offline text-to-speech
-- Streaming chat and structured generative UI components such as tables, metrics, charts, and callouts
+- Streaming chat and structured generative UI components
 
 ![Swagger UI](Swagger.png)
 
