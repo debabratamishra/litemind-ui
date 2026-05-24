@@ -27,8 +27,13 @@ except Exception:
 
 try:
     import torch
-except Exception:
+except Exception as _torch_err:
     torch = None
+    # Log at import time so the root cause appears in startup logs
+    logging.getLogger(__name__).warning(
+        f"PyTorch (torch) failed to import — STT will be unavailable. "
+        f"Root cause: {_torch_err!r}"
+    )
 
 # Suppress the FutureWarning from transformers about 'inputs' deprecation
 # This is an internal transformers issue that will be fixed in a future version
@@ -71,22 +76,31 @@ class SpeechService:
         """Load the Whisper model pipeline."""
         if self._model_loaded:
             return
-            
+
         try:
+            if torch is None:
+                raise RuntimeError(
+                    "PyTorch is not importable in this environment. "
+                    "Check startup logs for the torch import error."
+                )
+            logger.info(
+                f"PyTorch {torch.__version__} available "
+                f"(CUDA: {torch.cuda.is_available()})"
+            )
             pipeline = _get_transformers_pipeline()
             logger.info(f"Loading transformers Whisper model: {self.model_name}")
             self.pipe = pipeline(
                 "automatic-speech-recognition",
                 model=self.model_name,
-                device=0 if torch and torch.cuda.is_available() else -1,
-                torch_dtype=torch.float16 if torch and torch.cuda.is_available() else (torch.float32 if torch else None),
+                device="cuda:0" if torch.cuda.is_available() else "cpu",
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
                 # Enable return_timestamps for long-form audio (>30s)
                 return_timestamps=True,
             )
             self._model_loaded = True
             logger.info("Transformers Whisper model loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load Whisper model: {e}")
+            logger.error(f"Failed to load Whisper model: {e}", exc_info=True)
             raise
 
     def preload(self):
