@@ -22,10 +22,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 
-# Minimum output-token budget enforced when Generative UI is active.
-# Complex artifacts (canvas games, dashboards) can easily need 8 000–12 000
-# tokens; 16 384 provides comfortable headroom without hitting most model
-# context-window limits.
+# Set a minimum max_tokens for Generative UI mode to ensure enough tokens for rich responses
 GENUI_MIN_MAX_TOKENS = 16_384
 
 
