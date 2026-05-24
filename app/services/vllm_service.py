@@ -418,9 +418,9 @@ class VLLMService:
             os.environ["HF_TOKEN"] = token
             logger.info("Huggingface token validated and set successfully")
             return {"status": "success", "message": "Token validated successfully"}
-        except Exception as e:
-            logger.error(f"Failed to validate HF token: {e}")
-            return {"status": "error", "message": f"Invalid token: {str(e)}"}
+        except Exception:
+            logger.exception("Failed to validate HF token")
+            return {"status": "error", "message": "Invalid token"}
     
     def get_available_models(self) -> Dict[str, List[str]]:
         """Get locally cached model repo IDs from Hugging Face cache.
@@ -908,10 +908,9 @@ class VLLMService:
                                     continue
                 else:
                     raise
-        except Exception as e:
-            error_msg = f"vLLM streaming error: {str(e)}"
-            logger.error(error_msg)
-            yield f"Error: {error_msg}"
+        except Exception:
+            logger.exception("vLLM streaming error")
+            yield "Error: An internal error occurred while streaming response"
 
 # Global vLLM service instance
 vllm_service = VLLMService()

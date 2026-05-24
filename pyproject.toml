@@ -38,7 +38,8 @@ backend = [
     
     # PyTorch CPU-only
     "torch",
-    
+    "torchvision",
+
     # Document Processing
     "PyMuPDF",
     "pdfplumber",
@@ -72,6 +73,8 @@ backend = [
     # Audio processing for STT
     "librosa",
     "soundfile",
+    # Required by transformers 5.x pipeline for device management
+    "accelerate",
 ]
 
 # Frontend: Streamlit + Audio/Voice
@@ -137,7 +140,8 @@ backend = [
     
     # PyTorch CPU-only
     "torch",
-    
+    "torchvision",
+
     # Document Processing
     "PyMuPDF",
     "pdfplumber",
@@ -171,6 +175,8 @@ backend = [
     # Audio processing for STT
     "librosa",
     "soundfile",
+    # Required by transformers 5.x pipeline for device management
+    "accelerate",
 ]
 
 frontend = [
@@ -237,7 +243,8 @@ all = [
     
     # PyTorch CPU-only
     "torch",
-    
+    "torchvision",
+
     # Document Processing
     "PyMuPDF",
     "pdfplumber",
@@ -290,6 +297,7 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [build-system]
 requires = ["pdm-backend"]

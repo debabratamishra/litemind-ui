@@ -6,9 +6,9 @@ component model. Renders rich, interactive UI elements from structured
 specifications embedded in LLM output.
 
 Protocol: LLM emits fenced code blocks with a ``ui:<component>`` language
-tag. Most components use a JSON props object. ``ui:webapp`` is the one
-exception: its block body is raw HTML/CSS/JS that is rendered inside a
-Streamlit iframe for interactive mini-apps.
+tag. Most components use a JSON props object. ``ui:webapp`` and
+``ui:iframe_app`` are the exceptions: their block bodies are raw
+HTML/CSS/JS rendered inside a Streamlit iframe for interactive mini-apps.
 """
 
 import base64
@@ -64,29 +64,272 @@ def _iter_fenced_blocks(text: str) -> Iterator[tuple[int, int, str, str]]:
         search_start = fence_end + 3
 
 _WEBAPP_HEIGHT_RE = re.compile(r"^\s*<!--\s*height\s*:\s*(\d{2,4})\s*-->\s*", re.IGNORECASE)
+_INTERACTIVE_HTML_RE = re.compile(
+    r"(?is)<(?:script|canvas|button|input|select|textarea)\b|"
+    r"on(?:click|change|input|submit|keydown|keyup|pointerdown)\s*=|"
+    r"addEventListener\s*\(|requestAnimationFrame\s*\("
+)
 
 _WEBAPP_CSS = """
 <style>
-/* Make sure the chat message content itself doesn't block events */
+/* Allow the chat message content to pass pointer events through */
 [data-testid="stChatMessageContent"] {
     pointer-events: auto !important;
 }
 
-/* Ensure iframe containers and the iframes themselves are interactive */
+/* Ensure every level of the component wrapper passes events through.
+    Streamlit may wrap iframe blocks with intermediate containers depending on
+    the element type, so target both direct-child and descendant iframes. */
+[data-testid="stCustomComponentV1"],
+[data-testid="stCustomComponentV1"] > div,
+[data-testid="stCustomComponentV1"] > div > iframe,
+[data-testid="stCustomComponentV1"] iframe,
 [data-testid="stIFrame"],
 [data-testid="stIFrame"] > iframe,
-[data-testid="stCustomComponentV1"],
-[data-testid="stCustomComponentV1"] > iframe {
+.stCustomComponentV1,
+.stCustomComponentV1 iframe {
     pointer-events: auto !important;
 }
 
-/* Disable interaction on Streamlit toolbars that might overlap the iframe */
+/* Remove any pseudo-element overlays Streamlit adds on chat bubbles */
+[data-testid="stChatMessage"]::before,
+[data-testid="stChatMessage"]::after,
+[data-testid="stChatMessageContent"]::before,
+[data-testid="stChatMessageContent"]::after {
+    pointer-events: none !important;
+}
+
+/* Hide toolbar overlays that sit above component iframes */
 div[data-testid="stElementToolbar"],
 div[data-testid="stElementToolbar"] * {
     pointer-events: none !important;
     display: none !important;
 }
 </style>
+"""
+
+_RAW_HTML_COMPONENT_TYPES = {"webapp", "iframe_app"}
+
+_HTML_HEAD_CLOSE_RE = re.compile(r"</head\s*>", re.IGNORECASE)
+_HTML_BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
+
+_IFRAME_APP_SHELL_CSS = """
+<style>
+    html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        min-height: 100%;
+    }
+
+    body {
+        font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #ffffff;
+        color: #111827;
+        overflow: auto;
+    }
+
+    *, *::before, *::after {
+        box-sizing: border-box;
+    }
+
+    #app[data-lite-app-root] {
+        min-height: 100vh;
+        width: 100%;
+    }
+
+    canvas {
+        display: block;
+        max-width: 100%;
+        touch-action: none;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+        font: inherit;
+    }
+ </style>
+"""
+
+_IFRAME_APP_BOOTSTRAP_SCRIPT = """
+<script>
+(function () {
+    "use strict";
+
+    var BLOCKED_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "]);
+
+    // ------------------------------------------------------------------
+    // Utilities
+    // ------------------------------------------------------------------
+    function isEditable(el) {
+        if (!el) return false;
+        var tag = (el.tagName || "").toUpperCase();
+        return el.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    }
+
+    function showRuntimeError(message) {
+        var text = String(message || "Unknown iframe app error");
+        if (!text || text === "Script error.") {
+            // Browsers mask cross-origin script exceptions as "Script error."
+            // This is usually not actionable for end users.
+            return;
+        }
+
+        var banner = document.getElementById("litemind-app-error");
+        if (!banner) {
+            banner = document.createElement("div");
+            banner.id = "litemind-app-error";
+            banner.style.cssText = [
+                "position:fixed", "left:12px", "right:12px", "bottom:12px",
+                "padding:10px 12px", "border-radius:12px",
+                "background:rgba(127,29,29,0.94)", "color:#fff",
+                'font:500 12px/1.4 "SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+                "box-shadow:0 12px 30px rgba(15,23,42,.28)",
+                "z-index:2147483647", "white-space:pre-wrap"
+            ].join(";");
+            document.body.appendChild(banner);
+        }
+        banner.textContent = text;
+    }
+
+    // ------------------------------------------------------------------
+    // Parent-page fixes
+    //
+    // If the iframe runs same-origin with the parent Streamlit page, we can
+    // access window.parent.document to:
+    //   1. Focus the <iframe> element itself in the parent DOM — this is
+    //      what routes keyboard events to us without requiring a prior
+    //      user click.
+    //   2. Install a capture-phase keydown handler on the parent that
+    //      prevents arrow-key page scroll only while an iframe is the
+    //      active element (so normal Streamlit page scroll is preserved).
+    //   3. Hide the element toolbar that Streamlit floats over each
+    //      component on hover (it blocks the first mouse click otherwise).
+    // ------------------------------------------------------------------
+    (function installParentFixes() {
+        var parentWin, parentDoc;
+        try {
+            parentWin = window.parent;
+            parentDoc = parentWin.document;
+            void parentDoc.body; // throws if cross-origin
+        } catch (e) {
+            return; // not same-origin — skip
+        }
+
+        // 1. Arrow-key scroll prevention on the parent Streamlit page.
+        //    Only fires when an <iframe> element is the active element,
+        //    so regular page scrolling is unaffected.
+        if (!parentWin._litemindArrowKeyFixInstalled) {
+            parentWin._litemindArrowKeyFixInstalled = true;
+            parentDoc.addEventListener("keydown", function (e) {
+                if (BLOCKED_KEYS.has(e.key)) {
+                    var active = parentDoc.activeElement;
+                    if (active && active.tagName === "IFRAME") {
+                        e.preventDefault();
+                    }
+                }
+            }, { capture: true, passive: false });
+        }
+
+        // 2. Find the <iframe> element in the parent that wraps THIS window.
+        function findSelfIframe() {
+            var frames = parentDoc.querySelectorAll("iframe");
+            for (var i = 0; i < frames.length; i++) {
+                try {
+                    if (frames[i].contentWindow === window) return frames[i];
+                } catch (err) { /* skip any cross-origin sibling */ }
+            }
+            return null;
+        }
+
+        // Focus the <iframe> element in the parent so keyboard events are
+        // routed here without requiring the user to click first.
+        function focusSelf() {
+            var el = findSelfIframe();
+            if (!el) return;
+            if (!el.getAttribute("tabindex")) el.setAttribute("tabindex", "0");
+            el.focus({ preventScroll: true });
+        }
+
+        // Hide the Streamlit element toolbar that floats above this component.
+        // We target only the toolbar that is a DOM sibling of our wrapper,
+        // leaving toolbars on other elements untouched.
+        function hideNearbyToolbar() {
+            var el = findSelfIframe();
+            if (!el) return;
+            var wrapper = el.closest
+                ? el.closest('[data-testid="stIFrame"], [data-testid="stCustomComponentV1"]')
+                : null;
+            var container = wrapper ? wrapper.parentElement : null;
+            if (!container) return;
+            var toolbar = container.querySelector('[data-testid="stElementToolbar"]');
+            if (toolbar) {
+                toolbar.style.setProperty("display",        "none",  "important");
+                toolbar.style.setProperty("pointer-events", "none",  "important");
+            }
+        }
+
+        window.addEventListener("load", function () {
+            requestAnimationFrame(function () {
+                hideNearbyToolbar();
+                focusSelf();
+            });
+        });
+
+        // Re-focus every time the user clicks/taps inside the app.
+        document.addEventListener("pointerdown", function () {
+            requestAnimationFrame(focusSelf);
+        }, { passive: true });
+
+        // Export so LiteMindApp.requestFocus() works from game code.
+        window._litemindFocusSelf = focusSelf;
+    })();
+
+    // ------------------------------------------------------------------
+    // Inside-iframe: also prevent arrow keys from scrolling the iframe
+    // document itself (belt-and-suspenders).
+    // ------------------------------------------------------------------
+    window.addEventListener("keydown", function (e) {
+        if (BLOCKED_KEYS.has(e.key) && !isEditable(e.target)) {
+            e.preventDefault();
+        }
+    }, { capture: true });
+
+    // ------------------------------------------------------------------
+    // Error reporting
+    // ------------------------------------------------------------------
+    window.addEventListener("error", function (e) {
+        showRuntimeError(e.message || "Iframe app error");
+    });
+
+    window.addEventListener("unhandledrejection", function (e) {
+        var r = e.reason;
+        if (!r) {
+            return;
+        }
+        showRuntimeError(r && typeof r === "object" && r.message
+            ? r.message
+            : String(r || "Unhandled promise rejection"));
+    });
+
+    // ------------------------------------------------------------------
+    // LiteMind app API
+    // ------------------------------------------------------------------
+    window.LiteMindApp = Object.assign({}, window.LiteMindApp || {}, {
+        requestFocus: function () {
+            if (window._litemindFocusSelf) {
+                window._litemindFocusSelf();
+            }
+        },
+        showRuntimeError: showRuntimeError,
+        getViewport: function () {
+            return { width: window.innerWidth, height: window.innerHeight };
+        }
+    });
+})();
+</script>
 """
 
 
@@ -167,7 +410,7 @@ def render_mixed_content(text: str, msg_index: int = 0) -> None:
         if lang.startswith("ui:"):
             component_type = lang[3:]
             try:
-                if component_type == "webapp":
+                if component_type in _RAW_HTML_COMPONENT_TYPES:
                     render_ui_component(component_type, ui_content, msg_index)
                     rendered_any = True
                     pos = fence_end
@@ -538,6 +781,325 @@ def _wrap_webapp_html(html_content: str) -> str:
     )
 
 
+def _inject_html_fragment(document: str, pattern: re.Pattern[str], fragment: str) -> str:
+    match = pattern.search(document)
+    if match is None:
+        return document + "\n" + fragment
+
+    return document[:match.start()] + fragment + "\n" + document[match.start():]
+
+
+def _compose_iframe_app_markup(props: dict) -> str:
+    html_content = str(props.get("html", "")).strip()
+    css_content = str(props.get("css", "")).strip()
+    js_content = str(props.get("js", "")).strip()
+
+    if not html_content and not css_content and not js_content:
+        return ""
+
+    fragments = [html_content] if html_content else ["<div id=\"app\" data-lite-app-root></div>"]
+    if css_content:
+        fragments.append(f"<style>\n{css_content}\n</style>")
+    if js_content:
+        fragments.append(f"<script>\n{js_content}\n</script>")
+    return "\n".join(fragment for fragment in fragments if fragment)
+
+
+def _extract_fenced_body(text: str) -> str:
+    """Return fenced body when *text* is exactly one fenced block."""
+    stripped = text.strip()
+    block = _match_single_fenced_block(stripped)
+    if block is None:
+        return stripped
+    _, body = block
+    return body.strip()
+
+
+def _match_single_fenced_block(text: str) -> Optional[tuple[str, str]]:
+    block_iterator = _iter_fenced_blocks(text)
+    block = next(block_iterator, None)
+    if block is None:
+        return None
+
+    start, end, lang, content = block
+    if start != 0 or end != len(text):
+        return None
+
+    return lang, content
+
+
+def _find_html_code_fence(text: str) -> Optional[tuple[int, int, str]]:
+    for fence_start, fence_end, lang, content in _iter_fenced_blocks(text):
+        if lang.casefold() == "html":
+            return fence_start, fence_end, content
+    return None
+
+
+def _try_parse_json_object(text: str) -> Optional[dict]:
+    """Best-effort JSON object parse; returns None when parsing fails."""
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _is_html_tag_boundary(char: str) -> bool:
+    return char.isspace() or char == ">"
+
+
+def _parse_doctype_html_tag_end(text: str, lowered: str, start: int) -> tuple[Optional[int], int]:
+    token_end = start + len("<!doctype")
+    if token_end >= len(text) or not text[token_end].isspace():
+        return None, start + 1
+
+    index = token_end
+    while index < len(text):
+        char = text[index]
+        if char == ">":
+            body = lowered[token_end:index].lstrip()
+            if not body.startswith("html"):
+                return None, index + 1
+            if len(body) > 4 and (body[4].isalnum() or body[4] == "_"):
+                return None, index + 1
+            return index + 1, index + 1
+        if char == "<":
+            return None, index
+        index += 1
+
+    return None, len(text)
+
+
+def _parse_html_open_tag_end(text: str, start: int) -> tuple[Optional[int], int]:
+    token_end = start + len("<html")
+    if token_end < len(text) and not _is_html_tag_boundary(text[token_end]):
+        return None, start + 1
+
+    index = token_end
+    while index < len(text):
+        char = text[index]
+        if char == ">":
+            return index + 1, index + 1
+        if char == "<":
+            return None, index
+        index += 1
+
+    return None, len(text)
+
+
+def _parse_html_close_tag_end(text: str, start: int) -> tuple[Optional[int], int]:
+    token_end = start + len("</html")
+    if token_end < len(text) and not _is_html_tag_boundary(text[token_end]):
+        return None, start + 1
+
+    index = token_end
+    while index < len(text):
+        char = text[index]
+        if char == ">":
+            return index + 1, index + 1
+        if char == "<":
+            return None, index
+        if not char.isspace():
+            return None, index + 1
+        index += 1
+
+    return None, len(text)
+
+
+def _find_primary_html_document_span(text: str) -> Optional[tuple[int, int]]:
+    lowered = text.lower()
+    search_start = 0
+    pending_doctype_start: Optional[int] = None
+
+    while True:
+        tag_start = text.find("<", search_start)
+        if tag_start == -1:
+            return None
+
+        if lowered.startswith("<!doctype", tag_start):
+            doctype_end, next_index = _parse_doctype_html_tag_end(text, lowered, tag_start)
+            if doctype_end is not None and pending_doctype_start is None:
+                pending_doctype_start = tag_start
+                search_start = doctype_end
+                continue
+
+            search_start = max(next_index, tag_start + 1)
+            continue
+
+        if lowered.startswith("<html", tag_start):
+            open_tag_end, next_index = _parse_html_open_tag_end(text, tag_start)
+            if open_tag_end is None:
+                search_start = max(next_index, tag_start + 1)
+                continue
+
+            close_search_start = open_tag_end
+            while True:
+                close_tag_start = text.find("<", close_search_start)
+                if close_tag_start == -1:
+                    return None
+
+                if lowered.startswith("</html", close_tag_start):
+                    close_tag_end, next_close_index = _parse_html_close_tag_end(text, close_tag_start)
+                    if close_tag_end is not None:
+                        start = pending_doctype_start if pending_doctype_start is not None else tag_start
+                        return start, close_tag_end
+
+                    close_search_start = max(next_close_index, close_tag_start + 1)
+                    continue
+
+                close_search_start = close_tag_start + 1
+
+        search_start = tag_start + 1
+
+
+def _extract_primary_html_document(text: str) -> Optional[str]:
+    """Return the first complete HTML document embedded in *text*, if present."""
+    document_span = _find_primary_html_document_span(text)
+    if document_span is None:
+        return None
+    start, end = document_span
+    return text[start:end].strip()
+
+
+def _component_type_for_html(markup: str) -> str:
+    """Choose the richer iframe renderer when markup looks interactive."""
+    return "iframe_app" if _INTERACTIVE_HTML_RE.search(markup) else "webapp"
+
+
+def _wrap_html_markup_as_ui_block(markup: str) -> str:
+    """Wrap standalone HTML markup in a ui:* fenced block."""
+    stripped = markup.strip()
+    if not stripped:
+        return ""
+    component_type = _component_type_for_html(stripped)
+    return f"```ui:{component_type}\n{stripped}\n```"
+
+
+def _auto_convert_html_markup(text: str) -> str:
+    """Convert bare HTML documents or ```html fences into ui:* blocks."""
+    stripped = text.strip()
+    if not stripped:
+        return text
+
+    html_fence = _find_html_code_fence(stripped)
+    if html_fence is not None:
+        fence_start, fence_end, fence_body = html_fence
+        if fence_start == 0 and fence_end == len(stripped):
+            return _wrap_html_markup_as_ui_block(fence_body)
+
+    document = _extract_primary_html_document(stripped)
+    if document is not None and document == stripped:
+        return _wrap_html_markup_as_ui_block(document)
+
+    html_fence = _find_html_code_fence(text)
+    if html_fence is not None:
+        fence_start, fence_end, fence_body = html_fence
+        before = text[:fence_start]
+        after = text[fence_end:]
+        return before + _wrap_html_markup_as_ui_block(fence_body) + after
+
+    document_span = _find_primary_html_document_span(text)
+    if document_span is not None:
+        start, end = document_span
+        before = text[:start]
+        after = text[end:]
+        return before + _wrap_html_markup_as_ui_block(text[start:end]) + after
+
+    return text
+
+
+def _normalise_webapp_payload(raw_payload: Any) -> str:
+    """Normalise webapp payload across raw HTML and accidental JSON envelopes."""
+    if isinstance(raw_payload, dict):
+        html_content = str(raw_payload.get("html", "")).strip()
+        if html_content:
+            return html_content
+        return json.dumps(raw_payload, ensure_ascii=False, indent=2)
+
+    stripped = _extract_fenced_body(str(raw_payload or ""))
+    if not stripped:
+        return ""
+
+    parsed = _try_parse_json_object(stripped)
+    if parsed is not None:
+        if "html" in parsed:
+            return str(parsed.get("html", "")).strip()
+        return json.dumps(parsed, ensure_ascii=False, indent=2)
+
+    document = _extract_primary_html_document(stripped)
+    if document is not None:
+        return document
+
+    return stripped
+
+
+def _normalise_iframe_app_payload(raw_payload: Any) -> str:
+    """Normalise iframe-app payload across dict, JSON, and fenced variants."""
+    if isinstance(raw_payload, dict):
+        return _compose_iframe_app_markup(raw_payload)
+
+    stripped = _extract_fenced_body(str(raw_payload or ""))
+    if not stripped:
+        return ""
+
+    parsed = _try_parse_json_object(stripped)
+    if parsed is not None:
+        if any(key in parsed for key in ("html", "css", "js")):
+            return _compose_iframe_app_markup(parsed)
+        return json.dumps(parsed, ensure_ascii=False, indent=2)
+
+    document = _extract_primary_html_document(stripped)
+    if document is not None:
+        return document
+
+    return stripped
+
+
+def _wrap_iframe_app_html(html_content: str) -> str:
+    stripped = html_content.strip()
+    if not stripped:
+        return ""
+
+    if re.search(r"<html[\s>]", stripped, re.IGNORECASE):
+        document = stripped
+    elif re.search(r"<(head|body)[\s>]", stripped, re.IGNORECASE):
+        document = (
+            "<!DOCTYPE html>\n"
+            "<html>\n"
+            f"{stripped}\n"
+            "</html>"
+        )
+    else:
+        return (
+            "<!DOCTYPE html>\n"
+            "<html>\n"
+            "<head>\n"
+            "  <meta charset=\"utf-8\" />\n"
+            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n"
+            f"{_IFRAME_APP_SHELL_CSS}\n"
+            "</head>\n"
+            "<body>\n"
+            "  <div id=\"app\" data-lite-app-root>\n"
+            f"{stripped}\n"
+            "  </div>\n"
+            f"{_IFRAME_APP_BOOTSTRAP_SCRIPT}\n"
+            "</body>\n"
+            "</html>"
+        )
+
+    document = _inject_html_fragment(document, _HTML_HEAD_CLOSE_RE, _IFRAME_APP_SHELL_CSS)
+    return _inject_html_fragment(document, _HTML_BODY_CLOSE_RE, _IFRAME_APP_BOOTSTRAP_SCRIPT)
+
+
+def _build_iframe_app_iframe_src(html_content: str) -> str:
+    wrapped_html = _wrap_iframe_app_html(html_content)
+    if not wrapped_html:
+        return ""
+
+    encoded_html = base64.b64encode(wrapped_html.encode("utf-8")).decode("ascii")
+    return f"data:text/html;base64,{encoded_html}"
+
+
 def _build_webapp_iframe_src(html_content: str) -> str:
     wrapped_html = _wrap_webapp_html(html_content)
     if not wrapped_html:
@@ -550,12 +1112,12 @@ def _build_webapp_iframe_src(html_content: str) -> str:
 def _render_webapp(props: Any, msg_index: int = 0) -> None:
     explicit_height = None
     if isinstance(props, dict):
-        html_content = str(props.get("html", "")).strip()
+        html_content = _normalise_webapp_payload(props)
         height_value = props.get("height")
         if isinstance(height_value, int):
             explicit_height = _clamp_webapp_height(height_value)
     else:
-        html_content = str(props or "").strip()
+        html_content = _normalise_webapp_payload(props)
 
     hinted_height, html_content = _extract_webapp_height(html_content)
     height = explicit_height or hinted_height
@@ -564,13 +1126,52 @@ def _render_webapp(props: Any, msg_index: int = 0) -> None:
         st.info("Web app component is empty.")
         return
 
-    iframe_src = _build_webapp_iframe_src(html_content)
-    if not iframe_src:
+    wrapped_html = _wrap_webapp_html(html_content)
+    if not wrapped_html:
         st.info("Web app component is empty.")
         return
 
     _inject_webapp_css()
-    st.iframe(iframe_src, height=height)
+    # st.iframe() accepts raw HTML strings for inline app rendering.
+    st.iframe(wrapped_html, height=height, tab_index=0)
+
+
+def _render_iframe_app(props: Any, msg_index: int = 0) -> None:
+    explicit_height = None
+    title = ""
+    description = ""
+
+    if isinstance(props, dict):
+        html_content = _normalise_iframe_app_payload(props)
+        title = str(props.get("title", "")).strip()
+        description = str(props.get("description", "")).strip()
+        height_value = props.get("height")
+        if isinstance(height_value, int):
+            explicit_height = _clamp_webapp_height(height_value)
+    else:
+        html_content = _normalise_iframe_app_payload(props)
+
+    hinted_height, html_content = _extract_webapp_height(html_content, default_height=720)
+    height = explicit_height or hinted_height
+
+    if title:
+        st.markdown(f"**{_sanitize_html(title)}**")
+    if description:
+        st.caption(description)
+
+    if not html_content:
+        st.info("Iframe app component is empty.")
+        return
+
+    wrapped_html = _wrap_iframe_app_html(html_content)
+    if not wrapped_html:
+        st.info("Iframe app component is empty.")
+        return
+
+    _inject_webapp_css()
+    st.caption("Click inside the frame to interact · keyboard arrow keys and mouse both work.")
+    # st.iframe() accepts raw HTML strings for inline app rendering.
+    st.iframe(wrapped_html, height=height, tab_index=0)
 
 
 # ===================================================================
@@ -583,6 +1184,7 @@ _COMPONENT_REGISTRY: Dict[str, Callable] = {
     "metric": _render_metric,
     "chart": _render_chart,
     "webapp": _render_webapp,
+    "iframe_app": _render_iframe_app,
     "button_group": _render_button_group,
     "progress": _render_progress,
     "alert": _render_alert,
@@ -748,6 +1350,7 @@ def auto_enhance_content(text: str) -> str:
     Converts markdown tables → ``ui:data_table`` and bold key-value
     metric lines → ``ui:metric``.
     """
+    text = _auto_convert_html_markup(text)
     text = _auto_convert_tables(text)
     text = _auto_convert_metrics(text)
     return text
@@ -767,6 +1370,7 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     '- metric: {"metrics": [{"label": "...", "value": "...", "delta": "+5%"}]}\n'
     '- chart: {"type": "bar|line|pie|scatter", "title": "...", "x": [...], "y": [...]}\n'
     '- webapp: raw HTML/CSS/JS (not JSON), optionally starting with <!-- height: 640 -->\n'
+    '- iframe_app: raw HTML/CSS/JS for playable apps and games, optionally starting with <!-- height: 720 -->\n'
     '- info_card: {"icon": "📊", "title": "...", "content": "...", "color": "#hex"}\n'
     '- button_group: {"label": "...", "buttons": [{"text": "...", "value": "user prompt"}]}\n'
     '- alert: {"level": "info|success|warning|error", "message": "..."}\n'
@@ -777,7 +1381,7 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     '- json_viewer: {"title": "...", "data": {...}}\n'
     '- progress: {"value": 75, "label": "..."}\n'
     '- link_cards: {"links": [{"title": "...", "url": "https://...", "description": "..."}]}\n\n'
-    "Rules: Use valid JSON in component blocks. Combine text with components. "
+    "Rules: Use valid JSON in component blocks. Use iframe_app for playable apps and games. Combine text with components. "
     "If unsure about syntax, use standard markdown tables and "
     "**Bold Label:** Value lines – they will be auto-converted."
 )

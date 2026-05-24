@@ -340,6 +340,11 @@ class ChatPage:
             key="enable_generative_ui",
             help="Enable rich UI components (charts, tables, metrics, buttons) in AI responses"
         )
+        if st.session_state.get("enable_generative_ui", False):
+            st.sidebar.caption(
+                "⚡ Token output is auto-raised to 16 384 tokens so apps and games "
+                "generate completely in one turn."
+            )
         
         # Memory configuration using shared component
         render_memory_config(self.memory_manager, "chat", "history_enabled", "memory_enabled")
