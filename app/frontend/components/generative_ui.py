@@ -64,9 +64,6 @@ def _iter_fenced_blocks(text: str) -> Iterator[tuple[int, int, str, str]]:
         search_start = fence_end + 3
 
 _WEBAPP_HEIGHT_RE = re.compile(r"^\s*<!--\s*height\s*:\s*(\d{2,4})\s*-->\s*", re.IGNORECASE)
-_CODE_FENCE_RE = re.compile(r"^```(?:[\w:+.-]+)?\s*\n(?P<body>[\s\S]*?)\n```\s*$")
-_HTML_CODE_FENCE_RE = re.compile(r"```html\s*\n(?P<body>[\s\S]*?)\n```", re.IGNORECASE)
-_HTML_DOCUMENT_RE = re.compile(r"(?is)<!DOCTYPE\s+html\b[\s\S]*?</html\s*>|<html[\s>][\s\S]*?</html\s*>")
 _INTERACTIVE_HTML_RE = re.compile(
     r"(?is)<(?:script|canvas|button|input|select|textarea)\b|"
     r"on(?:click|change|input|submit|keydown|keyup|pointerdown)\s*=|"
@@ -811,10 +808,31 @@ def _compose_iframe_app_markup(props: dict) -> str:
 def _extract_fenced_body(text: str) -> str:
     """Return fenced body when *text* is exactly one fenced block."""
     stripped = text.strip()
-    match = _CODE_FENCE_RE.match(stripped)
-    if match is None:
+    block = _match_single_fenced_block(stripped)
+    if block is None:
         return stripped
-    return match.group("body").strip()
+    _, body = block
+    return body.strip()
+
+
+def _match_single_fenced_block(text: str) -> Optional[tuple[str, str]]:
+    block_iterator = _iter_fenced_blocks(text)
+    block = next(block_iterator, None)
+    if block is None:
+        return None
+
+    start, end, lang, content = block
+    if start != 0 or end != len(text):
+        return None
+
+    return lang, content
+
+
+def _find_html_code_fence(text: str) -> Optional[tuple[int, int, str]]:
+    for fence_start, fence_end, lang, content in _iter_fenced_blocks(text):
+        if lang.casefold() == "html":
+            return fence_start, fence_end, content
+    return None
 
 
 def _try_parse_json_object(text: str) -> Optional[dict]:
@@ -826,12 +844,121 @@ def _try_parse_json_object(text: str) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
+def _is_html_tag_boundary(char: str) -> bool:
+    return char.isspace() or char == ">"
+
+
+def _parse_doctype_html_tag_end(text: str, lowered: str, start: int) -> tuple[Optional[int], int]:
+    token_end = start + len("<!doctype")
+    if token_end >= len(text) or not text[token_end].isspace():
+        return None, start + 1
+
+    index = token_end
+    while index < len(text):
+        char = text[index]
+        if char == ">":
+            body = lowered[token_end:index].lstrip()
+            if not body.startswith("html"):
+                return None, index + 1
+            if len(body) > 4 and (body[4].isalnum() or body[4] == "_"):
+                return None, index + 1
+            return index + 1, index + 1
+        if char == "<":
+            return None, index
+        index += 1
+
+    return None, len(text)
+
+
+def _parse_html_open_tag_end(text: str, start: int) -> tuple[Optional[int], int]:
+    token_end = start + len("<html")
+    if token_end < len(text) and not _is_html_tag_boundary(text[token_end]):
+        return None, start + 1
+
+    index = token_end
+    while index < len(text):
+        char = text[index]
+        if char == ">":
+            return index + 1, index + 1
+        if char == "<":
+            return None, index
+        index += 1
+
+    return None, len(text)
+
+
+def _parse_html_close_tag_end(text: str, start: int) -> tuple[Optional[int], int]:
+    token_end = start + len("</html")
+    if token_end < len(text) and not _is_html_tag_boundary(text[token_end]):
+        return None, start + 1
+
+    index = token_end
+    while index < len(text):
+        char = text[index]
+        if char == ">":
+            return index + 1, index + 1
+        if char == "<":
+            return None, index
+        if not char.isspace():
+            return None, index + 1
+        index += 1
+
+    return None, len(text)
+
+
+def _find_primary_html_document_span(text: str) -> Optional[tuple[int, int]]:
+    lowered = text.lower()
+    search_start = 0
+    pending_doctype_start: Optional[int] = None
+
+    while True:
+        tag_start = text.find("<", search_start)
+        if tag_start == -1:
+            return None
+
+        if lowered.startswith("<!doctype", tag_start):
+            doctype_end, next_index = _parse_doctype_html_tag_end(text, lowered, tag_start)
+            if doctype_end is not None and pending_doctype_start is None:
+                pending_doctype_start = tag_start
+                search_start = doctype_end
+                continue
+
+            search_start = max(next_index, tag_start + 1)
+            continue
+
+        if lowered.startswith("<html", tag_start):
+            open_tag_end, next_index = _parse_html_open_tag_end(text, tag_start)
+            if open_tag_end is None:
+                search_start = max(next_index, tag_start + 1)
+                continue
+
+            close_search_start = open_tag_end
+            while True:
+                close_tag_start = text.find("<", close_search_start)
+                if close_tag_start == -1:
+                    return None
+
+                if lowered.startswith("</html", close_tag_start):
+                    close_tag_end, next_close_index = _parse_html_close_tag_end(text, close_tag_start)
+                    if close_tag_end is not None:
+                        start = pending_doctype_start if pending_doctype_start is not None else tag_start
+                        return start, close_tag_end
+
+                    close_search_start = max(next_close_index, close_tag_start + 1)
+                    continue
+
+                close_search_start = close_tag_start + 1
+
+        search_start = tag_start + 1
+
+
 def _extract_primary_html_document(text: str) -> Optional[str]:
     """Return the first complete HTML document embedded in *text*, if present."""
-    match = _HTML_DOCUMENT_RE.search(text)
-    if match is None:
+    document_span = _find_primary_html_document_span(text)
+    if document_span is None:
         return None
-    return match.group(0).strip()
+    start, end = document_span
+    return text[start:end].strip()
 
 
 def _component_type_for_html(markup: str) -> str:
@@ -854,25 +981,29 @@ def _auto_convert_html_markup(text: str) -> str:
     if not stripped:
         return text
 
-    fence_match = _HTML_CODE_FENCE_RE.fullmatch(stripped)
-    if fence_match is not None:
-        return _wrap_html_markup_as_ui_block(fence_match.group("body"))
+    html_fence = _find_html_code_fence(stripped)
+    if html_fence is not None:
+        fence_start, fence_end, fence_body = html_fence
+        if fence_start == 0 and fence_end == len(stripped):
+            return _wrap_html_markup_as_ui_block(fence_body)
 
     document = _extract_primary_html_document(stripped)
     if document is not None and document == stripped:
         return _wrap_html_markup_as_ui_block(document)
 
-    fence_match = _HTML_CODE_FENCE_RE.search(text)
-    if fence_match is not None:
-        before = text[:fence_match.start()]
-        after = text[fence_match.end():]
-        return before + _wrap_html_markup_as_ui_block(fence_match.group("body")) + after
+    html_fence = _find_html_code_fence(text)
+    if html_fence is not None:
+        fence_start, fence_end, fence_body = html_fence
+        before = text[:fence_start]
+        after = text[fence_end:]
+        return before + _wrap_html_markup_as_ui_block(fence_body) + after
 
-    match = _HTML_DOCUMENT_RE.search(text)
-    if match is not None:
-        before = text[:match.start()]
-        after = text[match.end():]
-        return before + _wrap_html_markup_as_ui_block(match.group(0)) + after
+    document_span = _find_primary_html_document_span(text)
+    if document_span is not None:
+        start, end = document_span
+        before = text[:start]
+        after = text[end:]
+        return before + _wrap_html_markup_as_ui_block(text[start:end]) + after
 
     return text
 
