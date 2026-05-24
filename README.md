@@ -293,14 +293,6 @@ To use TTS on any response:
 2. Click the 🗣️ button next to the response (or let realtime mode stream it automatically)
 3. Audio plays inline; close with ✕ when done
 
-### Document Q\&A (RAG)
-
-1. Switch to the **RAG** tab
-2. Upload PDF, Office, spreadsheet, HTML/XML, JSON/YAML/TOML, or image files
-3. **Choose Backend:** RAG works with both Ollama and vLLM backends
-4. Query your documents with natural language
-5. Get contextually relevant answers
-
 ### Backend Switching
 
 - **Seamless Integration:** Switch between backends without losing your current page

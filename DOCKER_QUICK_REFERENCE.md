@@ -88,12 +88,11 @@ uv lock --upgrade
 - **UV_MIGRATION.md** - Migration from pip to uv
 - **UV_MIGRATION_SUMMARY.md** - Quick summary of migration
 
-## Old Files (Can Delete)
+## Dependency Source of Truth
 
-```bash
-# These are no longer needed (all in pyproject.toml now)
-git rm requirements.txt requirements-backend.txt requirements-frontend.txt
-```
+- Dependency definitions live in `pyproject.toml`
+- Resolved versions are locked in `uv.lock`
+- The old pip requirements files have been removed
 
 ## Common Tasks
 
@@ -134,9 +133,9 @@ docker-compose run backend pip list | head -20
 
 | Aspect | Before | After |
 |--------|--------|-------|
-| Config files | 3 (requirements.txt, -backend, -frontend) | 1 (pyproject.toml) |
+| Config files | Multiple pip requirements files | `pyproject.toml` + `uv.lock` |
 | Dependency separation | Manual (separate files) | Automatic (dependency groups) |
-| Version control | 3 files to track | 1 file + uv.lock |
+| Version control | Multiple dependency files to track | 1 manifest + 1 lockfile |
 | Maintenance | Sync 3 files | Edit pyproject.toml |
 | Docker builds | 2 separate file copies | 1 file copy + group selection |
 | IDE support | ❌ Limited | ✅ Full (pyproject.toml standard) |
