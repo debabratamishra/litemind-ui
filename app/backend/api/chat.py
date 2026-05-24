@@ -259,9 +259,9 @@ async def chat_endpoint(request: ChatRequestEnhanced):
         else:
             return await _handle_ollama_chat(request)
             
-    except Exception as e:
-        logger.error(f"Chat endpoint error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Chat endpoint error")
+        raise HTTPException(status_code=500, detail="An internal error occurred")
 
 
 @router.post("/api/chat/stream")
@@ -280,9 +280,9 @@ async def chat_stream(request: ChatRequestEnhanced):
                     payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
                     yield f"data: {payload}\n\n"
                     
-        except Exception as e:
-            logger.error(f"Chat streaming error: {e}")
-            payload = json.dumps({"error": str(e)}, ensure_ascii=False)
+        except Exception:
+            logger.exception("Chat streaming error")
+            payload = json.dumps({"error": "An internal error occurred"}, ensure_ascii=False)
             yield f"data: {payload}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
