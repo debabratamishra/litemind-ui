@@ -58,13 +58,6 @@ else
     echo "   Please ensure Ollama is installed and running before starting containers"
 fi
 
-# Check if vLLM is running (optional)
-if curl -s http://localhost:8001/health >/dev/null 2>&1; then
-    echo "✅ vLLM service is running on localhost:8001"
-else
-    echo "ℹ️  vLLM service not running (this is optional)"
-fi
-
 echo ""
 echo "🎉 Docker setup complete!"
 echo ""

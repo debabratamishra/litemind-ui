@@ -409,7 +409,6 @@ class RAGPage:
                     use_multi_agent=config["use_multi_agent"],
                     use_hybrid_search=config["use_hybrid_search"],
                     backend=backend_provider,
-                    hf_token=st.session_state.get("hf_token") if backend_provider == "vllm" else None,
                     placeholder=out,
                     conversation_summary=conversation_summary,
                     session_id=self.memory_manager.session_id,
@@ -445,18 +444,12 @@ class RAGPage:
             status += " (hybrid search enabled)"
         if config["use_multi_agent"]:
             status += " with multi-agent orchestration"
-        if backend_provider == "vllm":
-            model = st.session_state.get("vllm_model", "unknown")
-            status += f" (vLLM - {model})"
         status += "..."
         return status
     
     def _get_model_for_backend(self, backend_provider: str) -> str:
         """Get appropriate model based on backend."""
-        if backend_provider == "vllm":
-            return st.session_state.get("vllm_model", "no-model")
-        else:
-            return st.session_state.get("selected_ollama_model", "default")
+        return st.session_state.get("selected_ollama_model", "default")
     
     def render_sidebar_config(self):
         """Render RAG-specific sidebar configuration."""
@@ -572,14 +565,7 @@ class RAGPage:
     def _render_sidebar_base_model_selection(self):
         """Render base model selection for RAG in sidebar."""
         backend_provider = st.session_state.get("current_backend", "ollama")
-        is_docker = st.session_state.get("is_docker_deployment", False)
-        
-        # Handle vLLM in Docker deployment
-        if backend_provider == "vllm" and is_docker:
-            st.sidebar.warning("⚠️ vLLM not supported in Docker deployment")
-            st.sidebar.info("Please use Ollama backend for RAG operations")
-        # Only show Ollama base model selection when Ollama backend is selected
-        elif backend_provider == "ollama" and st.session_state.get("backend_available", False):
+        if backend_provider == "ollama" and st.session_state.get("backend_available", False):
             
             enhanced = backend_service.get_enhanced_models()
             # Exclude embedding / reranking models from the base model list
@@ -627,13 +613,8 @@ class RAGPage:
                 st.session_state["selected_ollama_model"] = raw_name
             else:
                 st.sidebar.warning("⚠️ No Ollama models available")
-        elif backend_provider == "vllm":
-            vllm_model = st.session_state.get("vllm_model")
-            if vllm_model:
-                st.sidebar.success(f"🎯 Active vLLM Model: {vllm_model}")
-            else:
-                st.sidebar.warning("⚠️ No vLLM model loaded")
-                st.sidebar.info("Configure vLLM in the backend section above")
+        else:
+            st.sidebar.warning("⚠️ Unsupported backend selected. Please use Ollama.")
     
     def _render_sidebar_status(self):
         """Render RAG status in sidebar."""
@@ -652,23 +633,13 @@ class RAGPage:
     
     def _render_sidebar_model_selection(self):
         """Render model selection in sidebar."""
-        backend_provider = st.session_state.get("current_backend", "ollama")
-        
-        if backend_provider == "vllm":
-            vllm_model = st.session_state.get("vllm_model")
-            if vllm_model:
-                st.sidebar.success(f"🎯 Active Model: {vllm_model}")
-            else:
-                st.sidebar.warning("⚠️ No vLLM model loaded")
-                st.sidebar.info("👆 Configure vLLM above to load a model")
-        else:
-            available_models = backend_service.get_available_models()
-            st.sidebar.selectbox(
-                "Select Base Model:",
-                available_models,
-                help="Language model used for generating responses",
-                key="selected_rag_model"
-            )
+        available_models = backend_service.get_available_models()
+        st.sidebar.selectbox(
+            "Select Base Model:",
+            available_models,
+            help="Language model used for generating responses",
+            key="selected_rag_model"
+        )
     
     def _render_sidebar_system_prompt(self):
         """Render system prompt configuration in sidebar."""

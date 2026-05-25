@@ -13,7 +13,6 @@ class Config:
     
     # Service URLs
     OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434')
-    VLLM_API_URL = os.getenv('VLLM_API_URL', 'http://localhost:8001')
     
     # Directory paths - handle both containerized and native environments
     @classmethod
@@ -200,7 +199,6 @@ class Config:
             return {
                 "is_containerized": is_containerized,
                 "ollama_url": cls.OLLAMA_API_URL,
-                "vllm_url": cls.VLLM_API_URL,
                 "hf_cache_dir": cache_dirs["huggingface_cache"],
                 "ollama_cache_dir": cache_dirs["ollama_cache"],
                 "upload_dir": persistent_dirs["uploads"],

@@ -75,7 +75,6 @@ class CleanFormatter(logging.Formatter):
         'uvicorn': 'server',
         'app.services.host_service_manager': 'host_service',
         'app.services.rag_service': 'rag_service',
-        'app.services.vllm_service': 'vllm_service',
         'sentence_transformers.SentenceTransformer': 'sentence_transformers',
         'logging_config': 'config',
     }

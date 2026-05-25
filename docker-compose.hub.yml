@@ -23,7 +23,6 @@ services:
       - ./logs:/app/logs
     environment:
       - OLLAMA_API_URL=http://host.docker.internal:11434
-      - VLLM_API_URL=http://host.docker.internal:8001
       - CHROMA_DB_PATH=/app/chroma_db
       - UPLOAD_FOLDER=/app/uploads
       - STORAGE_PATH=/app/storage

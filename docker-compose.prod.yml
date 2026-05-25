@@ -20,7 +20,6 @@ services:
       - ${HOST_LOGS_DIR:-./logs}:/app/logs
     environment:
       - OLLAMA_API_URL=http://localhost:11434
-      - VLLM_API_URL=http://localhost:8001
       - CHROMA_DB_PATH=${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
       - UPLOAD_FOLDER=${CONTAINER_UPLOADS_DIR:-/app/uploads}
       - STORAGE_PATH=${CONTAINER_STORAGE_DIR:-/app/storage}

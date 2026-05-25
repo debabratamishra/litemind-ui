@@ -45,48 +45,9 @@ class GracefulShutdownHandler:
         })
         
     def find_host_processes(self) -> List[Dict[str, Any]]:
-        """Find vLLM and other host processes that need cleanup."""
+        """Find host processes that need cleanup."""
         processes = []
-        
-        try:
-            # Look for vLLM processes
-            result = subprocess.run(
-                ['pgrep', '-f', 'vllm'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            
-            if result.returncode == 0:
-                pids = result.stdout.strip().split('\n')
-                for pid in pids:
-                    if pid.strip():
-                        try:
-                            # Get process info
-                            proc_info = subprocess.run(
-                                ['ps', '-p', pid.strip(), '-o', 'pid,ppid,cmd'],
-                                capture_output=True,
-                                text=True,
-                                timeout=2
-                            )
-                            
-                            if proc_info.returncode == 0:
-                                lines = proc_info.stdout.strip().split('\n')
-                                if len(lines) > 1:  # Skip header
-                                    process_line = lines[1].strip()
-                                    processes.append({
-                                        'pid': int(pid.strip()),
-                                        'type': 'vllm',
-                                        'info': process_line
-                                    })
-                        except Exception as e:
-                            logger.warning(f"Could not get info for PID {pid}: {e}")
-                            
-        except subprocess.TimeoutExpired:
-            logger.warning("Timeout while searching for host processes")
-        except Exception as e:
-            logger.warning(f"Error searching for host processes: {e}")
-            
+
         return processes
     
     def cleanup_host_processes(self):

@@ -18,7 +18,7 @@ Performs comprehensive validation before the application starts:
 
 - **Environment Variables**: Validates required and optional environment variables
 - **Volume Mounts**: Checks accessibility and permissions of mounted directories
-- **Host Services**: Tests connectivity to Ollama and vLLM services
+- **Host Services**: Tests connectivity to Ollama service
 - **Critical Requirements**: Ensures all critical components are ready
 
 #### Usage
@@ -67,8 +67,7 @@ Comprehensive check for container readiness to serve requests:
   "checks": {
     "rag_service": {"status": "ready"},
     "directories": {"uploads": {"status": "ready"}},
-    "ollama": {"status": "ready", "response_time_ms": 45.2},
-    "vllm": {"status": "unavailable", "optional": true}
+      "ollama": {"status": "ready", "response_time_ms": 45.2}
   }
 }
 ```
@@ -144,7 +143,7 @@ python3 scripts/health-check.py --type comprehensive # Full check
 
 Handles proper cleanup during container shutdown:
 
-- **Host Process Cleanup**: Terminates vLLM and other spawned processes
+- **Host Process Cleanup**: Terminates spawned host processes
 - **Temporary File Cleanup**: Removes temporary files and caches
 - **State Persistence**: Saves shutdown state for diagnostics
 - **Log Flushing**: Ensures all logs are written
@@ -290,7 +289,6 @@ docker logs <container_id> | grep "Graceful shutdown"
    
    # Check host services
    curl http://localhost:11434/api/tags  # Ollama
-   curl http://localhost:8001/v1/models  # vLLM
    ```
 
 2. **Health Checks Failing**

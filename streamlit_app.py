@@ -2,7 +2,7 @@
 LiteMindUI - A production-ready Streamlit interface for Large Language Models.
 
 This application provides an intuitive web interface for interacting with LLMs
-through both Ollama (local models) and vLLM (HuggingFace models) backends.
+through Ollama models.
 It also supports document Q&A through RAG (Retrieval-Augmented Generation).
 """
 import logging
@@ -12,7 +12,6 @@ import os
 from importlib import import_module
 
 from app.frontend.services.backend_service import backend_service
-from app.frontend.components.vllm_config import setup_vllm_backend
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,46 +79,12 @@ class StreamlitApp:
     
     def render_backend_selection(self):
         st.sidebar.subheader("Backend Provider")
-        
-        # Check if running in Docker environment
-        is_docker = st.session_state.get("is_docker_deployment", False)
-        
+
         if st.session_state.backend_available:
-            # If Docker deployment, only show Ollama option
-            if is_docker:
-                st.sidebar.info("🦙 Ollama Backend")
-                st.sidebar.warning("⚠️ vLLM is not supported with Docker installation yet. It will be added shortly.")
-                backend_provider = "ollama"
-                # Force current backend to ollama in Docker
-                st.session_state.current_backend = "ollama"
-            else:
-                # Native deployment, show both options
-                backend_provider = st.sidebar.radio(
-                    "Select LLM Backend:",
-                    ["ollama", "vllm"],
-                    format_func=lambda x: "🦙 Ollama" if x == "ollama" else "⚡ vLLM",
-                    key="backend_provider",
-                    help="Choose between Ollama (local) or vLLM (Huggingface) backend"
-                )
-                
-                # Handle backend switching
-                if "current_backend" not in st.session_state:
-                    st.session_state.current_backend = backend_provider
-                elif st.session_state.current_backend != backend_provider:
-                    st.session_state.current_backend = backend_provider
-                    if "vllm_model" in st.session_state:
-                        del st.session_state.vllm_model
-                    st.rerun()
+            st.sidebar.info("🦙 Ollama Backend")
+            st.session_state.current_backend = "ollama"
         else:
-            backend_provider = "ollama"
-            st.sidebar.info("🔴 FastAPI backend required for vLLM support")
-        
-        # Show vLLM configuration if selected and not in Docker
-        if (st.session_state.backend_available and 
-            st.session_state.current_backend == "vllm" and
-            not is_docker):
-            st.sidebar.markdown("---")
-            setup_vllm_backend()
+            st.sidebar.info("🔴 FastAPI backend required for Ollama support")
     
     def render_page_navigation(self):
         st.sidebar.markdown("---")
@@ -153,11 +118,7 @@ class StreamlitApp:
         
         if st.session_state.backend_available:
             st.sidebar.success("✅ FastAPI Backend Connected")
-            backend_provider = st.session_state.get("current_backend", "ollama")
-            if backend_provider == "vllm" and not is_docker:
-                st.sidebar.info("⚡ vLLM Mode Active")
-            else:
-                st.sidebar.info("🦙 Ollama Mode Active")
+            st.sidebar.info("🦙 Ollama Mode Active")
         else:
             st.sidebar.warning("⚠️ Using Local Backend")
 

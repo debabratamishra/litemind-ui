@@ -244,24 +244,15 @@ def validate_backend_setup(backend_provider: str) -> bool:
     Validate backend setup for the current provider.
     
     Args:
-        backend_provider: The backend provider ("ollama" or "vllm")
+        backend_provider: The backend provider ("ollama")
         
     Returns:
         bool: True if setup is valid, False otherwise
     """
-    is_docker = st.session_state.get("is_docker_deployment", False)
-    
-    # Prevent vLLM usage in Docker
-    if backend_provider == "vllm" and is_docker:
-        st.error("❌ vLLM is not supported with Docker installation yet. Please use Ollama backend.")
+    if backend_provider != "ollama":
+        st.error("❌ Unsupported backend selected. Please use Ollama.")
         return False
-    
-    if backend_provider == "vllm":
-        vllm_model = st.session_state.get("vllm_model")
-        if not vllm_model:
-            st.error("❌ Please configure and load a vLLM model first")
-            return False
-    
+
     return True
 
 

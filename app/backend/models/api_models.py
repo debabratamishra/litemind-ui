@@ -20,7 +20,6 @@ class ChatRequestEnhanced(BaseModel):
     frequency_penalty: Optional[float] = 0.0  # Penalize frequent tokens (-2.0 to 2.0)
     repetition_penalty: Optional[float] = 1.0  # Penalize repeated tokens (0.0 to 2.0)
     backend: Optional[str] = "ollama"
-    hf_token: Optional[str] = None
     use_web_search: Optional[bool] = False
     is_voice_mode: Optional[bool] = False  # True for voice agent, False for text agent
     enable_generative_ui: Optional[bool] = False
@@ -39,7 +38,6 @@ class RAGQueryRequestEnhanced(BaseModel):
     use_multi_agent: Optional[bool] = False
     use_hybrid_search: Optional[bool] = False
     backend: Optional[str] = "ollama"
-    hf_token: Optional[str] = None
     temperature: Optional[float] = 0.7  # Temperature for LLM response generation
     max_tokens: Optional[int] = 2048  # Maximum tokens for LLM response generation
     top_p: Optional[float] = 0.9  # Nucleus sampling parameter (0.0 to 1.0)
@@ -65,17 +63,6 @@ class RAGConfigRequest(BaseModel):
 class STTRequest(BaseModel):
     audio_data: str  # Base64 encoded
     sample_rate: Optional[int] = 16000
-
-
-class VLLMTokenRequest(BaseModel):
-    token: str
-
-
-class VLLMModelRequest(BaseModel):
-    model_name: str
-    dtype: Optional[str] = "auto"
-    max_model_len: Optional[int] = None
-    gpu_memory_utilization: Optional[float] = 0.9
 
 
 class HealthResponse(BaseModel):
@@ -136,11 +123,6 @@ class TranscriptionResponse(BaseModel):
     status: str
     transcription: str
     length: int
-
-
-class VLLMStatusResponse(BaseModel):
-    running: bool
-    current_model: Optional[str] = None
 
 
 class ErrorResponse(BaseModel):

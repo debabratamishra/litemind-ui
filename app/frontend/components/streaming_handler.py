@@ -53,7 +53,6 @@ class StreamingHandler:
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
         backend: str = "ollama",
-        hf_token: Optional[str] = None,
         placeholder: Optional[Any] = None,
         use_fastapi: bool = True,
         tts_callback: Optional[Callable[[str], None]] = None,
@@ -73,8 +72,7 @@ class StreamingHandler:
             top_p: Nucleus sampling parameter (0.0 to 1.0)
             frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
             repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
-            backend: Backend to use (ollama/vllm)
-            hf_token: HuggingFace token for vLLM
+            backend: Backend to use (ollama)
             placeholder: Streamlit placeholder for UI updates
             use_fastapi: Whether to use FastAPI backend
             tts_callback: Optional callback to receive text chunks for TTS synthesis.
@@ -110,8 +108,6 @@ class StreamingHandler:
                 top_p=top_p,
                 frequency_penalty=frequency_penalty,
                 repetition_penalty=repetition_penalty,
-                backend=backend,
-                hf_token=hf_token,
                 conversation_history=conversation_history,
                 conversation_summary=conversation_summary,
                 session_id=session_id,
@@ -142,7 +138,6 @@ class StreamingHandler:
         use_multi_agent: bool = False,
         use_hybrid_search: bool = False,
         backend: str = "ollama",
-        hf_token: Optional[str] = None,
         placeholder: Optional[Any] = None,
         tts_callback: Optional[Callable[[str], None]] = None,
         conversation_summary: Optional[str] = None,
@@ -164,8 +159,7 @@ class StreamingHandler:
             n_results: Number of results to retrieve
             use_multi_agent: Whether to use multi-agent processing
             use_hybrid_search: Whether to use hybrid search
-            backend: Backend to use (ollama/vllm)
-            hf_token: HuggingFace token for vLLM
+            backend: Backend to use (ollama)
             placeholder: Streamlit placeholder for UI updates
             tts_callback: Optional callback to receive text chunks for TTS synthesis
             conversation_summary: Summary of earlier messages
@@ -188,7 +182,6 @@ class StreamingHandler:
                 use_multi_agent=use_multi_agent,
                 use_hybrid_search=use_hybrid_search,
                 backend=backend,
-                hf_token=hf_token,
                 conversation_summary=conversation_summary,
                 session_id=session_id,
                 temperature=temperature,
@@ -222,7 +215,6 @@ class StreamingHandler:
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
         backend: str = "ollama",
-        hf_token: Optional[str] = None,
         placeholder: Optional[Any] = None,
         use_fastapi: bool = True,
         conversation_history: Optional[List[Dict[str, str]]] = None,
@@ -256,8 +248,6 @@ class StreamingHandler:
                 top_p=top_p,
                 frequency_penalty=frequency_penalty,
                 repetition_penalty=repetition_penalty,
-                backend=backend,
-                hf_token=hf_token,
                 conversation_history=conversation_history,
                 conversation_summary=conversation_summary,
                 session_id=session_id
