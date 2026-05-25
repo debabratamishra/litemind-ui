@@ -14,8 +14,11 @@ from ..components.shared_ui import (
     render_generation_settings,
     render_reasoning_config,
     render_memory_config,
+    render_backend_selector,
     validate_backend_setup,
     create_simple_summary,
+    get_backend_request_config,
+    get_default_openrouter_model,
 )
 from ..services.backend_service import backend_service
 from ..services.rag_service import rag_service
@@ -98,6 +101,8 @@ class RAGPage:
         
         # Initialize conversation history enabled state
         st.session_state.setdefault("rag_history_enabled", True)
+
+        st.session_state.setdefault("selected_openrouter_rag_model", get_default_openrouter_model())
     
     def _render_memory_indicator(self, stats):
         """Render a visual memory usage indicator."""
@@ -389,6 +394,7 @@ class RAGPage:
         top_p = st.session_state.get("rag_top_p", 0.9)
         frequency_penalty = st.session_state.get("rag_frequency_penalty", 0.0)
         repetition_penalty = st.session_state.get("rag_repetition_penalty", 1.0)
+        backend_request = get_backend_request_config(backend_provider)
         
         # Generate response
         with st.chat_message("assistant"):
@@ -409,6 +415,8 @@ class RAGPage:
                     use_multi_agent=config["use_multi_agent"],
                     use_hybrid_search=config["use_hybrid_search"],
                     backend=backend_provider,
+                    api_base=backend_request.get("api_base"),
+                    api_key=backend_request.get("api_key"),
                     placeholder=out,
                     conversation_summary=conversation_summary,
                     session_id=self.memory_manager.session_id,
@@ -449,6 +457,8 @@ class RAGPage:
     
     def _get_model_for_backend(self, backend_provider: str) -> str:
         """Get appropriate model based on backend."""
+        if backend_provider == "openrouter":
+            return st.session_state.get("selected_openrouter_rag_model", get_default_openrouter_model())
         return st.session_state.get("selected_ollama_model", "default")
     
     def render_sidebar_config(self):
@@ -459,6 +469,8 @@ class RAGPage:
         
         st.sidebar.markdown("---")
         st.sidebar.subheader("RAG Configuration")
+
+        render_backend_selector()
         
         # Base model selection for RAG (only when Ollama backend is selected)
         self._render_sidebar_base_model_selection()
@@ -613,8 +625,15 @@ class RAGPage:
                 st.session_state["selected_ollama_model"] = raw_name
             else:
                 st.sidebar.warning("⚠️ No Ollama models available")
+        elif backend_provider == "openrouter":
+            st.sidebar.text_input(
+                "OpenRouter Base Model:",
+                key="selected_openrouter_rag_model",
+                help="Example: meta-llama/llama-3.3-70b-instruct or google/gemini-2.5-flash",
+            )
+            st.sidebar.info("OpenRouter requests are routed directly through LiteLLM.")
         else:
-            st.sidebar.warning("⚠️ Unsupported backend selected. Please use Ollama.")
+            st.sidebar.warning("⚠️ Unsupported backend selected.")
     
     def _render_sidebar_status(self):
         """Render RAG status in sidebar."""

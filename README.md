@@ -34,12 +34,13 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 ### 🔧 **Core Capabilities**
 
 - **High-Performance API** - Async FastAPI backend for scalable LLM processing
-- **Ollama Backend** - Local-first inference powered by Ollama models
+- **LiteLLM SDK Routing** - Open-source Python SDK unifies inference calls without a hosted LiteLLM proxy or gateway
+- **Ollama + OpenRouter** - Local-first Ollama models plus optional OpenRouter cloud routing through the same SDK transport
 - **RAG Integration** - Upload PDFs, Office documents, HTML/XML, spreadsheets, structured text files, and images with enhanced local extraction and context-aware responses
 - **Generation Controls** - Per-chat and per-RAG sliders for temperature and max tokens (hard cut-off)
 - **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
 - **Realtime Voice Mode** - WebRTC voice chat with live transcription, barge-in, and streaming speech replies (Chat + RAG)
-- **Multi-Model Support** - Access to local and cloud-catalog Ollama models
+- **Multi-Model Support** - Access local and cloud-catalog Ollama models or enter OpenRouter model ids directly in the UI
 
 ### 🛠 **Developer Experience**
 
@@ -179,9 +180,14 @@ mkdir -p uploads .streamlit
 Environment variables you may want to set (examples):
 
 ```bash
-export OLLAMA_BASE_URL="http://localhost:11434"
+export OLLAMA_API_URL="http://localhost:11434"
+export OPENROUTER_API_KEY="your-openrouter-api-key"
+export OPENROUTER_API_BASE="https://openrouter.ai/api/v1"
+export DEFAULT_OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct"
 export UPLOAD_FOLDER="./uploads"
 ```
+
+The app uses the LiteLLM Python SDK directly. You do not need to run the LiteLLM proxy/gateway.
 
 Notes:
 - Running the full stack natively requires additional setup (Ollama, model files) and is intended for development.
@@ -247,7 +253,7 @@ mkdir -p uploads .streamlit
 ### Chat Interface
 
 1. Navigate to the **Chat** tab
-2. **Configure Model:** Select from available Ollama models
+2. **Configure Backend + Model:** Choose `Ollama` for local/cloud Ollama models or `OpenRouter` and enter a provider/model id
 4. **Optional Web Search:** Enable the web search toggle to enhance responses with real-time internet data
 5. Enter your message and receive AI responses
 6. **Listen to Responses:** Click the 🗣️ button next to any AI response to hear it read aloud
@@ -317,7 +323,7 @@ fetch('http://localhost:8000/api/chat', {
 })
 - FastAPI backend on `localhost:8000`
 - Streamlit frontend on `localhost:8501`
-- Ollama backend
+- LiteLLM SDK transport with Ollama and OpenRouter support
 - RAG for PDFs, Office files, structured text, HTML/XML, spreadsheets, and images
 - Realtime voice, local speech-to-text, and offline text-to-speech
 - Streaming chat and structured generative UI components
@@ -325,7 +331,7 @@ fetch('http://localhost:8000/api/chat', {
 ![Swagger UI](Swagger.png)
 
 - Chat and RAG workflows in a single interface
-- Ollama-based model selection
+- Provider-aware model selection for Ollama and OpenRouter
 - Streaming responses with conversation memory
 - Document upload and retrieval across common file formats
 - Optional SerpAPI-backed web search in chat

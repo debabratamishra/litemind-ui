@@ -5,13 +5,13 @@ import logging
 from typing import List, Dict, Optional, AsyncGenerator
 from urllib.parse import urlparse
 from crewai import Agent, LLM
-import asyncio
 from dotenv import load_dotenv
 
 # Ensure environment variables are loaded
 load_dotenv()
 
 from app.services.web_search_service import WebSearchService
+from app.services.llm_gateway import normalize_backend, resolve_backend_config, stream_completion
 
 logger = logging.getLogger(__name__)
 
@@ -19,45 +19,44 @@ logger = logging.getLogger(__name__)
 class WebSearchOrchestrator:
     """Orchestrates web search using CrewAI agents for retrieval and synthesis."""
     
-    def __init__(self):
-        """Initialize the orchestrator with WebSearchService and Ollama LLM."""
+    def __init__(
+        self,
+        backend: str = "ollama",
+        model: Optional[str] = None,
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        """Initialize the orchestrator with WebSearchService and a configurable LLM."""
         self.web_search_service = WebSearchService()
-        
-        # Get Ollama URL using the same pattern as RAGService
-        ollama_url = self._get_ollama_url()
-        
-        # Get the model name from environment or use default
-        model_name = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
-        
-        # Initialize the LLM for CrewAI agents
-        self.llm = LLM(
-            model=f"ollama/{model_name}",
-            base_url=ollama_url
+
+        self.backend = normalize_backend(backend)
+        self.requested_model = model
+        self.llm_config = resolve_backend_config(
+            backend=self.backend,
+            model=model or os.getenv("OLLAMA_MODEL", "llama3.2:latest"),
+            api_base=api_base,
+            api_key=api_key,
         )
-        
-        logger.info(f"WebSearchOrchestrator initialized with model: {model_name} at {ollama_url}")
+
+        agent_model = self.llm_config.model
+        if self.backend == "ollama" and agent_model.startswith("ollama_chat/"):
+            agent_model = f"ollama/{agent_model[len('ollama_chat/') :]}"
+
+        self.llm = LLM(
+            model=agent_model,
+            base_url=self.llm_config.api_base,
+            api_key=self.llm_config.api_key,
+        )
+
+        logger.info(
+            "WebSearchOrchestrator initialized with backend=%s model=%s api_base=%s",
+            self.backend,
+            self.llm_config.model,
+            self.llm_config.api_base,
+        )
         
         # Initialize agents
         self._initialize_agents()
-    
-    def _get_ollama_url(self) -> str:
-        """Get the appropriate Ollama URL based on execution environment.
-        
-        This follows the same pattern as RAGService to ensure consistency.
-        
-        Returns:
-            str: Ollama API URL
-        """
-        try:
-            from app.services.host_service_manager import host_service_manager
-            url = host_service_manager.environment_config.ollama_url
-            logger.debug(f"Using Ollama URL from host service manager: {url}")
-            return url
-        except ImportError:
-            logger.warning("Host service manager not available, using fallback config")
-            url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-            logger.debug(f"Using fallback Ollama URL: {url}")
-            return url
     
     def _initialize_agents(self):
         """Initialize the Query Optimizer, Serper, and Synthesizer agents."""
@@ -221,7 +220,7 @@ class WebSearchOrchestrator:
             
             # Get optimized query from LLM
             optimized_query = ""
-            async for chunk in self._stream_from_ollama(optimization_prompt):
+            async for chunk in self._stream_from_llm(optimization_prompt):
                 optimized_query += chunk
             
             # Clean up the response - remove any extra text
@@ -311,7 +310,7 @@ class WebSearchOrchestrator:
             
             # Stream response from Base LLM
             logger.info("Streaming synthesis response from Base LLM")
-            async for chunk in self._stream_from_ollama(synthesis_prompt):
+            async for chunk in self._stream_from_llm(synthesis_prompt):
                 yield chunk
 
             citation_block = self._build_citation_block(search_results)
@@ -467,58 +466,28 @@ class WebSearchOrchestrator:
         
         return "".join(prompt_parts)
     
-    async def _stream_from_ollama(self, prompt: str) -> AsyncGenerator[str, None]:
-        """Stream response from Ollama Base LLM.
+    async def _stream_from_llm(self, prompt: str) -> AsyncGenerator[str, None]:
+        """Stream response from the configured base LLM.
         
         Args:
-            prompt: The complete prompt to send to Ollama
+            prompt: The complete prompt to send to the model
             
         Yields:
             str: Response chunks from the LLM
         """
-        import httpx
-        
-        ollama_url = self._get_ollama_url()
-        model_name = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
-        
-        # Prepare request payload
-        payload = {
-            "model": model_name,
-            "prompt": prompt,
-            "stream": True
-        }
-        
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
-                async with client.stream(
-                    "POST",
-                    f"{ollama_url}/api/generate",
-                    json=payload
-                ) as response:
-                    response.raise_for_status()
-                    
-                    async for line in response.aiter_lines():
-                        if line.strip():
-                            try:
-                                import json
-                                chunk_data = json.loads(line)
-                                
-                                if "response" in chunk_data:
-                                    yield chunk_data["response"]
-                                
-                                # Check if generation is complete
-                                if chunk_data.get("done", False):
-                                    break
-                                    
-                            except json.JSONDecodeError:
-                                logger.warning(f"Failed to parse Ollama response chunk: {line}")
-                                continue
-                                
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error streaming from Ollama: {e}")
-            raise
+            async for chunk in stream_completion(
+                [{"role": "user", "content": prompt}],
+                backend=self.backend,
+                model=self.requested_model,
+                api_base=self.llm_config.api_base,
+                api_key=self.llm_config.api_key,
+                temperature=0.2,
+                max_tokens=2048,
+            ):
+                yield chunk
         except Exception as e:
-            logger.error(f"Error streaming from Ollama: {e}", exc_info=True)
+            logger.error(f"Error streaming from configured LLM: {e}", exc_info=True)
             raise
     
     async def _fallback_to_base_llm(
@@ -549,5 +518,5 @@ class WebSearchOrchestrator:
         
         fallback_prompt = "".join(prompt_parts)
         
-        async for chunk in self._stream_from_ollama(fallback_prompt):
+        async for chunk in self._stream_from_llm(fallback_prompt):
             yield chunk

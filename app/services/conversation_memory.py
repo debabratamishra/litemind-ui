@@ -16,7 +16,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 import hashlib
 
-from .ollama import stream_ollama
+from .llm_gateway import stream_completion
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,10 @@ class ConversationMemoryService:
         max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
         summarize_threshold: float = DEFAULT_SUMMARIZE_THRESHOLD,
         summary_max_tokens: int = DEFAULT_SUMMARY_MAX_TOKENS,
-        model_for_summary: str = "gemma3:1b"
+        model_for_summary: str = "gemma3:1b",
+        summary_backend: str = "ollama",
+        summary_api_base: Optional[str] = None,
+        summary_api_key: Optional[str] = None,
     ):
         """
         Initialize the conversation memory service.
@@ -112,6 +115,9 @@ class ConversationMemoryService:
         self.summarize_threshold = summarize_threshold
         self.summary_max_tokens = summary_max_tokens
         self.model_for_summary = model_for_summary
+        self.summary_backend = summary_backend
+        self.summary_api_base = summary_api_base
+        self.summary_api_key = summary_api_key
         
         # In-memory storage for active sessions
         self._sessions: Dict[str, ConversationContext] = {}
@@ -354,10 +360,14 @@ Summary:"""
                 {"role": "user", "content": summary_prompt}
             ]
             
-            async for chunk in stream_ollama(
+            async for chunk in stream_completion(
                 messages_for_llm,
+                backend=self.summary_backend,
+                api_base=self.summary_api_base,
+                api_key=self.summary_api_key,
                 model=self.model_for_summary,
-                temperature=0.3  # Lower temperature for more consistent summaries
+                temperature=0.3,
+                max_tokens=self.summary_max_tokens,
             ):
                 summary_parts.append(chunk)
             
@@ -466,12 +476,18 @@ def get_memory_service() -> ConversationMemoryService:
         threshold = float(os.getenv("SUMMARIZE_THRESHOLD", DEFAULT_SUMMARIZE_THRESHOLD))
         summary_max = int(os.getenv("SUMMARY_MAX_TOKENS", DEFAULT_SUMMARY_MAX_TOKENS))
         model = os.getenv("SUMMARY_MODEL", "gemma3:1b")
+        backend = os.getenv("SUMMARY_BACKEND", "ollama")
+        api_base = os.getenv("SUMMARY_API_BASE")
+        api_key = os.getenv("SUMMARY_API_KEY")
         
         _memory_service = ConversationMemoryService(
             max_context_tokens=max_tokens,
             summarize_threshold=threshold,
             summary_max_tokens=summary_max,
-            model_for_summary=model
+            model_for_summary=model,
+            summary_backend=backend,
+            summary_api_base=api_base,
+            summary_api_key=api_key,
         )
     return _memory_service
 

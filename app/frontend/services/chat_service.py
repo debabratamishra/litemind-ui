@@ -7,7 +7,7 @@ import requests
 from typing import Dict, List, Optional, Any
 
 from ..config import FASTAPI_URL, CONNECT_TIMEOUT, READ_TIMEOUT
-from ...services.ollama import stream_ollama
+from ...services.llm_gateway import stream_completion
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,9 @@ class ChatService:
         self, 
         message: str, 
         model: str = "default", 
+        backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
         top_p: float = 0.9,
@@ -37,6 +40,7 @@ class ChatService:
             payload = {
                 "message": message, 
                 "model": model, 
+                "backend": backend,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "top_p": top_p,
@@ -44,6 +48,10 @@ class ChatService:
                 "repetition_penalty": repetition_penalty,
                 "enable_generative_ui": enable_generative_ui,
             }
+            if api_base:
+                payload["api_base"] = api_base
+            if api_key:
+                payload["api_key"] = api_key
             
             # Add conversation history if provided
             if conversation_history:
@@ -70,6 +78,9 @@ class ChatService:
         self,
         message: str,
         model: str = "default",
+        backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
         top_p: float = 0.9,
@@ -90,10 +101,14 @@ class ChatService:
             "top_p": top_p,
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
-            "backend": "ollama",
+            "backend": backend,
             "is_voice_mode": is_voice_mode,
             "enable_generative_ui": enable_generative_ui,
         }
+        if api_base:
+            payload["api_base"] = api_base
+        if api_key:
+            payload["api_key"] = api_key
         
         # Add conversation history if provided
         if conversation_history:
@@ -112,11 +127,14 @@ class ChatService:
         response.raise_for_status()
         return response
 
-    def stream_local_ollama_chat(
+    def stream_local_chat(
         self,
         message: str,
+        backend: str,
         model: str,
         temperature: float,
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         max_tokens: int = 2048,
         top_p: float = 0.9,
         frequency_penalty: float = 0.0,
@@ -124,7 +142,7 @@ class ChatService:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None
     ) -> str:
-        """Stream a chat response from local Ollama with conversation memory."""
+        """Stream a chat response directly through LiteLLM with conversation memory."""
         async def _inner() -> str:
             # Build messages with history
             messages = []
@@ -144,9 +162,12 @@ class ChatService:
             messages.append({"role": "user", "content": message})
             
             acc = ""
-            async for chunk in stream_ollama(
-                messages, 
-                model=model, 
+            async for chunk in stream_completion(
+                messages,
+                backend=backend,
+                model=model,
+                api_base=api_base,
+                api_key=api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 top_p=top_p,
@@ -157,11 +178,40 @@ class ChatService:
             return acc
 
         return asyncio.run(_inner())
+
+    def stream_local_ollama_chat(
+        self,
+        message: str,
+        model: str,
+        temperature: float,
+        max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        conversation_summary: Optional[str] = None,
+    ) -> str:
+        """Backward-compatible wrapper for the old Ollama-only local fallback."""
+        return self.stream_local_chat(
+            message=message,
+            backend="ollama",
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            repetition_penalty=repetition_penalty,
+            conversation_history=conversation_history,
+            conversation_summary=conversation_summary,
+        )
     
     def stream_web_search_chat(
         self,
         message: str,
         model: str = "default",
+        backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
         top_p: float = 0.9,
@@ -180,9 +230,13 @@ class ChatService:
             "top_p": top_p,
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
-            "backend": "ollama",
+            "backend": backend,
             "use_web_search": True
         }
+        if api_base:
+            payload["api_base"] = api_base
+        if api_key:
+            payload["api_key"] = api_key
         
         # Add conversation history if provided
         if conversation_history:

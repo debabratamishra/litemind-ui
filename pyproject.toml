@@ -9,6 +9,7 @@ dependencies = [
     # Shared core dependencies
     "python-dotenv",
     "psutil",
+    "litellm",
 ]
 
 [project.optional-dependencies]

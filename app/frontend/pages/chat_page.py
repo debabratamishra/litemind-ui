@@ -16,8 +16,11 @@ from ..components.shared_ui import (
     render_generation_settings,
     render_reasoning_config,
     render_memory_config,
+    render_backend_selector,
     validate_backend_setup,
     create_simple_summary,
+    get_backend_request_config,
+    get_default_openrouter_model,
     get_generation_config_from_session,
 )
 from ..services.backend_service import backend_service
@@ -61,6 +64,8 @@ class ChatPage:
         # Initialize generative UI state
         if "enable_generative_ui" not in st.session_state:
             st.session_state.enable_generative_ui = False
+
+        st.session_state.setdefault("selected_openrouter_chat_model", get_default_openrouter_model())
     
     def _render_web_search_toggle(self) -> bool:
         """
@@ -214,6 +219,8 @@ class ChatPage:
                         frequency_penalty=config["frequency_penalty"],
                         repetition_penalty=config["repetition_penalty"],
                         backend=backend_provider,
+                        api_base=config.get("api_base"),
+                        api_key=config.get("api_key"),
                         placeholder=out,
                         use_fastapi=self.backend_available,
                         conversation_history=conversation_history,
@@ -240,6 +247,8 @@ class ChatPage:
                         frequency_penalty=config["frequency_penalty"],
                         repetition_penalty=config["repetition_penalty"],
                         backend=backend_provider,
+                        api_base=config.get("api_base"),
+                        api_key=config.get("api_key"),
                         placeholder=out,
                         use_fastapi=self.backend_available,
                         conversation_history=conversation_history,
@@ -278,7 +287,11 @@ class ChatPage:
     def _get_chat_config(self, backend_provider: str) -> Dict:
         """Get chat configuration for the current backend."""
         config = get_generation_config_from_session("chat")
-        config["model"] = st.session_state.get("selected_chat_model", "default")
+        config.update(get_backend_request_config(backend_provider))
+        if backend_provider == "openrouter":
+            config["model"] = st.session_state.get("selected_openrouter_chat_model", get_default_openrouter_model())
+        else:
+            config["model"] = st.session_state.get("selected_chat_model", "default")
         
         return config
     
@@ -307,11 +320,12 @@ class ChatPage:
         st.sidebar.markdown("---")
         st.sidebar.subheader("Chat Configuration")
         
-        backend_provider = st.session_state.get("current_backend", "ollama")
+        backend_provider = render_backend_selector()
 
-        if backend_provider != "ollama":
-            st.sidebar.warning("⚠️ Unsupported backend selected. Using Ollama configuration.")
-        self._render_ollama_model_config()
+        if backend_provider == "ollama":
+            self._render_ollama_model_config()
+        else:
+            self._render_openrouter_model_config()
         
         # Generation settings using shared component
         render_generation_settings("chat", expanded=True)
@@ -401,6 +415,14 @@ class ChatPage:
 
         # Always store the raw model name for use by the chat pipeline
         st.session_state["selected_chat_model"] = raw_name
+
+    def _render_openrouter_model_config(self):
+        st.sidebar.text_input(
+            "OpenRouter Model:",
+            key="selected_openrouter_chat_model",
+            help="Example: meta-llama/llama-3.3-70b-instruct or openai/gpt-4o-mini",
+        )
+        st.sidebar.info("Cloud routing happens directly through the LiteLLM SDK using OpenRouter.")
     
     def _check_and_trigger_summarization(self):
         """Check if summarization is needed and trigger it."""

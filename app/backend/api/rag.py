@@ -251,7 +251,7 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
 
 
 async def _handle_ollama_rag_query(request: RAGQueryRequestEnhanced, rag_service):
-    """Handle Ollama RAG query with conversation memory support"""
+    """Handle a RAG query with conversation memory support."""
     # Prepare messages with conversation summary if available
     messages = request.messages.copy() if request.messages else []
     
@@ -260,8 +260,15 @@ async def _handle_ollama_rag_query(request: RAGQueryRequestEnhanced, rag_service
             request.query, request.system_prompt, messages,
             request.n_results, request.use_hybrid_search, request.model,
             conversation_summary=request.conversation_summary,
+            backend=request.backend,
+            api_base=request.api_base,
+            api_key=request.api_key,
             temperature=request.temperature,
-            max_tokens=request.max_tokens
+            max_tokens=request.max_tokens,
+            top_p=request.top_p,
+            frequency_penalty=request.frequency_penalty,
+            repetition_penalty=request.repetition_penalty,
+            is_voice_mode=request.is_voice_mode,
         ):
             yield chunk + "\n"
 

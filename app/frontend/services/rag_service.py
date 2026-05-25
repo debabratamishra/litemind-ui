@@ -137,23 +137,33 @@ class RAGService:
         messages: List[Dict[str, str]],
         model: str,
         system_prompt: str,
+        backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         n_results: int = 3,
         use_multi_agent: bool = False,
         use_hybrid_search: bool = False,
     ) -> Optional[str]:
         """Call the non-streaming RAG endpoint."""
         try:
+            payload = {
+                "query": query,
+                "messages": messages,
+                "model": model,
+                "backend": backend,
+                "system_prompt": system_prompt,
+                "n_results": n_results,
+                "use_multi_agent": use_multi_agent,
+                "use_hybrid_search": use_hybrid_search,
+            }
+            if api_base:
+                payload["api_base"] = api_base
+            if api_key:
+                payload["api_key"] = api_key
+
             response = requests.post(
                 f"{self.base_url}/api/rag/query",
-                json={
-                    "query": query,
-                    "messages": messages,
-                    "model": model,
-                    "system_prompt": system_prompt,
-                    "n_results": n_results,
-                    "use_multi_agent": use_multi_agent,
-                    "use_hybrid_search": use_hybrid_search,
-                },
+                json=payload,
                 timeout=self.timeout * 2,
             )
             return response.text if response.status_code == 200 else None
@@ -170,6 +180,9 @@ class RAGService:
         n_results: int = 3,
         use_multi_agent: bool = False,
         use_hybrid_search: bool = False,
+        backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None,
         temperature: float = 0.7,
@@ -194,8 +207,12 @@ class RAGService:
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
             "is_voice_mode": is_voice_mode,
-            "backend": "ollama",
+            "backend": backend,
         }
+        if api_base:
+            payload["api_base"] = api_base
+        if api_key:
+            payload["api_key"] = api_key
 
         # Add conversation memory fields
         if conversation_summary:

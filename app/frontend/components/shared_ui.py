@@ -4,12 +4,20 @@ Shared UI Components Module.
 This module provides reusable Streamlit UI components to eliminate
 code duplication between chat_page.py and rag_page.py.
 """
+import os
 import logging
 import streamlit as st
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable
 
 logger = logging.getLogger(__name__)
+
+OPENROUTER_DEFAULT_API_BASE = (
+    os.getenv("OPENROUTER_API_BASE")
+    or os.getenv("OPENROUTER_BASE_URL")
+    or "https://openrouter.ai/api/v1"
+)
+OPENROUTER_DEFAULT_MODEL = os.getenv("DEFAULT_OPENROUTER_MODEL", "openai/gpt-4o-mini")
 
 
 # =============================================================================
@@ -239,6 +247,69 @@ def render_memory_config(
             st.sidebar.warning("Context near limit - will summarize soon")
 
 
+def render_backend_selector() -> str:
+    """Render the inference backend selector and provider-level settings."""
+    options = {"Ollama": "ollama", "OpenRouter": "openrouter"}
+    current_backend = st.session_state.get("current_backend", "ollama")
+    labels = list(options.keys())
+    default_index = next(
+        (index for index, label in enumerate(labels) if options[label] == current_backend),
+        0,
+    )
+
+    selected_label = st.sidebar.selectbox(
+        "Inference Backend",
+        labels,
+        index=default_index,
+        key="current_backend_label",
+        help="Choose which LiteLLM-supported backend powers chat and RAG generation.",
+    )
+    backend = options[selected_label]
+    st.session_state["current_backend"] = backend
+
+    if backend == "openrouter":
+        st.session_state.setdefault("openrouter_api_key", "")
+        st.session_state.setdefault("openrouter_api_base", OPENROUTER_DEFAULT_API_BASE)
+        st.sidebar.caption(
+            "OpenRouter model ids can be entered as provider/model. The app prefixes openrouter/ automatically."
+        )
+        st.sidebar.text_input(
+            "OpenRouter API Key",
+            key="openrouter_api_key",
+            type="password",
+            help="Optional if the FastAPI backend already has OPENROUTER_API_KEY configured.",
+        )
+        st.sidebar.text_input(
+            "OpenRouter API Base",
+            key="openrouter_api_base",
+            help="Defaults to https://openrouter.ai/api/v1",
+        )
+
+    return backend
+
+
+def get_default_openrouter_model() -> str:
+    """Return the default OpenRouter model shown in the UI."""
+    return OPENROUTER_DEFAULT_MODEL
+
+
+def get_backend_request_config(backend_provider: str) -> Dict[str, Optional[str]]:
+    """Return backend-specific request settings from session state."""
+    config: Dict[str, Optional[str]] = {
+        "backend": backend_provider,
+        "api_base": None,
+        "api_key": None,
+    }
+
+    if backend_provider == "openrouter":
+        api_base = (st.session_state.get("openrouter_api_base") or "").strip()
+        api_key = (st.session_state.get("openrouter_api_key") or "").strip()
+        config["api_base"] = api_base or None
+        config["api_key"] = api_key or None
+
+    return config
+
+
 def validate_backend_setup(backend_provider: str) -> bool:
     """
     Validate backend setup for the current provider.
@@ -249,11 +320,22 @@ def validate_backend_setup(backend_provider: str) -> bool:
     Returns:
         bool: True if setup is valid, False otherwise
     """
-    if backend_provider != "ollama":
-        st.error("❌ Unsupported backend selected. Please use Ollama.")
-        return False
+    if backend_provider == "ollama":
+        return True
 
-    return True
+    if backend_provider == "openrouter":
+        api_key = (
+            (st.session_state.get("openrouter_api_key") or "").strip()
+            or os.getenv("OPENROUTER_API_KEY", "").strip()
+        )
+        backend_available = bool(st.session_state.get("backend_available", False))
+        if not api_key and not backend_available:
+            st.error("❌ OpenRouter API key is required when the FastAPI backend is unavailable.")
+            return False
+        return True
+
+    st.error("❌ Unsupported backend selected.")
+    return False
 
 
 def create_simple_summary(

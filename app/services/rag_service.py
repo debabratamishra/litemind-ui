@@ -1,10 +1,11 @@
 """RAG service and CrewAI orchestration utilities.
 Provides ingestion, indexing, hybrid retrieval, and answer composition using ChromaDB,
-BM25, and an Ollama-backed LLM.
+BM25, and a configurable LiteLLM-backed LLM.
 """
 import chromadb
 from chromadb.utils import embedding_functions
 from chromadb.config import Settings
+from .llm_gateway import stream_completion
 from .ollama import stream_ollama
 import os
 import re
@@ -1377,8 +1378,8 @@ class RAGService:
         """RAG citations are disabled, so no footer is appended."""
         return ""
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=None, n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048, top_p: float = 0.9, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, is_voice_mode: bool = False):
-        """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama.
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=None, n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, backend: Optional[str] = "ollama", api_base: Optional[str] = None, api_key: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048, top_p: float = 0.9, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, is_voice_mode: bool = False):
+        """Answer a query using semantic or hybrid retrieval and stream model tokens.
         
         Args:
             query_text: The user's query
@@ -1388,6 +1389,9 @@ class RAGService:
             use_hybrid_search: Whether to use hybrid BM25 + semantic search
             model: Model name to use
             conversation_summary: Summary of earlier conversation for context
+            backend: Inference backend name (for example: ollama, openrouter)
+            api_base: Optional provider base URL override
+            api_key: Optional provider API key override
             temperature: Temperature for LLM response generation (0.0 to 1.0)
             max_tokens: Maximum number of tokens to generate
             top_p: Nucleus sampling parameter (0.0 to 1.0)
@@ -1396,7 +1400,6 @@ class RAGService:
             is_voice_mode: Whether this is voice mode (uses shorter, conversational responses)
         """
         messages = messages or []
-        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
         full_query = self.build_retrieval_query(query_text, messages)
         source_records = self.get_retrieval_records(full_query, n_results, use_hybrid_search)
 
@@ -1433,10 +1436,13 @@ class RAGService:
             "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
         })
         
-        async for chunk in stream_ollama(
-            llm_messages, 
-            model=model_name, 
-            temperature=temperature, 
+        async for chunk in stream_completion(
+            llm_messages,
+            backend=backend,
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            temperature=temperature,
             max_tokens=max_tokens,
             top_p=top_p,
             frequency_penalty=frequency_penalty,

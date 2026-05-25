@@ -53,6 +53,8 @@ class StreamingHandler:
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
         backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         placeholder: Optional[Any] = None,
         use_fastapi: bool = True,
         tts_callback: Optional[Callable[[str], None]] = None,
@@ -86,10 +88,12 @@ class StreamingHandler:
         
         try:
             if not use_fastapi:
-                # Local Ollama fallback with memory
-                return chat_service.stream_local_ollama_chat(
+                return chat_service.stream_local_chat(
                     message=message,
+                    backend=backend,
                     model=model,
+                    api_base=api_base,
+                    api_key=api_key,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     top_p=top_p,
@@ -103,6 +107,9 @@ class StreamingHandler:
             response = chat_service.stream_fastapi_chat(
                 message=message,
                 model=model,
+                backend=backend,
+                api_base=api_base,
+                api_key=api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 top_p=top_p,
@@ -138,6 +145,8 @@ class StreamingHandler:
         use_multi_agent: bool = False,
         use_hybrid_search: bool = False,
         backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         placeholder: Optional[Any] = None,
         tts_callback: Optional[Callable[[str], None]] = None,
         conversation_summary: Optional[str] = None,
@@ -182,6 +191,8 @@ class StreamingHandler:
                 use_multi_agent=use_multi_agent,
                 use_hybrid_search=use_hybrid_search,
                 backend=backend,
+                api_base=api_base,
+                api_key=api_key,
                 conversation_summary=conversation_summary,
                 session_id=session_id,
                 temperature=temperature,
@@ -215,6 +226,8 @@ class StreamingHandler:
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
         backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         placeholder: Optional[Any] = None,
         use_fastapi: bool = True,
         conversation_history: Optional[List[Dict[str, str]]] = None,
@@ -225,11 +238,13 @@ class StreamingHandler:
         
         try:
             if not use_fastapi:
-                # Fallback to local Ollama chat if FastAPI not available
                 logger.warning("Web search requires FastAPI backend. Falling back to local chat.")
-                return chat_service.stream_local_ollama_chat(
+                return chat_service.stream_local_chat(
                     message=message,
+                    backend=backend,
                     model=model,
+                    api_base=api_base,
+                    api_key=api_key,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     top_p=top_p,
@@ -243,6 +258,9 @@ class StreamingHandler:
             response = chat_service.stream_web_search_chat(
                 message=message,
                 model=model,
+                backend=backend,
+                api_base=api_base,
+                api_key=api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 top_p=top_p,

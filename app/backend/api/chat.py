@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 load_dotenv()
 
 from app.backend.models.api_models import ChatRequestEnhanced, ChatResponse, SerpTokenStatus, MemoryStatsResponse
-from app.services.ollama import stream_ollama
+from app.services.llm_gateway import complete_text, stream_completion
 from app.services.web_search_service import WebSearchService
 from app.services.web_search_crew import WebSearchOrchestrator
 from app.services.conversation_memory import get_memory_service, generate_session_id
@@ -280,7 +280,7 @@ async def chat_stream(request: ChatRequestEnhanced):
 
 
 async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
-    """Handle Ollama chat request with conversation history"""
+    """Handle a chat request with conversation history."""
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
@@ -292,23 +292,24 @@ async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
     else:
         max_tokens = request.max_tokens
     
-    response_text = ""
-    async for chunk in stream_ollama(
-        messages, 
-        model=request.model, 
-        temperature=request.temperature, 
+    response_text = await complete_text(
+        messages,
+        backend=request.backend,
+        model=request.model,
+        api_base=request.api_base,
+        api_key=request.api_key,
+        temperature=request.temperature,
         max_tokens=max_tokens,
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
-        repetition_penalty=request.repetition_penalty
-    ):
-        response_text += chunk
+        repetition_penalty=request.repetition_penalty,
+    )
     
     return ChatResponse(response=response_text, model=request.model)
 
 
 async def _stream_ollama_chat(request: ChatRequestEnhanced):
-    """Stream Ollama chat responses with conversation history"""
+    """Stream chat responses with conversation history."""
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
@@ -320,14 +321,17 @@ async def _stream_ollama_chat(request: ChatRequestEnhanced):
     else:
         max_tokens = request.max_tokens
     
-    async for chunk in stream_ollama(
-        messages, 
-        model=request.model, 
-        temperature=request.temperature, 
+    async for chunk in stream_completion(
+        messages,
+        backend=request.backend,
+        model=request.model,
+        api_base=request.api_base,
+        api_key=request.api_key,
+        temperature=request.temperature,
         max_tokens=max_tokens,
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
-        repetition_penalty=request.repetition_penalty
+        repetition_penalty=request.repetition_penalty,
     ):
         yield chunk
 
@@ -415,12 +419,24 @@ async def _handle_web_search_chat(request: ChatRequestEnhanced):
     async def event_generator():
         try:
             # Initialize orchestrator
-            orchestrator = WebSearchOrchestrator()
+            orchestrator = WebSearchOrchestrator(
+                backend=request.backend,
+                model=request.model,
+                api_base=request.api_base,
+                api_key=request.api_key,
+            )
             
-            # Build conversation history from request if available
             conversation_history = []
-            # Note: ChatRequestEnhanced currently only has 'message', not full history
-            # If history is needed, it would be added to the model
+            if request.conversation_summary:
+                conversation_history.append({
+                    "role": "system",
+                    "content": f"Summary of previous conversation:\n{request.conversation_summary}",
+                })
+            if request.conversation_history:
+                conversation_history.extend(
+                    {"role": msg.role, "content": msg.content}
+                    for msg in request.conversation_history
+                )
             
             # Process query through orchestrator with streaming
             async for chunk in orchestrator.process_query(
@@ -446,10 +462,24 @@ async def _stream_web_search_chat(request: ChatRequestEnhanced):
     """Stream web search chat responses (helper for streaming)"""
     try:
         # Initialize orchestrator
-        orchestrator = WebSearchOrchestrator()
+        orchestrator = WebSearchOrchestrator(
+            backend=request.backend,
+            model=request.model,
+            api_base=request.api_base,
+            api_key=request.api_key,
+        )
         
-        # Build conversation history from request if available
         conversation_history = []
+        if request.conversation_summary:
+            conversation_history.append({
+                "role": "system",
+                "content": f"Summary of previous conversation:\n{request.conversation_summary}",
+            })
+        if request.conversation_history:
+            conversation_history.extend(
+                {"role": msg.role, "content": msg.content}
+                for msg in request.conversation_history
+            )
         
         # Process query through orchestrator with streaming
         async for chunk in orchestrator.process_query(
