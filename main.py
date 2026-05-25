@@ -31,7 +31,6 @@ from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
 from app.services.tts_service import get_tts_service, preload_tts_model
-from app.services.vllm_service import vllm_service
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
@@ -69,7 +68,6 @@ class ChatRequestEnhanced(BaseModel):
     model: Optional[str] = "default"
     temperature: Optional[float] = 0.7
     backend: Optional[str] = "ollama"
-    hf_token: Optional[str] = None
 
 
 class RAGQueryRequestEnhanced(BaseModel):
@@ -81,7 +79,6 @@ class RAGQueryRequestEnhanced(BaseModel):
     use_multi_agent: Optional[bool] = False
     use_hybrid_search: Optional[bool] = False
     backend: Optional[str] = "ollama"
-    hf_token: Optional[str] = None
     # Advanced LLM generation parameters
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2048
@@ -112,16 +109,6 @@ class TTSRequest(BaseModel):
     text: str
     voice: Optional[str] = None
     use_cache: Optional[bool] = True
-
-
-class VLLMTokenRequest(BaseModel):
-    token: str
-
-class VLLMModelRequest(BaseModel):
-    model_name: str
-    dtype: Optional[str] = "auto"
-    max_model_len: Optional[int] = None
-    gpu_memory_utilization: Optional[float] = 0.9
 
 
 class LocalHFEmbeddingFunction:
@@ -688,97 +675,48 @@ async def reset_rag_system():
 async def rag_query(request: RAGQueryRequestEnhanced):
     """Query RAG system"""
     try:
-        if request.backend == "vllm":
-            if request.hf_token:
-                vllm_service.set_hf_token(request.hf_token)
+        # Ollama RAG - check if multi-agent is requested
+        async def event_generator():
+            if request.use_multi_agent:
+                # Use CrewAI multi-agent orchestration
+                logger.info("Using CrewAI multi-agent orchestration")
+                from app.services.rag_service import CrewAIRAGOrchestrator
 
-            # Get context from RAG
-            context = ""
-            try:
-                if request.use_hybrid_search and getattr(rag_service, "bm25_model", None):
-                    documents = rag_service.hybrid_search(request.query, request.n_results)
-                    context = " ".join(documents)
-                else:
-                    tc = getattr(rag_service, "text_collection", None)
-                    if tc:
-                        results = tc.query(query_texts=[request.query], n_results=request.n_results)
-                        if results and results.get('documents'):
-                            context = " ".join(results['documents'][0])
-            except Exception as e:
-                logger.warning(f"Vector query failed: {e}")
+                orchestrator = CrewAIRAGOrchestrator(
+                    rag_service=rag_service,
+                    model_name=request.model or "gemma3:1b"
+                )
 
-            # Use voice-optimized prompt if in voice mode
-            system_prompt = request.system_prompt
-            if request.is_voice_mode and system_prompt == "You are a helpful assistant.":
-                from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
-                system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
-            
-            # Adjust max_tokens for voice mode
-            max_tokens = min(request.max_tokens, 300) if request.is_voice_mode else request.max_tokens
-
-            # Create messages
-            messages = request.messages + [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Context: {context}\n\nQuery: {request.query}"}
-            ]
-
-            # Stream response
-            async def event_generator():
-                async for chunk in vllm_service.stream_vllm_chat(
-                    messages=messages, 
-                    model=request.model,
-                    temperature=request.temperature,
-                    max_tokens=max_tokens,
-                    top_p=request.top_p,
-                    frequency_penalty=request.frequency_penalty,
-                    repetition_penalty=request.repetition_penalty
+                async for chunk in orchestrator.query(
+                    user_query=request.query,
+                    system_prompt=request.system_prompt,
+                    messages=request.messages,
+                    n_results=request.n_results,
+                    use_hybrid_search=request.use_hybrid_search,
+                    model=request.model
+                ):
+                    yield chunk + "\n"
+            else:
+                # Use regular RAG
+                logger.info("Using standard RAG without multi-agent orchestration")
+                async for chunk in rag_service.query(
+                    request.query,
+                    request.system_prompt,
+                    request.messages,
+                    request.n_results,
+                    request.use_hybrid_search,
+                    request.model,
+                    request.conversation_summary,
+                    request.temperature,
+                    request.max_tokens,
+                    request.top_p,
+                    request.frequency_penalty,
+                    request.repetition_penalty,
+                    request.is_voice_mode
                 ):
                     yield chunk + "\n"
 
-            return StreamingResponse(event_generator(), media_type="text/plain")
-        else:
-            # Ollama RAG - check if multi-agent is requested
-            async def event_generator():
-                if request.use_multi_agent:
-                    # Use CrewAI multi-agent orchestration
-                    logger.info("Using CrewAI multi-agent orchestration")
-                    from app.services.rag_service import CrewAIRAGOrchestrator
-                    
-                    orchestrator = CrewAIRAGOrchestrator(
-                        rag_service=rag_service,
-                        model_name=request.model or "gemma3:1b"
-                    )
-                    
-                    async for chunk in orchestrator.query(
-                        user_query=request.query,
-                        system_prompt=request.system_prompt,
-                        messages=request.messages,
-                        n_results=request.n_results,
-                        use_hybrid_search=request.use_hybrid_search,
-                        model=request.model
-                    ):
-                        yield chunk + "\n"
-                else:
-                    # Use regular RAG
-                    logger.info("Using standard RAG without multi-agent orchestration")
-                    async for chunk in rag_service.query(
-                        request.query, 
-                        request.system_prompt, 
-                        request.messages,
-                        request.n_results, 
-                        request.use_hybrid_search, 
-                        request.model,
-                        request.conversation_summary,
-                        request.temperature,
-                        request.max_tokens,
-                        request.top_p,
-                        request.frequency_penalty,
-                        request.repetition_penalty,
-                        request.is_voice_mode
-                    ):
-                        yield chunk + "\n"
-
-            return StreamingResponse(event_generator(), media_type="text/plain")
+        return StreamingResponse(event_generator(), media_type="text/plain")
 
     except Exception as e:
         logger.error(f"RAG query error: {e}")
@@ -932,74 +870,6 @@ async def get_stt_status():
     except Exception as e:
         logger.error(f"Failed to get STT status: {e}")
         return {"available": False, "error": str(e)}
-
-
-# vLLM endpoints
-@app.post("/api/vllm/set-token")
-async def set_vllm_token(request: VLLMTokenRequest):
-    """Set HuggingFace token"""
-    result = vllm_service.set_hf_token(request.token)
-    if result["status"] == "error":
-        raise HTTPException(status_code=400, detail=result["message"])
-    return result
-
-
-@app.post("/api/vllm/start-server")
-async def start_vllm_server(request: VLLMModelRequest):
-    """Start vLLM server"""
-    kwargs = {}
-    if request.dtype:
-        kwargs["dtype"] = request.dtype
-    if request.max_model_len:
-        kwargs["max_model_len"] = request.max_model_len
-    if request.gpu_memory_utilization:
-        kwargs["gpu_memory_utilization"] = request.gpu_memory_utilization
-    
-    result = await vllm_service.start_vllm_server(request.model_name, **kwargs)
-    if result["status"] == "error":
-        raise HTTPException(status_code=400, detail=result["message"])
-    return result
-
-
-@app.post("/api/vllm/stop-server")
-async def stop_vllm_server():
-    """Stop vLLM server"""
-    return await vllm_service.stop_vllm_server()
-
-
-@app.get("/api/vllm/server-status")
-async def vllm_server_status():
-    """Check vLLM server status"""
-    return {
-        "running": await vllm_service.is_server_running(),
-        "current_model": vllm_service.current_model
-    }
-
-
-@app.get("/api/vllm/models")
-async def vllm_models():
-    """Return available vLLM models. Popular models removed per UI request."""
-    try:
-        data = vllm_service.get_available_models()
-        return {"local_models": data.get("local_models", []), "popular_models": []}
-    except Exception as e:
-        logger.error(f"Failed to list vLLM models: {e}")
-        return {"local_models": [], "popular_models": []}
-
-
-@app.post("/api/vllm/download-model")
-async def vllm_download_model(request: VLLMModelRequest):
-    """Download a vLLM model into the local Hugging Face cache."""
-    try:
-        result = await vllm_service.download_model(request.model_name)
-        if result.get("status") != "success":
-            raise HTTPException(status_code=400, detail=result.get("message", "Download failed"))
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Download failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Utility functions

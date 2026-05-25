@@ -3,7 +3,7 @@ Host Service Manager for Docker Integration
 
 This module provides functionality to detect container environment vs native execution,
 manage dynamic configuration based on execution environment, and validate connectivity
-to required host services (Ollama, vLLM).
+to required host services (Ollama).
 """
 
 import os
@@ -36,7 +36,6 @@ class EnvironmentConfig:
     """Configuration that adapts based on execution environment."""
     is_containerized: bool
     ollama_url: str
-    vllm_url: str
     hf_cache_dir: Path
     ollama_cache_dir: Path
     upload_dir: Path
@@ -51,7 +50,7 @@ class HostServiceManager:
     This class handles:
     - Detection of container vs native execution environment
     - Dynamic configuration based on execution environment
-    - Validation of required host services (Ollama, vLLM) connectivity
+    - Validation of required host services (Ollama) connectivity
     - OS-independent cache directory management
     """
     
@@ -93,7 +92,6 @@ class HostServiceManager:
             config = EnvironmentConfig(
                 is_containerized=True,
                 ollama_url=os.getenv("OLLAMA_API_URL", "http://localhost:11434"),
-                vllm_url=os.getenv("VLLM_API_URL", "http://localhost:8001"),
                 hf_cache_dir=Path(hf_cache_container),  # Container mount point
                 ollama_cache_dir=Path(ollama_cache_container),  # Container mount point
                 upload_dir=Path(os.getenv("UPLOAD_FOLDER", "/app/uploads")),  # Container mount point
@@ -105,7 +103,6 @@ class HostServiceManager:
             config = EnvironmentConfig(
                 is_containerized=False,
                 ollama_url=os.getenv("OLLAMA_API_URL", "http://localhost:11434"),
-                vllm_url=os.getenv("VLLM_API_URL", "http://localhost:8001"),
                 hf_cache_dir=hf_cache,
                 ollama_cache_dir=ollama_cache,
                 upload_dir=Path("./uploads"),
@@ -120,7 +117,7 @@ class HostServiceManager:
         Validate connectivity to a host service.
         
         Args:
-            service_name: Name of the service (e.g., "Ollama", "vLLM")
+            service_name: Name of the service (e.g., "Ollama")
             url: Service URL to test
             timeout: Request timeout in seconds
             
@@ -133,14 +130,7 @@ class HostServiceManager:
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 # For Ollama, test the /api/tags endpoint
-                if "11434" in url:  # Ollama port
-                    test_url = f"{url}/api/tags"
-                # For vLLM, test the /v1/models endpoint
-                elif "8001" in url:  # vLLM port
-                    test_url = f"{url}/v1/models"
-                else:
-                    # Generic health check
-                    test_url = url
+                test_url = f"{url}/api/tags" if "11434" in url else url
                 
                 response = await client.get(test_url)
                 response_time = (time.time() - start_time) * 1000
@@ -203,7 +193,6 @@ class HostServiceManager:
         """
         services_to_check = [
             ("Ollama", self.environment_config.ollama_url),
-            ("vLLM", self.environment_config.vllm_url)
         ]
         
         results = {}
@@ -336,7 +325,6 @@ class HostServiceManager:
         return {
             "is_containerized": self.environment_config.is_containerized,
             "ollama_url": self.environment_config.ollama_url,
-            "vllm_url": self.environment_config.vllm_url,
             "hf_cache_dir": str(self.environment_config.hf_cache_dir),
             "ollama_cache_dir": str(self.environment_config.ollama_cache_dir),
             "upload_dir": str(self.environment_config.upload_dir),

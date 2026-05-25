@@ -188,7 +188,6 @@ show_next_steps() {
     echo "1. Open your browser and go to http://localhost:8501"
     echo "2. Explore the Chat and RAG features"
     echo "3. For Ollama support, install Ollama locally and ensure it's running"
-    echo "4. For vLLM support, configure your HuggingFace token in the settings"
     echo ""
     echo "Need help?"
     echo "  • Documentation: https://github.com/debabratamishra/litemind-ui"

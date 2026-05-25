@@ -14,7 +14,6 @@ from app.backend.models.api_models import (
 )
 from app.backend.core.config import backend_config
 from app.backend.core.embeddings import create_embedding_function
-from app.services.vllm_service import vllm_service
 
 logger = logging.getLogger(__name__)
 
@@ -219,11 +218,8 @@ async def rag_query(request: RAGQueryRequestEnhanced):
     """Query RAG system"""
     try:
         from main import rag_service
-        
-        if request.backend == "vllm":
-            return await _handle_vllm_rag_query(request, rag_service)
-        else:
-            return await _handle_ollama_rag_query(request, rag_service)
+
+        return await _handle_ollama_rag_query(request, rag_service)
 
     except Exception as e:
         logger.error(f"RAG query error: {e}")
@@ -252,64 +248,6 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
                 })
 
     await asyncio.gather(*(process_single_file(path_info) for path_info in saved_paths))
-
-
-async def _handle_vllm_rag_query(request: RAGQueryRequestEnhanced, rag_service):
-    """Handle vLLM RAG query with conversation memory support"""
-    if request.hf_token:
-        vllm_service.set_hf_token(request.hf_token)
-
-    # Get context from RAG
-    source_records = []
-    try:
-        retrieval_query = rag_service.build_retrieval_query(request.query, request.messages)
-        source_records = rag_service.get_retrieval_records(
-            retrieval_query,
-            request.n_results,
-            request.use_hybrid_search,
-        )
-    except Exception as e:
-        logger.warning(f"Vector query failed: {e}")
-
-    # Build messages with conversation memory support
-    messages = []
-    
-    # Add conversation summary if available
-    if request.conversation_summary:
-        messages.append({
-            "role": "system",
-            "content": f"Summary of previous conversation:\n{request.conversation_summary}"
-        })
-    
-    # Add conversation history
-    messages.extend(request.messages)
-    
-    # Add system prompt and current query with context
-    messages.append({"role": "system", "content": request.system_prompt})
-    messages.append({
-        "role": "system",
-        "content": "Do not include citations, source numbers, filenames, bracketed references, or a Sources section unless the user explicitly asks for sources.",
-    })
-    messages.append({
-        "role": "user",
-        "content": rag_service.build_grounded_user_prompt(
-            request.query,
-            source_records,
-            voice_mode=request.is_voice_mode,
-        ),
-    })
-
-    # Stream response with temperature and max_tokens
-    async def event_generator():
-        async for chunk in vllm_service.stream_vllm_chat(
-            messages=messages, 
-            model=request.model,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens
-        ):
-            yield chunk + "\n"
-
-    return StreamingResponse(event_generator(), media_type="text/plain")
 
 
 async def _handle_ollama_rag_query(request: RAGQueryRequestEnhanced, rag_service):

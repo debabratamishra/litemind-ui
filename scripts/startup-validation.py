@@ -5,7 +5,7 @@ Docker Startup Validation Script for LLMWebUI
 This script validates that all required host services are available and
 the container environment is properly configured before starting the application.
 It performs comprehensive checks for:
-- Host service connectivity (Ollama, vLLM)
+- Host service connectivity (Ollama)
 - Volume mount accessibility
 - Cache directory permissions
 - Environment variable validation
@@ -65,7 +65,6 @@ class StartupValidator:
         """Validate required environment variables are set."""
         required_vars = [
             'OLLAMA_API_URL',
-            'VLLM_API_URL'
         ]
         
         optional_vars = [
@@ -175,9 +174,6 @@ class StartupValidator:
                 if '11434' in url:  # Ollama
                     test_url = f"{url}/api/tags"
                     result['service_type'] = 'ollama'
-                elif '8001' in url:  # vLLM
-                    test_url = f"{url}/v1/models"
-                    result['service_type'] = 'vllm'
                 else:
                     test_url = f"{url}/health"
                     result['service_type'] = 'generic'
@@ -198,8 +194,6 @@ class StartupValidator:
                         if service_name.lower() == 'ollama' and 'models' in response_data:
                             result['details']['model_count'] = len(response_data['models'])
                             result['details']['models'] = [m.get('name', 'unknown') for m in response_data['models'][:5]]
-                        elif service_name.lower() == 'vllm' and 'data' in response_data:
-                            result['details']['model_count'] = len(response_data['data'])
                     except Exception:
                         pass  # Response parsing is optional
                         
@@ -222,7 +216,6 @@ class StartupValidator:
         """Validate all required host services."""
         services = {
             'ollama': os.getenv('OLLAMA_API_URL', 'http://localhost:11434'),
-            'vllm': os.getenv('VLLM_API_URL', 'http://localhost:8001')
         }
         
         results = {}
@@ -269,7 +262,7 @@ class StartupValidator:
         
         # Check environment variables
         env_results = self.validation_results.get('environment', {})
-        required_env_vars = ['OLLAMA_API_URL', 'VLLM_API_URL']
+        required_env_vars = ['OLLAMA_API_URL']
         
         for var in required_env_vars:
             var_info = env_results.get(var, {})

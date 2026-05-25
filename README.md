@@ -14,7 +14,6 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 ## 🏷️ Features
 
 ![Ollama](https://img.shields.io/badge/Ollama-Local%20LLMs-8A2BE2)
-![vLLM](https://img.shields.io/badge/vLLM-HuggingFace-FF6B35)
 ![RAG](https://img.shields.io/badge/RAG-Document%20Q&A-32CD32)
 ![API](https://img.shields.io/badge/API-REST%20%2B%20Streaming-007ACC)
 ![Multi-format](https://img.shields.io/badge/Documents-PDF%20%7C%20Office%20%7C%20Web%20%7C%20Data-FFA500)
@@ -35,12 +34,12 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 ### 🔧 **Core Capabilities**
 
 - **High-Performance API** - Async FastAPI backend for scalable LLM processing
-- **Dual Backend Support** - Seamlessly switch between Ollama (local) and vLLM (Hugging Face) backends
+- **Ollama Backend** - Local-first inference powered by Ollama models
 - **RAG Integration** - Upload PDFs, Office documents, HTML/XML, spreadsheets, structured text files, and images with enhanced local extraction and context-aware responses
-- **Generation Controls** - Per-chat and per-RAG sliders for temperature and max tokens (hard cut-off) with both Ollama and vLLM backends
+- **Generation Controls** - Per-chat and per-RAG sliders for temperature and max tokens (hard cut-off)
 - **Web Search Integration** - Optional real-time web search powered by SerpAPI with AI-driven synthesis
 - **Realtime Voice Mode** - WebRTC voice chat with live transcription, barge-in, and streaming speech replies (Chat + RAG)
-- **Multi-Model Support** - Access to popular models through vLLM or local/cloud Ollama models
+- **Multi-Model Support** - Access to local and cloud-catalog Ollama models
 
 ### 🛠 **Developer Experience**
 
@@ -65,8 +64,6 @@ The instructions below are tested against this repository: https://github.com/de
 ### Option 1: Quick Install (Recommended)
 
 One-line installer (downloads pre-built Docker images and starts services):
-
-> **📝 Note:** Docker deployment currently supports Ollama backend only. vLLM backend support will be added in a future release.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/install.sh | bash
@@ -99,8 +96,6 @@ Available Docker images (hosted on Docker Hub under `debabratamishra1`):
 ### Option 2: Docker Build from Source
 
 Quick start (build and run locally with Docker):
-
-> **📝 Note:** Docker deployment currently supports Ollama backend only. vLLM backend support will be added in a future release.
 
 1. Clone the repository
 
@@ -189,7 +184,7 @@ export UPLOAD_FOLDER="./uploads"
 ```
 
 Notes:
-- Running the full stack natively requires additional setup (Ollama, model files, vLLM/GPU drivers) and is intended for development.
+- Running the full stack natively requires additional setup (Ollama, model files) and is intended for development.
 - For most users, the Docker-based Quick Install is the simplest way to get started.
 
 ### Platform notes
@@ -236,8 +231,8 @@ mkdir -p uploads .streamlit
 | :-- | :-- | :-- |
 | `/health` | GET | Backend health check |
 | `/models` | GET | Available Ollama models |
-| `/api/chat` | POST | Process chat messages (supports both Ollama and vLLM backends) |
-| `/api/chat/stream` | POST | Streaming chat responses (supports both backends) |
+| `/api/chat` | POST | Process chat messages |
+| `/api/chat/stream` | POST | Streaming chat responses |
 | `/api/chat/web-search` | POST | Process chat with optional web search integration |
 | `/api/chat/serp-status` | GET | Check SerpAPI token configuration status |
 | `/api/rag/upload` | POST | Upload documents for RAG processing |
@@ -246,18 +241,13 @@ mkdir -p uploads .streamlit
 | `/api/tts/synthesize` | POST | Convert text to speech audio (MP3) |
 | `/api/tts/voices` | GET | List available TTS voices |
 | `/api/tts/status` | GET | Check TTS service availability |
-| `/api/vllm/models` | GET | Available vLLM models and configuration |
-| `/api/vllm/set-token` | POST | Configure Hugging Face access token |
 
 ## 💡 Usage Examples
 
 ### Chat Interface
 
 1. Navigate to the **Chat** tab
-2. **Select Backend:** Choose between Ollama (local) or vLLM (Hugging Face)
-3. **Configure Models:** 
-   - For Ollama: Select from locally installed models
-   - For vLLM: Choose from popular models or enter custom model names
+2. **Configure Model:** Select from available Ollama models
 4. **Optional Web Search:** Enable the web search toggle to enhance responses with real-time internet data
 5. Enter your message and receive AI responses
 6. **Listen to Responses:** Click the 🗣️ button next to any AI response to hear it read aloud
@@ -293,11 +283,11 @@ To use TTS on any response:
 2. Click the 🗣️ button next to the response (or let realtime mode stream it automatically)
 3. Audio plays inline; close with ✕ when done
 
-### Backend Switching
+### Backend Configuration
 
-- **Seamless Integration:** Switch between backends without losing your current page
-- **Model Persistence:** Backend-specific model selections are preserved
-- **Automatic Configuration:** UI adapts based on selected backend capabilities
+- **Local-First Setup:** Ollama is used as the default and only inference backend
+- **Model Persistence:** Selected models are preserved in session state
+- **Automatic Configuration:** UI adapts to available Ollama capabilities
 
 ### 🌐 API Integration
 
@@ -327,7 +317,7 @@ fetch('http://localhost:8000/api/chat', {
 })
 - FastAPI backend on `localhost:8000`
 - Streamlit frontend on `localhost:8501`
-- Ollama and vLLM backends
+- Ollama backend
 - RAG for PDFs, Office files, structured text, HTML/XML, spreadsheets, and images
 - Realtime voice, local speech-to-text, and offline text-to-speech
 - Streaming chat and structured generative UI components
@@ -335,7 +325,7 @@ fetch('http://localhost:8000/api/chat', {
 ![Swagger UI](Swagger.png)
 
 - Chat and RAG workflows in a single interface
-- Backend switching between Ollama and vLLM
+- Ollama-based model selection
 - Streaming responses with conversation memory
 - Document upload and retrieval across common file formats
 - Optional SerpAPI-backed web search in chat
@@ -421,9 +411,7 @@ The RAG ingestion stack is local-first and built on open-source packages that ru
 - **Container build fails:** Clean with `make clean && make setup && make up`
 
 **Backend Issues:**
-- **vLLM backend not working:** Verify Hugging Face token is valid and model exists
-- **Backend switching problems:** Clear browser cache and reload the page
-- **Model loading errors:** Check model compatibility and available GPU memory
+- **Model loading errors:** Check model compatibility and available system memory
 
 **Native Installation Issues:**
 - **Module not found:** Reinstall all dependencies with `uv sync --group all` for local development

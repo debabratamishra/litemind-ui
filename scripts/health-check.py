@@ -137,11 +137,9 @@ class HealthChecker:
         """Check host services that containers depend on."""
         # Get service URLs from environment or use defaults
         ollama_url = os.getenv('OLLAMA_API_URL', 'http://localhost:11434')
-        vllm_url = os.getenv('VLLM_API_URL', 'http://localhost:8001')
-        
+
         services = {
             "ollama": f"{ollama_url}/api/tags",
-            "vllm": f"{vllm_url}/v1/models"
         }
         
         results = {}
@@ -152,7 +150,7 @@ class HealthChecker:
                 "healthy": is_healthy,
                 "message": message,
                 "details": details,
-                "optional": service_name == "vllm"  # vLLM is optional
+                "optional": False
             }
         
         return results
@@ -337,7 +335,7 @@ class HealthChecker:
         filesystem_ok = all(check["healthy"] for check in filesystem_results.values())
         process_ok = all(check["healthy"] for check in process_results.values())
         
-        # Host services - only Ollama is required, vLLM is optional
+        # Host services - Ollama is required
         ollama_ok = host_results.get("ollama", {}).get("healthy", False)
         
         overall_healthy = container_ok and filesystem_ok and process_ok and ollama_ok

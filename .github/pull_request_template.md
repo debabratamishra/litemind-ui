@@ -32,7 +32,6 @@
 - [ ] Tested backend API endpoints
 - [ ] Tested RAG functionality
 - [ ] Tested with Ollama backend
-- [ ] Tested with vLLM backend
 
 ## 📸 Screenshots (if applicable)
 

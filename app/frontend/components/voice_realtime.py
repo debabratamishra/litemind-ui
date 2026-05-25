@@ -6,7 +6,7 @@ Features:
 - Captures microphone audio via WebRTC (streamlit-webrtc)
 - Segments speech using Pipecat Silero VAD (preferred) or webrtcvad fallback
 - Transcribes with the existing SpeechService (optionally faster-whisper backend)
-- Streams an LLM reply using the existing streaming_handler (Ollama/vLLM)
+- Streams an LLM reply using the existing streaming_handler (Ollama)
 - Synthesizes response audio via backend TTS endpoint with streaming support
 - Reduced latency through sentence-by-sentence TTS synthesis
 
@@ -124,24 +124,19 @@ def _get_chat_config_from_session(page_key: str = "chat") -> dict:
     Args:
         page_key: The page key ("chat" or "rag") to determine appropriate model selection.
     """
-    backend_provider = st.session_state.get("current_backend", "ollama")
+    backend_provider = "ollama"
     temperature = st.session_state.get("chat_temperature", 0.7)
-    if backend_provider == "vllm":
-        model = st.session_state.get("vllm_model", "no-model")
-        hf_token = st.session_state.get("hf_token")
+
+    # Use appropriate model key based on page
+    if page_key == "rag":
+        model = st.session_state.get("selected_ollama_model", "default")
     else:
-        # Use appropriate model key based on page
-        if page_key == "rag":
-            model = st.session_state.get("selected_ollama_model", "default")
-        else:
-            model = st.session_state.get("selected_chat_model", "default")
-        hf_token = None
+        model = st.session_state.get("selected_chat_model", "default")
 
     return {
         "backend": backend_provider,
         "model": model,
         "temperature": temperature,
-        "hf_token": hf_token,
     }
 
 
@@ -1350,7 +1345,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             use_multi_agent=config.get("use_multi_agent", False),
                             use_hybrid_search=config.get("use_hybrid_search", False),
                             backend=cfg["backend"],
-                            hf_token=cfg.get("hf_token"),
                             placeholder=out,
                             tts_callback=tts_streaming_callback,
                             conversation_summary=conversation_summary,
@@ -1363,7 +1357,6 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             model=cfg["model"],
                             temperature=cfg["temperature"],
                             backend=cfg["backend"],
-                            hf_token=cfg.get("hf_token"),
                             placeholder=out,
                             use_fastapi=st.session_state.get("backend_available", False),
                             tts_callback=tts_streaming_callback,

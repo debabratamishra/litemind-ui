@@ -12,7 +12,6 @@ load_dotenv()
 
 from app.backend.models.api_models import ChatRequestEnhanced, ChatResponse, SerpTokenStatus, MemoryStatsResponse
 from app.services.ollama import stream_ollama
-from app.services.vllm_service import vllm_service
 from app.services.web_search_service import WebSearchService
 from app.services.web_search_crew import WebSearchOrchestrator
 from app.services.conversation_memory import get_memory_service, generate_session_id
@@ -254,10 +253,7 @@ async def chat_endpoint(request: ChatRequestEnhanced):
     logger.info(f"Chat request - Backend: {request.backend}, Model: {request.model}")
     
     try:
-        if request.backend == "vllm":
-            return await _handle_vllm_chat(request)
-        else:
-            return await _handle_ollama_chat(request)
+        return await _handle_ollama_chat(request)
             
     except Exception:
         logger.exception("Chat endpoint error")
@@ -271,14 +267,9 @@ async def chat_stream(request: ChatRequestEnhanced):
     
     async def event_generator():
         try:
-            if request.backend == "vllm":
-                async for chunk in _stream_vllm_chat(request):
-                    payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
-                    yield f"data: {payload}\n\n"
-            else:
-                async for chunk in _stream_ollama_chat(request):
-                    payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
-                    yield f"data: {payload}\n\n"
+            async for chunk in _stream_ollama_chat(request):
+                payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
                     
         except Exception:
             logger.exception("Chat streaming error")
@@ -286,42 +277,6 @@ async def chat_stream(request: ChatRequestEnhanced):
             yield f"data: {payload}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-
-async def _handle_vllm_chat(request: ChatRequestEnhanced) -> ChatResponse:
-    """Handle vLLM chat request with conversation history"""
-    if request.hf_token:
-        token_result = vllm_service.set_hf_token(request.hf_token)
-        if token_result["status"] == "error":
-            raise HTTPException(status_code=400, detail=token_result["message"])
-    
-    if not await vllm_service.is_server_running():
-        raise HTTPException(status_code=400, detail="vLLM server is not running")
-    
-    # Build messages with conversation history
-    messages = _build_messages_with_history(request)
-    
-    # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
-    if request.is_voice_mode:
-        max_tokens = 300
-    elif request.enable_generative_ui:
-        max_tokens = max(request.max_tokens or 2048, GENUI_MIN_MAX_TOKENS)
-    else:
-        max_tokens = request.max_tokens
-    
-    response_text = ""
-    async for chunk in vllm_service.stream_vllm_chat(
-        messages=messages, 
-        model=request.model, 
-        temperature=request.temperature,
-        max_tokens=max_tokens,
-        top_p=request.top_p,
-        frequency_penalty=request.frequency_penalty,
-        repetition_penalty=request.repetition_penalty
-    ):
-        response_text += chunk
-    
-    return ChatResponse(response=response_text, model=request.model)
 
 
 async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
@@ -350,41 +305,6 @@ async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
         response_text += chunk
     
     return ChatResponse(response=response_text, model=request.model)
-
-
-async def _stream_vllm_chat(request: ChatRequestEnhanced):
-    """Stream vLLM chat responses with conversation history"""
-    if request.hf_token:
-        token_result = vllm_service.set_hf_token(request.hf_token)
-        if token_result["status"] == "error":
-            yield f"Error: {token_result['message']}"
-            return
-    
-    if not await vllm_service.is_server_running():
-        yield "Error: vLLM server is not running"
-        return
-    
-    # Build messages with conversation history
-    messages = _build_messages_with_history(request)
-    
-    # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
-    if request.is_voice_mode:
-        max_tokens = 300
-    elif request.enable_generative_ui:
-        max_tokens = max(request.max_tokens or 2048, GENUI_MIN_MAX_TOKENS)
-    else:
-        max_tokens = request.max_tokens
-    
-    async for chunk in vllm_service.stream_vllm_chat(
-        messages=messages, 
-        model=request.model, 
-        temperature=request.temperature,
-        max_tokens=max_tokens,
-        top_p=request.top_p,
-        frequency_penalty=request.frequency_penalty,
-        repetition_penalty=request.repetition_penalty
-    ):
-        yield chunk
 
 
 async def _stream_ollama_chat(request: ChatRequestEnhanced):

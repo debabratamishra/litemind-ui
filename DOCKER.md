@@ -1,8 +1,6 @@
 # Docker Deployment Guide
 
-This guide covers how to run LLMWebUI using Docker containers while maintaining integration with host system services like Ollama and vLLM.
-
-> **📝 Note:** vLLM backend is currently not supported in Docker deployments. Only Ollama backend is available when running in Docker. vLLM support for Docker will be added in a future release.
+This guide covers how to run LLMWebUI using Docker containers while maintaining integration with host system services like Ollama.
 
 ## Quick Start
 
@@ -45,15 +43,6 @@ This guide covers how to run LLMWebUI using Docker containers while maintaining 
   ollama pull llama3.1
   ```
 
-#### vLLM Service (Optional)
-- **Port:** `localhost:8001` 
-- **Purpose:** Alternative high-performance inference engine
-- **Requirements:**
-  - Conda environment named `llm_ui`
-  - GPU support (recommended)
-- **Docker Support:** Currently not supported in Docker deployments (coming soon)
-- **Management:** Controlled by the containerized application (native deployments only)
-
 #### Host Service Dependencies
 
 **Network Requirements:**
@@ -68,9 +57,6 @@ curl -X POST http://localhost:11434/api/generate \
   -H "Content-Type: application/json" \
   -d '{"model": "llama3.1", "prompt": "Hello", "stream": false}'
 
-# Test vLLM connectivity (if running)
-curl http://localhost:8001/health
-
 # Check from container perspective
 docker exec llmwebui-backend curl http://localhost:11434/api/tags
 ```
@@ -79,7 +65,6 @@ docker exec llmwebui-backend curl http://localhost:11434/api/tags
 1. Start Ollama service first
 2. Verify Ollama is accessible
 3. Start Docker containers
-4. vLLM can be started on-demand through the UI
 
 ### System Requirements
 
@@ -105,7 +90,6 @@ cp .env.example .env
 
 Key environment variables:
 - `OLLAMA_API_URL` - Ollama service URL (default: http://localhost:11434)
-- `VLLM_API_URL` - vLLM service URL (default: http://localhost:8001)
 - `OMP_NUM_THREADS` - CPU thread count for ML operations
 
 ## Volume Mounts
@@ -184,7 +168,6 @@ make prod
 The containers use **host networking mode** to communicate with host services:
 
 - Containers can access `localhost:11434` (Ollama)
-- Containers can access `localhost:8001` (vLLM)
 - No port mapping needed
 - Services exposed directly on host ports
 
@@ -301,23 +284,7 @@ make clean  # Removes containers, images, and volumes
    df -h
    ```
 
-5. **vLLM Process Management Issues**
-   
-   **Symptoms:** Cannot start/stop vLLM server from containerized app
-   
-   **Solutions:**
-   ```bash
-   # Check if vLLM conda environment exists
-   conda env list | grep llm_ui
-   
-   # Verify host network access
-   docker exec llmwebui-backend curl http://localhost:8001/health
-   
-   # Check process permissions
-   ps aux | grep vllm
-   ```
-
-6. **Volume Mount Issues**
+5. **Volume Mount Issues**
    
    **Symptoms:** Models not persisting, cache not working
    
@@ -333,7 +300,7 @@ make clean  # Removes containers, images, and volumes
    make down && make up
    ```
 
-7. **Memory/Resource Issues**
+6. **Memory/Resource Issues**
    
    **Symptoms:** Container crashes, out of memory errors
    
@@ -349,7 +316,7 @@ make clean  # Removes containers, images, and volumes
    # Edit .env file to adjust OMP_NUM_THREADS
    ```
 
-8. **Network Connectivity Issues**
+7. **Network Connectivity Issues**
    
    **Symptoms:** Services can't communicate, API calls fail
    
@@ -386,9 +353,6 @@ docker logs llmwebui-frontend-dev
 curl -X POST http://localhost:11434/api/generate \
   -H "Content-Type: application/json" \
   -d '{"model": "llama2", "prompt": "Hello", "stream": false}'
-
-# Test vLLM connectivity (if running)
-curl http://localhost:8001/health
 ```
 
 ## Performance Tuning
@@ -405,7 +369,6 @@ NUMEXPR_NUM_THREADS=6  # Same as OMP_NUM_THREADS
 ### Memory Management
 
 For systems with limited RAM:
-- Reduce `gpu_memory_utilization` for vLLM
 - Use smaller embedding models
 - Limit concurrent document processing
 

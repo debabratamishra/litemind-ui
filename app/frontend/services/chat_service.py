@@ -75,8 +75,6 @@ class ChatService:
         top_p: float = 0.9,
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
-        backend: str = "ollama",
-        hf_token: Optional[str] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -92,13 +90,10 @@ class ChatService:
             "top_p": top_p,
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
-            "backend": backend,
+            "backend": "ollama",
             "is_voice_mode": is_voice_mode,
             "enable_generative_ui": enable_generative_ui,
         }
-        
-        if backend == "vllm" and hf_token:
-            payload["hf_token"] = hf_token
         
         # Add conversation history if provided
         if conversation_history:
@@ -172,8 +167,6 @@ class ChatService:
         top_p: float = 0.9,
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
-        backend: str = "ollama",
-        hf_token: Optional[str] = None,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None
@@ -187,12 +180,9 @@ class ChatService:
             "top_p": top_p,
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
-            "backend": backend,
+            "backend": "ollama",
             "use_web_search": True
         }
-        
-        if backend == "vllm" and hf_token:
-            payload["hf_token"] = hf_token
         
         # Add conversation history if provided
         if conversation_history:

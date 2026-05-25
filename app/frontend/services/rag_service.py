@@ -170,8 +170,6 @@ class RAGService:
         n_results: int = 3,
         use_multi_agent: bool = False,
         use_hybrid_search: bool = False,
-        backend: str = "ollama",
-        hf_token: Optional[str] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None,
         temperature: float = 0.7,
@@ -195,13 +193,9 @@ class RAGService:
             "top_p": top_p,
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
-            "is_voice_mode": is_voice_mode
+            "is_voice_mode": is_voice_mode,
+            "backend": "ollama",
         }
-        
-        if backend == "vllm":
-            payload["backend"] = backend
-            if hf_token:
-                payload["hf_token"] = hf_token
 
         # Add conversation memory fields
         if conversation_summary:

@@ -214,7 +214,6 @@ class ChatPage:
                         frequency_penalty=config["frequency_penalty"],
                         repetition_penalty=config["repetition_penalty"],
                         backend=backend_provider,
-                        hf_token=config.get("hf_token"),
                         placeholder=out,
                         use_fastapi=self.backend_available,
                         conversation_history=conversation_history,
@@ -241,7 +240,6 @@ class ChatPage:
                         frequency_penalty=config["frequency_penalty"],
                         repetition_penalty=config["repetition_penalty"],
                         backend=backend_provider,
-                        hf_token=config.get("hf_token"),
                         placeholder=out,
                         use_fastapi=self.backend_available,
                         conversation_history=conversation_history,
@@ -280,12 +278,7 @@ class ChatPage:
     def _get_chat_config(self, backend_provider: str) -> Dict:
         """Get chat configuration for the current backend."""
         config = get_generation_config_from_session("chat")
-        config["hf_token"] = st.session_state.get("hf_token") if backend_provider == "vllm" else None
-        
-        if backend_provider == "vllm":
-            config["model"] = st.session_state.get("vllm_model", "no-model")
-        else:
-            config["model"] = st.session_state.get("selected_chat_model", "default")
+        config["model"] = st.session_state.get("selected_chat_model", "default")
         
         return config
     
@@ -294,7 +287,7 @@ class ChatPage:
         Get status text for the spinner.
         
         Args:
-            backend_provider: The backend provider (ollama, vllm)
+            backend_provider: The backend provider (ollama)
             model: The model name
             web_search_active: Whether web search is active
             
@@ -303,9 +296,7 @@ class ChatPage:
         """
         if web_search_active:
             return "Searching web..."
-        
-        if backend_provider == "vllm":
-            return f"Thinking (vLLM - {model})..."
+
         return "Thinking..."
     
     def render_sidebar_config(self):
@@ -317,16 +308,10 @@ class ChatPage:
         st.sidebar.subheader("Chat Configuration")
         
         backend_provider = st.session_state.get("current_backend", "ollama")
-        is_docker = st.session_state.get("is_docker_deployment", False)
-        
-        # Model selection - only show if not vLLM in Docker
-        if backend_provider == "vllm" and is_docker:
-            st.sidebar.warning("⚠️ vLLM not supported in Docker deployment")
-            st.sidebar.info("Please use Ollama backend instead")
-        elif backend_provider == "vllm":
-            self._render_vllm_model_config()
-        else:
-            self._render_ollama_model_config()
+
+        if backend_provider != "ollama":
+            st.sidebar.warning("⚠️ Unsupported backend selected. Using Ollama configuration.")
+        self._render_ollama_model_config()
         
         # Generation settings using shared component
         render_generation_settings("chat", expanded=True)
@@ -358,14 +343,6 @@ class ChatPage:
             if "last_user_input" in st.session_state:
                 del st.session_state.last_user_input
             st.rerun()
-    
-    def _render_vllm_model_config(self):
-        vllm_model = st.session_state.get("vllm_model")
-        if vllm_model:
-            st.sidebar.success(f"🎯 Active Model: {vllm_model}")
-        else:
-            st.sidebar.warning("⚠️ No vLLM model loaded")
-            st.sidebar.info("👆 Configure vLLM above to load a model")
     
     def _render_ollama_model_config(self):
         if self.backend_available:
