@@ -300,7 +300,7 @@ class ChatPage:
         Get status text for the spinner.
         
         Args:
-            backend_provider: The backend provider (ollama)
+            backend_provider: The selected inference backend
             model: The model name
             web_search_active: Whether web search is active
             
@@ -438,12 +438,6 @@ class ChatPage:
             messages_to_summarize = self.memory_manager.prune_for_summarization()
             
             if messages_to_summarize:
-                # Format for summary
-                summary_text = self.memory_manager.format_messages_for_summary_prompt(
-                    messages_to_summarize,
-                    self.memory_manager.summary
-                )
-                
                 simple_summary = create_simple_summary(
                     messages_to_summarize,
                     self.memory_manager.summary

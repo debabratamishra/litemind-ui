@@ -2,6 +2,8 @@
 
 .PHONY: help setup build up down logs clean health dev prod hub-up hub-down version tag-release test-docker-local create-docker-repos
 
+COMPOSE_CMD ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif docker compose version >/dev/null 2>&1; then echo "docker compose"; fi)
+
 # Default target
 help:
 	@echo "LiteMindUI Docker Commands:"
@@ -30,36 +32,36 @@ setup:
 # Build Docker images
 build:
 	@echo "🏗️  Building Docker images..."
-	docker-compose build
+	$(COMPOSE_CMD) build
 
 # Start services (default)
 up: setup
 	@echo "🚀 Starting LiteMindUI services..."
-	docker-compose up -d
+	$(COMPOSE_CMD) up -d
 	@echo "✅ Services started. Run 'make logs' to see output or 'make health' to check status."
 
 # Development mode
 dev: setup
 	@echo "🛠️  Starting LiteMindUI in development mode..."
-	docker-compose -f docker-compose.dev.yml up -d
+	$(COMPOSE_CMD) -f docker-compose.dev.yml up -d
 	@echo "✅ Development services started."
 
 # Production mode  
 prod: setup
 	@echo "🏭 Starting LiteMindUI in production mode..."
-	docker-compose -f docker-compose.prod.yml up -d
+	$(COMPOSE_CMD) -f docker-compose.prod.yml up -d
 	@echo "✅ Production services started."
 
 # Stop services
 down:
 	@echo "🛑 Stopping services..."
-	docker-compose down
-	docker-compose -f docker-compose.dev.yml down 2>/dev/null || true
-	docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
+	$(COMPOSE_CMD) down
+	$(COMPOSE_CMD) -f docker-compose.dev.yml down 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.prod.yml down 2>/dev/null || true
 
 # Show logs
 logs:
-	docker-compose logs -f
+	$(COMPOSE_CMD) logs -f
 
 # Health check
 health:
@@ -68,9 +70,9 @@ health:
 # Clean up everything
 clean: down
 	@echo "🧹 Cleaning up Docker resources..."
-	docker-compose down -v --rmi all --remove-orphans 2>/dev/null || true
-	docker-compose -f docker-compose.dev.yml down -v --rmi all --remove-orphans 2>/dev/null || true
-	docker-compose -f docker-compose.prod.yml down -v --rmi all --remove-orphans 2>/dev/null || true
+	$(COMPOSE_CMD) down -v --rmi all --remove-orphans 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.dev.yml down -v --rmi all --remove-orphans 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.prod.yml down -v --rmi all --remove-orphans 2>/dev/null || true
 	docker system prune -f
 	@echo "✅ Cleanup complete."
 
@@ -79,21 +81,21 @@ restart: down up
 
 # Quick development workflow
 dev-restart:
-	docker-compose -f docker-compose.dev.yml down
-	docker-compose -f docker-compose.dev.yml up -d
+	$(COMPOSE_CMD) -f docker-compose.dev.yml down
+	$(COMPOSE_CMD) -f docker-compose.dev.yml up -d
 	@echo "🔄 Development services restarted."
 
 # Docker Hub deployment
 hub-up:
 	@echo "🐳 Starting LiteMindUI using Docker Hub images..."
 	@./scripts/docker-setup.sh
-	docker-compose -f docker-compose.hub.yml pull
-	docker-compose -f docker-compose.hub.yml up -d
+	$(COMPOSE_CMD) -f docker-compose.hub.yml pull
+	$(COMPOSE_CMD) -f docker-compose.hub.yml up -d
 	@echo "✅ Docker Hub services started."
 
 hub-down:
 	@echo "🛑 Stopping Docker Hub services..."
-	docker-compose -f docker-compose.hub.yml down
+	$(COMPOSE_CMD) -f docker-compose.hub.yml down
 
 # Version management
 version:
@@ -115,9 +117,9 @@ tag-release:
 # View service status
 status:
 	@echo "📊 Service Status:"
-	@docker-compose ps 2>/dev/null || echo "No services running with default compose file"
-	@docker-compose -f docker-compose.dev.yml ps 2>/dev/null || echo "No development services running"
-	@docker-compose -f docker-compose.prod.yml ps 2>/dev/null || echo "No production services running"
+	@$(COMPOSE_CMD) ps 2>/dev/null || echo "No services running with default compose file"
+	@$(COMPOSE_CMD) -f docker-compose.dev.yml ps 2>/dev/null || echo "No development services running"
+	@$(COMPOSE_CMD) -f docker-compose.prod.yml ps 2>/dev/null || echo "No production services running"
 
 # Test Docker build and push locally
 test-docker-local:

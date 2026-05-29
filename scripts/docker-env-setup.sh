@@ -18,6 +18,7 @@ COMPOSE_FILE=""
 ENV_FILE=""
 FORCE_REBUILD=false
 PULL_IMAGES=false
+COMPOSE_CMD=""
 
 # Function to print colored output
 print_status() {
@@ -125,10 +126,7 @@ validate_docker() {
         exit 1
     fi
     
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-        print_error "Docker Compose is not installed or not in PATH"
-        exit 1
-    fi
+    detect_compose_cmd
     
     # Check if Docker daemon is running
     if ! docker info &> /dev/null; then
@@ -164,9 +162,9 @@ build_images() {
     fi
     
     if [[ -f "$ENV_FILE" ]]; then
-        docker-compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build $build_args
+        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build $build_args
     else
-        docker-compose -f "$COMPOSE_FILE" build $build_args
+        $COMPOSE_CMD -f "$COMPOSE_FILE" build $build_args
     fi
     
     print_success "Images built successfully"
@@ -177,9 +175,9 @@ start_services() {
     print_status "Starting services in $ENVIRONMENT mode..."
     
     if [[ -f "$ENV_FILE" ]]; then
-        docker-compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
     else
-        docker-compose -f "$COMPOSE_FILE" up -d
+        $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
     fi
     
     print_success "Services started successfully"
@@ -196,9 +194,9 @@ stop_services() {
     print_status "Stopping services..."
     
     if [[ -f "$ENV_FILE" ]]; then
-        docker-compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
+        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
     else
-        docker-compose -f "$COMPOSE_FILE" down
+        $COMPOSE_CMD -f "$COMPOSE_FILE" down
     fi
     
     print_success "Services stopped successfully"
@@ -216,9 +214,9 @@ show_logs() {
     print_status "Showing logs for $ENVIRONMENT environment..."
     
     if [[ -f "$ENV_FILE" ]]; then
-        docker-compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f
+        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f
     else
-        docker-compose -f "$COMPOSE_FILE" logs -f
+        $COMPOSE_CMD -f "$COMPOSE_FILE" logs -f
     fi
 }
 
@@ -227,9 +225,9 @@ show_status() {
     print_status "Container status:"
     
     if [[ -f "$ENV_FILE" ]]; then
-        docker-compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
+        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
     else
-        docker-compose -f "$COMPOSE_FILE" ps
+        $COMPOSE_CMD -f "$COMPOSE_FILE" ps
     fi
 }
 
@@ -239,9 +237,9 @@ cleanup() {
     
     # Stop and remove containers
     if [[ -f "$ENV_FILE" ]]; then
-        docker-compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans
+        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans
     else
-        docker-compose -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans
+        $COMPOSE_CMD -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans
     fi
     
     # Clean up unused Docker resources
@@ -324,3 +322,13 @@ case "$COMMAND" in
         exit 1
         ;;
 esac
+detect_compose_cmd() {
+    if command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_CMD="docker-compose"
+    elif docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD="docker compose"
+    else
+        print_error "Docker Compose is not installed or not in PATH"
+        exit 1
+    fi
+}

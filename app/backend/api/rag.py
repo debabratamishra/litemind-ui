@@ -219,7 +219,7 @@ async def rag_query(request: RAGQueryRequestEnhanced):
     try:
         from main import rag_service
 
-        return await _handle_ollama_rag_query(request, rag_service)
+        return await _handle_rag_query(request, rag_service)
 
     except Exception as e:
         logger.error(f"RAG query error: {e}")
@@ -250,7 +250,7 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
     await asyncio.gather(*(process_single_file(path_info) for path_info in saved_paths))
 
 
-async def _handle_ollama_rag_query(request: RAGQueryRequestEnhanced, rag_service):
+async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
     """Handle a RAG query with conversation memory support."""
     # Prepare messages with conversation summary if available
     messages = request.messages.copy() if request.messages else []

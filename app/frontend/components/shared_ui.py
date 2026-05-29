@@ -7,8 +7,8 @@ code duplication between chat_page.py and rag_page.py.
 import os
 import logging
 import streamlit as st
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
@@ -320,18 +320,15 @@ def validate_backend_setup(backend_provider: str) -> bool:
     Returns:
         bool: True if setup is valid, False otherwise
     """
+    backend_available = bool(st.session_state.get("backend_available", False))
+    if not backend_available:
+        st.error("❌ FastAPI backend is required. Please start the backend server.")
+        return False
+
     if backend_provider == "ollama":
         return True
 
     if backend_provider == "openrouter":
-        api_key = (
-            (st.session_state.get("openrouter_api_key") or "").strip()
-            or os.getenv("OPENROUTER_API_KEY", "").strip()
-        )
-        backend_available = bool(st.session_state.get("backend_available", False))
-        if not api_key and not backend_available:
-            st.error("❌ OpenRouter API key is required when the FastAPI backend is unavailable.")
-            return False
         return True
 
     st.error("❌ Unsupported backend selected.")

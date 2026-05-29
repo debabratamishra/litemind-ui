@@ -14,7 +14,7 @@ from app.backend.models.api_models import ChatRequestEnhanced, ChatResponse, Ser
 from app.services.llm_gateway import complete_text, stream_completion
 from app.services.web_search_service import WebSearchService
 from app.services.web_search_crew import WebSearchOrchestrator
-from app.services.conversation_memory import get_memory_service, generate_session_id
+from app.services.conversation_memory import get_memory_service
 import json
 
 logger = logging.getLogger(__name__)
@@ -253,7 +253,7 @@ async def chat_endpoint(request: ChatRequestEnhanced):
     logger.info(f"Chat request - Backend: {request.backend}, Model: {request.model}")
     
     try:
-        return await _handle_ollama_chat(request)
+        return await _handle_chat_request(request)
             
     except Exception:
         logger.exception("Chat endpoint error")
@@ -267,7 +267,7 @@ async def chat_stream(request: ChatRequestEnhanced):
     
     async def event_generator():
         try:
-            async for chunk in _stream_ollama_chat(request):
+            async for chunk in _stream_chat_response(request):
                 payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
                     
@@ -279,7 +279,7 @@ async def chat_stream(request: ChatRequestEnhanced):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
+async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
     """Handle a chat request with conversation history."""
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
@@ -308,7 +308,7 @@ async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
     return ChatResponse(response=response_text, model=request.model)
 
 
-async def _stream_ollama_chat(request: ChatRequestEnhanced):
+async def _stream_chat_response(request: ChatRequestEnhanced):
     """Stream chat responses with conversation history."""
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
@@ -361,7 +361,7 @@ async def chat_web_search(request: ChatRequestEnhanced):
                 yield error_msg
                 
                 # Stream standard chat response
-                async for chunk in _stream_ollama_chat(request):
+                async for chunk in _stream_chat_response(request):
                     yield chunk
             
             return StreamingResponse(error_and_fallback(), media_type="text/plain")
@@ -372,13 +372,14 @@ async def chat_web_search(request: ChatRequestEnhanced):
     except Exception as e:
         logger.error(f"Web search endpoint error: {e}", exc_info=True)
         logger.info("Falling back to standard chat due to error")
+        error_text = str(e)
         
         # Fallback to standard chat on any error
         async def error_fallback():
-            error_msg = f"Web search error: {str(e)}. Defaulting to local results.\n\n"
+            error_msg = f"Web search error: {error_text}. Defaulting to local results.\n\n"
             yield error_msg
             
-            async for chunk in _stream_ollama_chat(request):
+            async for chunk in _stream_chat_response(request):
                 yield chunk
         
         return StreamingResponse(error_fallback(), media_type="text/plain")
@@ -452,7 +453,7 @@ async def _handle_web_search_chat(request: ChatRequestEnhanced):
             yield "Falling back to local results...\n\n"
             
             # Fallback to standard chat
-            async for chunk in _stream_ollama_chat(request):
+            async for chunk in _stream_chat_response(request):
                 yield chunk + "\n"
     
     return StreamingResponse(event_generator(), media_type="text/plain")
@@ -495,5 +496,5 @@ async def _stream_web_search_chat(request: ChatRequestEnhanced):
         yield "Falling back to local results...\n\n"
         
         # Fallback to standard chat
-        async for chunk in _stream_ollama_chat(request):
+        async for chunk in _stream_chat_response(request):
             yield chunk

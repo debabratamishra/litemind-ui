@@ -5,12 +5,10 @@ BM25, and a configurable LiteLLM-backed LLM.
 import chromadb
 from chromadb.utils import embedding_functions
 from chromadb.config import Settings
-from .llm_gateway import stream_completion
-from .ollama import stream_ollama
+from .llm_gateway import resolve_backend_config, stream_completion
 import os
 import re
 import hashlib
-from config import Config
 from crewai import Agent, LLM
 import httpx
 import shutil
@@ -22,7 +20,6 @@ import string
 from typing import Any, Dict, List, Tuple
 import numpy as np
 from pathlib import Path
-from PIL import Image
 import gc
 import json
 import importlib
@@ -1452,56 +1449,62 @@ class RAGService:
 
 
 class CrewAIRAGOrchestrator:
-    """Coordinates refined querying and answer composition using an Ollama-backed model."""
-    def __init__(self, rag_service: RAGService, model_name="gemma3:1b"):
-        """Configure the Ollama LLM, agent roles, and default context parameters."""
+    """Coordinates refined querying and answer composition using the selected backend."""
+    def __init__(
+        self,
+        rag_service: RAGService,
+        model_name: str = "gemma3:1b",
+        backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        """Configure the CrewAI LLM, agent roles, and default context parameters."""
         self.rag_service = rag_service
-        if not model_name.startswith("ollama/"):
-            model_name = f"ollama/{model_name}"
-        
-        self.ollama_llm = LLM(
-            provider="ollama",
+        self.llm_config = resolve_backend_config(
+            backend=backend,
             model=model_name,
-            api_base=self._get_ollama_url(),
+            api_base=api_base,
+            api_key=api_key,
+        )
+        self.backend = self.llm_config.backend
+        self.model_name = self.llm_config.model
+
+        agent_model = self.model_name
+        if self.backend == "ollama" and agent_model.startswith("ollama_chat/"):
+            agent_model = f"ollama/{agent_model[len('ollama_chat/') :]}"
+
+        self.agent_llm = LLM(
+            model=agent_model,
+            base_url=self.llm_config.api_base,
+            api_key=self.llm_config.api_key,
             temperature=0.0
         )
-        self.model_name = model_name
         self.context_length = 4096
         
         self.refiner = Agent(
             role="Query Refiner",
             goal="Clarify user questions for retrieval.",
             backstory="Understands intent of the prompt and rewrites prompts with more details.",
-            llm=self.ollama_llm
+            llm=self.agent_llm
         )
         self.composer = Agent(
             role="Answer Composer",
             goal="Craft final answers with citations.",
             backstory="Synthesises context into helpful replies.",
-            llm=self.ollama_llm
+            llm=self.agent_llm
         )
 
-    def _get_ollama_url(self) -> str:
-        """Get the appropriate Ollama URL based on execution environment."""
-        try:
-            from app.services.host_service_manager import host_service_manager
-            url = host_service_manager.environment_config.ollama_url
-            logger.debug(f"Using Ollama URL from host service manager: {url}")
-            return url
-        except ImportError:
-            logger.warning("Host service manager not available, using fallback config")
-            url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-            logger.debug(f"Using fallback Ollama URL: {url}")
-            return url
-
     async def _get_context_length(self, model_name: str) -> int:
-        """Query Ollama for the model's context length; fall back to a sensible default."""
-        model = model_name.replace("ollama/", "") if "ollama/" in model_name else model_name
+        """Query Ollama for context length when available; otherwise use a safe default."""
+        if self.backend != "ollama":
+            return 4096
+
+        model = model_name.replace("ollama_chat/", "").replace("ollama/", "")
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    f"{self._get_ollama_url()}/api/show",
+                    f"{self.llm_config.api_base}/api/show",
                     json={"name": model}
                 )
                 resp.raise_for_status()
@@ -1540,15 +1543,21 @@ class CrewAIRAGOrchestrator:
             return 4096
 
     async def _generate_summary(self, text: str, system_prompt: str) -> str:
-        """Generate a short summary for a text segment using the configured model."""
+        """Generate a short summary for a text segment using the configured backend."""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text}
         ]
         
-        model = self.model_name.replace("ollama/", "")
         response = ""
-        async for chunk in stream_ollama(messages, model=model):
+        async for chunk in stream_completion(
+            messages,
+            backend=self.backend,
+            model=self.model_name,
+            api_base=self.llm_config.api_base,
+            api_key=self.llm_config.api_key,
+            temperature=0.0,
+        ):
             response += chunk
         
         return response
@@ -1585,8 +1594,7 @@ class CrewAIRAGOrchestrator:
 
     async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False, model: Optional[str] = None):
         """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
-        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
-        if self.context_length == 4096:
+        if self.backend == "ollama" and self.context_length == 4096:
             self.context_length = await self._get_context_length(self.model_name)
         
         history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])

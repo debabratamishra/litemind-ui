@@ -10,9 +10,35 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Iterable, Optional
+
+
+class _LiteLLMOptionalProviderWarningFilter(logging.Filter):
+    """Suppress import-time warnings for optional AWS providers we do not use."""
+
+    _SUPPRESSED_MESSAGES = (
+        "could not pre-load bedrock-runtime response stream shape",
+        "could not pre-load sagemaker-runtime response stream shape",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not any(fragment in message for fragment in self._SUPPRESSED_MESSAGES)
+
+
+def _install_litellm_log_filter() -> None:
+    litellm_logger = logging.getLogger("LiteLLM")
+    if any(
+        isinstance(existing_filter, _LiteLLMOptionalProviderWarningFilter)
+        for existing_filter in litellm_logger.filters
+    ):
+        return
+
+    litellm_logger.addFilter(_LiteLLMOptionalProviderWarningFilter())
+
+
+_install_litellm_log_filter()
 
 import litellm
 
@@ -132,7 +158,6 @@ async def stream_completion(
             kwargs["extra_headers"] = extra_headers
 
     for attempt in range(1, _MAX_RETRIES + 1):
-        buffered_text = ""
         yielded_any_content = False
         try:
             stream = await litellm.acompletion(**kwargs)
@@ -141,14 +166,8 @@ async def stream_completion(
                 if not content:
                     continue
 
-                buffered_text += content
-                if re.search(r"[.!?\n]$", buffered_text) or len(buffered_text) > 400:
-                    yielded_any_content = True
-                    yield buffered_text
-                    buffered_text = ""
-
-            if buffered_text:
-                yield buffered_text
+                yielded_any_content = True
+                yield content
             return
         except Exception as exc:
             logger.warning(
@@ -214,7 +233,11 @@ def _resolve_model_name(backend: str, model: Optional[str]) -> str:
     requested_model = (model or "").strip()
     if not requested_model or requested_model == "default":
         if backend == "ollama":
-            requested_model = os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")
+            requested_model = (
+                os.getenv("DEFAULT_OLLAMA_MODEL")
+                or os.getenv("OLLAMA_MODEL")
+                or "gemma3:1b"
+            )
         elif backend == "openrouter":
             requested_model = os.getenv("DEFAULT_OPENROUTER_MODEL", _DEFAULT_OPENROUTER_MODEL)
 

@@ -1,6 +1,5 @@
 """Web search orchestrator using CrewAI agents.
 """
-import os
 import logging
 from typing import List, Dict, Optional, AsyncGenerator
 from urllib.parse import urlparse
@@ -33,7 +32,7 @@ class WebSearchOrchestrator:
         self.requested_model = model
         self.llm_config = resolve_backend_config(
             backend=self.backend,
-            model=model or os.getenv("OLLAMA_MODEL", "llama3.2:latest"),
+            model=model,
             api_base=api_base,
             api_key=api_key,
         )

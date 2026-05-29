@@ -1,12 +1,25 @@
 # macOS Fix Script for LLM WebUI
 # This script switches to macOS-compatible networking and restarts the application
 
+detect_compose_cmd() {
+    if command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_CMD="docker-compose"
+    elif docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD="docker compose"
+    else
+        echo "❌ Neither 'docker-compose' nor 'docker compose' is available."
+        exit 1
+    fi
+}
+
+detect_compose_cmd
+
 echo "🔧 Fixing LLM WebUI for macOS Docker Desktop..."
 echo "==============================================="
 
 # Stop existing containers
 echo "🛑 Stopping existing containers..."
-docker-compose down 2>/dev/null || true
+$COMPOSE_CMD down 2>/dev/null || true
 
 # Backup original docker-compose.yml
 if [[ ! -f "docker-compose.yml.backup" ]]; then
@@ -20,10 +33,10 @@ cp docker-compose.macos.yml docker-compose.yml
 
 # Rebuild and start with new configuration
 echo "🏗️  Building with new configuration..."
-docker-compose build --no-cache
+$COMPOSE_CMD build --no-cache
 
 echo "🚀 Starting services with proper port mapping..."
-docker-compose up -d
+$COMPOSE_CMD up -d
 
 # Wait for services to start
 echo "⏳ Waiting for services to initialize..."
@@ -31,7 +44,7 @@ sleep 15
 
 # Check container status
 echo "📊 Container Status:"
-docker-compose ps
+$COMPOSE_CMD ps
 
 # Test services
 echo ""
@@ -43,7 +56,7 @@ if curl -s http://localhost:8000/health >/dev/null 2>&1; then
 else
     echo "❌ Backend: http://localhost:8000 - NOT ACCESSIBLE"
     echo "   Trying to test from container..."
-    BACKEND_HEALTH=$(docker exec llmwebui-backend curl -s http://localhost:8000/health 2>/dev/null || echo "Failed")
+    BACKEND_HEALTH=$(docker exec litemindui-backend curl -s http://localhost:8000/health 2>/dev/null || echo "Failed")
     if [[ "$BACKEND_HEALTH" == *"healthy"* ]]; then
         echo "   ✅ Backend running inside container but port mapping may need time"
     fi
@@ -70,9 +83,9 @@ echo "🔄 If ports are still not accessible, wait 30 seconds and try again."
 echo "   Docker Desktop on macOS sometimes takes time to bind ports."
 echo ""
 echo "📋 Troubleshooting:"
-echo "   Check logs: docker-compose logs -f"
-echo "   Restart:    docker-compose restart"
-echo "   Stop:       docker-compose down"
+echo "   Check logs: $COMPOSE_CMD logs -f"
+echo "   Restart:    $COMPOSE_CMD restart"
+echo "   Stop:       $COMPOSE_CMD down"
 echo ""
 echo "🔙 To restore original networking:"
 echo "   mv docker-compose.yml.backup docker-compose.yml"

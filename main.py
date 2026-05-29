@@ -3,7 +3,6 @@ LiteMindUI FastAPI Backend
 Production-ready API server with chat and RAG capabilities.
 """
 import asyncio
-import io
 import json
 import logging
 import os
@@ -20,7 +19,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -79,6 +78,8 @@ class RAGQueryRequestEnhanced(BaseModel):
     use_multi_agent: Optional[bool] = False
     use_hybrid_search: Optional[bool] = False
     backend: Optional[str] = "ollama"
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
     # Advanced LLM generation parameters
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2048
@@ -675,7 +676,7 @@ async def reset_rag_system():
 async def rag_query(request: RAGQueryRequestEnhanced):
     """Query RAG system"""
     try:
-        # Ollama RAG - check if multi-agent is requested
+        # Route through either the standard RAG path or the multi-agent orchestrator.
         async def event_generator():
             if request.use_multi_agent:
                 # Use CrewAI multi-agent orchestration
@@ -684,7 +685,10 @@ async def rag_query(request: RAGQueryRequestEnhanced):
 
                 orchestrator = CrewAIRAGOrchestrator(
                     rag_service=rag_service,
-                    model_name=request.model or "gemma3:1b"
+                    model_name=request.model or "gemma3:1b",
+                    backend=request.backend,
+                    api_base=request.api_base,
+                    api_key=request.api_key,
                 )
 
                 async for chunk in orchestrator.query(
@@ -706,13 +710,16 @@ async def rag_query(request: RAGQueryRequestEnhanced):
                     request.n_results,
                     request.use_hybrid_search,
                     request.model,
-                    request.conversation_summary,
-                    request.temperature,
-                    request.max_tokens,
-                    request.top_p,
-                    request.frequency_penalty,
-                    request.repetition_penalty,
-                    request.is_voice_mode
+                    conversation_summary=request.conversation_summary,
+                    backend=request.backend,
+                    api_base=request.api_base,
+                    api_key=request.api_key,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    top_p=request.top_p,
+                    frequency_penalty=request.frequency_penalty,
+                    repetition_penalty=request.repetition_penalty,
+                    is_voice_mode=request.is_voice_mode,
                 ):
                     yield chunk + "\n"
 

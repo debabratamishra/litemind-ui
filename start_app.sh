@@ -1,24 +1,35 @@
 #!/bin/bash
 
-#!/bin/bash
-
 # LLMWebUI Application Startup Script
 # This script ensures proper application startup and provides helpful information
+
+detect_compose_cmd() {
+    if command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_CMD="docker-compose"
+    elif docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD="docker compose"
+    else
+        echo "❌ Neither 'docker-compose' nor 'docker compose' is available."
+        exit 1
+    fi
+}
+
+detect_compose_cmd
 
 echo "🚀 Starting LLMWebUI Application..."
 echo "=================================="
 
 # Stop any existing containers
 echo "🛑 Stopping existing containers..."
-docker-compose down 2>/dev/null || true
+$COMPOSE_CMD down 2>/dev/null || true
 
 # Build the application
 echo "🏗️  Building application..."
-docker-compose build --no-cache
+$COMPOSE_CMD build --no-cache
 
 # Start the application
 echo "🚀 Starting services..."
-docker-compose up -d
+$COMPOSE_CMD up -d
 
 # Wait a moment for containers to start
 echo "⏳ Waiting for services to initialize..."
@@ -26,16 +37,16 @@ sleep 15
 
 # Check container status
 echo "📊 Container Status:"
-docker-compose ps
+$COMPOSE_CMD ps
 
 # Test backend health
 echo ""
 echo "🩺 Testing Backend Health..."
-BACKEND_HEALTH=$(docker exec llmwebui-backend curl -s http://localhost:8000/health 2>/dev/null || echo "Backend not ready")
+BACKEND_HEALTH=$(docker exec litemindui-backend curl -s http://localhost:8000/health 2>/dev/null || echo "Backend not ready")
 if [[ "$BACKEND_HEALTH" == *"healthy"* ]]; then
     echo "✅ Backend: HEALTHY"
 else
-    echo "❌ Backend: NOT READY - Check logs with: docker-compose logs backend"
+    echo "❌ Backend: NOT READY - Check logs with: $COMPOSE_CMD logs backend"
 fi
 
 # Test frontend
@@ -43,7 +54,7 @@ echo "🖥️  Testing Frontend..."
 if curl -s http://localhost:8501 >/dev/null 2>&1; then
     echo "✅ Frontend: ACCESSIBLE"
 else
-    echo "❌ Frontend: NOT ACCESSIBLE - Check logs with: docker-compose logs frontend"
+    echo "❌ Frontend: NOT ACCESSIBLE - Check logs with: $COMPOSE_CMD logs frontend"
 fi
 
 echo ""
@@ -54,12 +65,12 @@ echo "   📱 Frontend (Streamlit UI): http://localhost:8501"
 echo "   🔧 Backend API Documentation: Available via container"
 echo ""
 echo "📋 Management Commands:"
-echo "   View all logs:      docker-compose logs -f"
-echo "   View backend logs:  docker-compose logs backend"
-echo "   View frontend logs: docker-compose logs frontend"
-echo "   Stop application:   docker-compose down"
-echo "   Restart:            docker-compose restart"
-echo "   Container status:   docker-compose ps"
+echo "   View all logs:      $COMPOSE_CMD logs -f"
+echo "   View backend logs:  $COMPOSE_CMD logs backend"
+echo "   View frontend logs: $COMPOSE_CMD logs frontend"
+echo "   Stop application:   $COMPOSE_CMD down"
+echo "   Restart:            $COMPOSE_CMD restart"
+echo "   Container status:   $COMPOSE_CMD ps"
 echo ""
 echo "🔍 Optional Services (for enhanced functionality):"
 echo "   • Ollama (for local LLM models): https://ollama.ai/"

@@ -25,7 +25,7 @@ A robust, production-ready web interface for Large Language Models (LLMs) featur
 
 - **FastAPI Backend** (`localhost:8000`) - Entry point at `main.py` with high-performance async API and comprehensive endpoints suitable for asynchronous workload
 - **Streamlit Frontend** (`localhost:8501`) - Entry point at `streamlit_app.py` with intuitive web interface and automatic backend detection
-- **Intelligent Fallback** - Seamlessly switches between FastAPI and local processing based on backend availability
+- **Backend-First Runtime** - The frontend delegates inference, RAG, and web search to the FastAPI service
 
 ---
 
@@ -181,13 +181,14 @@ Environment variables you may want to set (examples):
 
 ```bash
 export OLLAMA_API_URL="http://localhost:11434"
+export DEFAULT_OLLAMA_MODEL="gemma3:1b"
 export OPENROUTER_API_KEY="your-openrouter-api-key"
 export OPENROUTER_API_BASE="https://openrouter.ai/api/v1"
 export DEFAULT_OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct"
 export UPLOAD_FOLDER="./uploads"
 ```
 
-The app uses the LiteLLM Python SDK directly. You do not need to run the LiteLLM proxy/gateway.
+The backend uses the LiteLLM Python SDK directly. The frontend talks to FastAPI, so you do not need LiteLLM in the frontend or the LiteLLM proxy/gateway.
 
 Notes:
 - Running the full stack natively requires additional setup (Ollama, model files) and is intended for development.
@@ -291,9 +292,9 @@ To use TTS on any response:
 
 ### Backend Configuration
 
-- **Local-First Setup:** Ollama is used as the default and only inference backend
+- **Local-First Setup:** Ollama remains the default inference backend, with OpenRouter available as an optional second backend
 - **Model Persistence:** Selected models are preserved in session state
-- **Automatic Configuration:** UI adapts to available Ollama capabilities
+- **Automatic Configuration:** UI adapts to the selected backend and provider-specific model inputs
 
 ### 🌐 API Integration
 
