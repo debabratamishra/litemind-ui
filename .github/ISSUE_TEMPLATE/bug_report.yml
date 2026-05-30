@@ -89,7 +89,7 @@ body:
       placeholder: |
         - OS: [e.g. macOS 14.0, Ubuntu 20.04, Windows 11]
         - Docker Version: [e.g. 20.10.8]
-        - Python Version: [e.g. 3.12.0]
+        - Python Version: [e.g. 3.13.0]
     validations:
       required: true
       

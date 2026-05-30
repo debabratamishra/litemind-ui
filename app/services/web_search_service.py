@@ -1,11 +1,12 @@
 """Web search service using SerpAPI for retrieving search results.
 
 This service provides a wrapper around SerpAPI to execute web searches
-and format results for consumption by CrewAI agents.
+and format results for the web-search orchestration pipeline.
 """
-import os
 import logging
+import os
 from typing import Dict, List, Optional
+
 import httpx
 from dotenv import load_dotenv
 

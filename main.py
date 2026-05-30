@@ -681,47 +681,58 @@ async def rag_query(request: RAGQueryRequestEnhanced):
             if request.use_multi_agent:
                 # Use CrewAI multi-agent orchestration
                 logger.info("Using CrewAI multi-agent orchestration")
-                from app.services.rag_service import CrewAIRAGOrchestrator
+                try:
+                    from app.services.rag_service import CrewAIRAGOrchestrator
 
-                orchestrator = CrewAIRAGOrchestrator(
-                    rag_service=rag_service,
-                    model_name=request.model or "gemma3:1b",
-                    backend=request.backend,
-                    api_base=request.api_base,
-                    api_key=request.api_key,
-                )
+                    orchestrator = CrewAIRAGOrchestrator(
+                        rag_service=rag_service,
+                        model_name=request.model or "gemma3:1b",
+                        backend=request.backend,
+                        api_base=request.api_base,
+                        api_key=request.api_key,
+                    )
 
-                async for chunk in orchestrator.query(
-                    user_query=request.query,
-                    system_prompt=request.system_prompt,
-                    messages=request.messages,
-                    n_results=request.n_results,
-                    use_hybrid_search=request.use_hybrid_search,
-                    model=request.model
-                ):
-                    yield chunk + "\n"
-            else:
-                # Use regular RAG
-                logger.info("Using standard RAG without multi-agent orchestration")
-                async for chunk in rag_service.query(
-                    request.query,
-                    request.system_prompt,
-                    request.messages,
-                    request.n_results,
-                    request.use_hybrid_search,
-                    request.model,
-                    conversation_summary=request.conversation_summary,
-                    backend=request.backend,
-                    api_base=request.api_base,
-                    api_key=request.api_key,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    top_p=request.top_p,
-                    frequency_penalty=request.frequency_penalty,
-                    repetition_penalty=request.repetition_penalty,
-                    is_voice_mode=request.is_voice_mode,
-                ):
-                    yield chunk + "\n"
+                    async for chunk in orchestrator.query(
+                        user_query=request.query,
+                        system_prompt=request.system_prompt,
+                        messages=request.messages,
+                        n_results=request.n_results,
+                        use_hybrid_search=request.use_hybrid_search,
+                        model=request.model
+                    ):
+                        yield chunk + "\n"
+                    return
+                except RuntimeError as exc:
+                    logger.warning(
+                        "Multi-agent RAG unavailable, falling back to standard RAG: %s",
+                        exc,
+                    )
+                    yield (
+                        "Multi-agent orchestration is not available in this Python "
+                        f"{sys.version_info.major}.{sys.version_info.minor} environment. "
+                        "Falling back to standard RAG.\n\n"
+                    )
+            # Use regular RAG
+            logger.info("Using standard RAG without multi-agent orchestration")
+            async for chunk in rag_service.query(
+                request.query,
+                request.system_prompt,
+                request.messages,
+                request.n_results,
+                request.use_hybrid_search,
+                request.model,
+                conversation_summary=request.conversation_summary,
+                backend=request.backend,
+                api_base=request.api_base,
+                api_key=request.api_key,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                top_p=request.top_p,
+                frequency_penalty=request.frequency_penalty,
+                repetition_penalty=request.repetition_penalty,
+                is_voice_mode=request.is_voice_mode,
+            ):
+                yield chunk + "\n"
 
         return StreamingResponse(event_generator(), media_type="text/plain")
 

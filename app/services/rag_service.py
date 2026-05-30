@@ -2,32 +2,33 @@
 Provides ingestion, indexing, hybrid retrieval, and answer composition using ChromaDB,
 BM25, and a configurable LiteLLM-backed LLM.
 """
-import chromadb
-from chromadb.utils import embedding_functions
-from chromadb.config import Settings
-from .llm_gateway import resolve_backend_config, stream_completion
-import os
-import re
-import hashlib
-from crewai import Agent, LLM
-import httpx
-import shutil
-import logging
 import asyncio
 import base64
-from rank_bm25 import BM25Okapi
-import string
-from typing import Any, Dict, List, Tuple
-import numpy as np
-from pathlib import Path
 import gc
-import json
+import hashlib
 import importlib
-from typing import Optional
+import json
+import logging
+import os
+import re
+import shutil
+import string
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import chromadb
+import httpx
+import numpy as np
+from chromadb.config import Settings
+from chromadb.utils import embedding_functions
+from rank_bm25 import BM25Okapi
 
 from app.core.rag_formats import SUPPORTED_EXTENSIONS
 from app.ingestion.enhanced_extractors import process_images_enhanced
 from app.ingestion.file_ingest import get_ingestion_capabilities, ingest_file
+
+from .llm_gateway import resolve_backend_config, stream_completion
 
 # Configuration flags
 ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"
@@ -74,6 +75,20 @@ def _tokenize_text(text: str) -> List[str]:
         logger.info("Using regex tokenizer for BM25 preprocessing")
         _tokenizer_fallback_logged = True
     return re.findall(r"\b\w+\b", text)
+
+
+def _load_crewai_types() -> tuple[Any, Any]:
+    """Load CrewAI lazily so standard RAG remains available without it."""
+    try:
+        crewai = importlib.import_module("crewai")
+    except Exception as exc:
+        version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        raise RuntimeError(
+            "Multi-agent RAG requires a CrewAI build compatible with the current "
+            f"Python runtime. CrewAI is unavailable under Python {version} in this environment."
+        ) from exc
+
+    return crewai.Agent, crewai.LLM
 
 def _flatten_metadata(meta, prefix=""):
     """Flatten a (possibly nested) metadata mapping into a single-level dict.
@@ -1459,6 +1474,7 @@ class CrewAIRAGOrchestrator:
         api_key: Optional[str] = None,
     ):
         """Configure the CrewAI LLM, agent roles, and default context parameters."""
+        Agent, LLM = _load_crewai_types()
         self.rag_service = rag_service
         self.llm_config = resolve_backend_config(
             backend=backend,

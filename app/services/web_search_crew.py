@@ -1,22 +1,21 @@
-"""Web search orchestrator using CrewAI agents.
-"""
+"""Web search orchestrator using direct LLM prompting and SerpAPI results."""
 import logging
-from typing import List, Dict, Optional, AsyncGenerator
+from typing import AsyncGenerator, Dict, List, Optional
 from urllib.parse import urlparse
-from crewai import Agent, LLM
+
 from dotenv import load_dotenv
 
 # Ensure environment variables are loaded
 load_dotenv()
 
-from app.services.web_search_service import WebSearchService
 from app.services.llm_gateway import normalize_backend, resolve_backend_config, stream_completion
+from app.services.web_search_service import WebSearchService
 
 logger = logging.getLogger(__name__)
 
 
 class WebSearchOrchestrator:
-    """Orchestrates web search using CrewAI agents for retrieval and synthesis."""
+    """Orchestrates web search retrieval and synthesis."""
     
     def __init__(
         self,
@@ -37,106 +36,12 @@ class WebSearchOrchestrator:
             api_key=api_key,
         )
 
-        agent_model = self.llm_config.model
-        if self.backend == "ollama" and agent_model.startswith("ollama_chat/"):
-            agent_model = f"ollama/{agent_model[len('ollama_chat/') :]}"
-
-        self.llm = LLM(
-            model=agent_model,
-            base_url=self.llm_config.api_base,
-            api_key=self.llm_config.api_key,
-        )
-
         logger.info(
             "WebSearchOrchestrator initialized with backend=%s model=%s api_base=%s",
             self.backend,
             self.llm_config.model,
             self.llm_config.api_base,
         )
-        
-        # Initialize agents
-        self._initialize_agents()
-    
-    def _initialize_agents(self):
-        """Initialize the Query Optimizer, Serper, and Synthesizer agents."""
-        # Query Optimizer Agent: Optimizes user queries for better search results
-        self.query_optimizer_agent = Agent(
-            role="Query Optimization Expert",
-            goal="Transform user queries into optimal search queries that will retrieve the most relevant results",
-            backstory=(
-                """You are an expert in search query optimization with years of experience in information retrieval.
-                You understand how to refine ambiguous or complex questions into clear, focused search queries.
-                You identify key terms, remove unnecessary words and numbers, and structure queries for maximum relevance.
-                You consider search engine behavior and user intent to create queries that yield the best results."""
-            ),
-            llm=self.llm,
-            verbose=False,
-            allow_delegation=False
-        )
-        
-        # Serper Agent: Responsible for retrieving web search results
-        self.serper_agent = Agent(
-            role="Web Search Specialist",
-            goal="Retrieve relevant and accurate web search results using optimized queries",
-            backstory=(
-                """You are an expert web search specialist with deep knowledge of information retrieval.
-                Your mission is to find the most relevant and up-to-date information from the web
-                by executing precise search queries. You work with optimized queries to ensure
-                the best possible results that directly address user needs."""
-            ),
-            llm=self.llm,
-            verbose=False,
-            allow_delegation=False
-        )
-        
-        # Synthesizer Agent: Responsible for processing results and generating natural responses
-        self.synthesizer_agent = Agent(
-            role="Information Synthesizer",
-            goal="Answer questions based on web search results",
-            backstory=(
-                """
-                You are a synthesizer agent who prepares the final response for the user.
-                Synthesize information from the provided web search results to produce clear,
-                concise, and accurate answers that cite the sources used.
-
-                Formatting rules:
-                - Write in plain text only. Do NOT use markdown, bullets, emojis, or other markup.
-                - Use inline citations next to claims using [1], [2], etc.
-                - At the end of the answer include a 'Sources:' section listing each source on its own line.
-                - Each source line must include a numeric label, a short title, the domain, and the full URL
-                  (include the http:// or https:// so the URL is clickable in most clients).
-                - After the source line, include a 1-2 sentence summary or snippet indented on the next line.
-                - Only include sources that were actually used to support the answer.
-
-                Example 1 (single source):
-                Answer:
-                Paris is the capital of France [1].
-
-                Sources:
-                [1] Paris - Wikipedia — en.wikipedia.org — https://en.wikipedia.org/wiki/Paris
-                    Summary: Paris is the capital and most populous city of France.
-
-                Example 2 (multiple sources):
-                Answer:
-                Vitamin D can be obtained from sun exposure and certain foods [1][2].
-
-                Sources:
-                [1] Vitamin D - NIH — nih.gov — https://ods.od.nih.gov/factsheets/VitaminD-Consumer/
-                    Summary: NIH overview of Vitamin D sources and recommendations.
-                [2] Dietary sources of vitamin D — example.edu — https://example.edu/diet-vitamin-d
-                    Summary: Lists foods that contain vitamin D and typical amounts.
-
-                Other guidance:
-                - Prefer authoritative, up-to-date sources. If a claim is uncertain, state the uncertainty and cite sources.
-                - Keep the answer concise; use the Sources section to provide provenance and links.
-                """
-            ),
-            llm=self.llm,
-            verbose=False,
-            allow_delegation=False
-        )
-        
-        logger.info("CrewAI agents initialized successfully (3-agent pipeline)")
 
     async def process_query(
         self,
@@ -147,8 +52,8 @@ class WebSearchOrchestrator:
         """Process a user query through the web search workflow.
         
         This is the main entry point for web search queries. It orchestrates:
-        1. Search execution via Serper Agent
-        2. Result synthesis via Synthesizer Agent
+        1. Search execution via SerpAPI
+        2. Result synthesis via the configured LLM
         3. Streaming response generation
         
         Args:
@@ -165,11 +70,11 @@ class WebSearchOrchestrator:
         try:
             logger.info(f"Processing web search query: '{query}'")
             
-            # Step 1: Optimize query via Query Optimizer Agent
+            # Step 1: Optimize the search query
             optimized_query = await self._query_optimizer_process(query)
             logger.info(f"Optimized query: '{optimized_query}'")
             
-            # Step 2: Execute search via Serper Agent using optimized query
+            # Step 2: Execute search using the optimized query
             search_results = await self._serper_agent_search(optimized_query)
             
             if not search_results:
@@ -178,7 +83,7 @@ class WebSearchOrchestrator:
                     yield chunk
                 return
             
-            # Step 3: Synthesize results via Synthesizer Agent
+            # Step 3: Synthesize the search results
             async for chunk in self._synthesizer_agent_process(
                 query=query,  # Use original query for context
                 optimized_query=optimized_query,
@@ -249,7 +154,7 @@ class WebSearchOrchestrator:
             Exception: If search fails
         """
         try:
-            logger.info(f"Serper Agent executing search for: '{query}'")
+            logger.info(f"Executing web search for: '{query}'")
             
             # Execute search via WebSearchService (retrieves exactly 10 results)
             raw_results = await self.web_search_service.search(query, num_results=10)
@@ -257,7 +162,7 @@ class WebSearchOrchestrator:
             # Format results for agent consumption
             formatted_results = self.web_search_service.format_results(raw_results)
             
-            logger.info(f"Serper Agent retrieved {len(formatted_results)} search results")
+            logger.info(f"Retrieved {len(formatted_results)} search results")
             return formatted_results
             
         except ValueError as e:
@@ -281,7 +186,7 @@ class WebSearchOrchestrator:
         Args:
             query: The original user query
             optimized_query: The optimized search query used
-            search_results: Formatted search results from Serper Agent
+            search_results: Formatted search results from the search backend
             conversation_history: Optional conversation context
             stream: Whether to stream the response
             
@@ -289,7 +194,7 @@ class WebSearchOrchestrator:
             str: Chunks of the synthesized response
         """
         try:
-            logger.info("Synthesizer Agent processing search results")
+            logger.info("Synthesizing web search results")
             
             # Build context from search results
             search_context = self._build_search_context(search_results)

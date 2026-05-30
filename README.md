@@ -1,6 +1,6 @@
 # LiteMindUI 
 
-[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-00A971.svg)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-FF4B4B.svg)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?logo=docker&logoColor=white)](https://www.docker.com/)
@@ -142,7 +142,7 @@ make version     # Show version management options
 
 ### Option 3: Native (Local Python) Installation
 
-Use this if you prefer to run services locally without Docker. These instructions assume Python 3.13+ and a virtual environment.
+Use this if you prefer to run services locally without Docker. These instructions assume Python 3.13 and a virtual environment.
 
 1. Clone the repository
 
