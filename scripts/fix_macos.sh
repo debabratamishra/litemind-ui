@@ -1,5 +1,10 @@
-# macOS Fix Script for LLM WebUI
+#!/usr/bin/env bash
+
+# macOS Fix Script for LiteMindUI
 # This script switches to macOS-compatible networking and restarts the application
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 detect_compose_cmd() {
     if command -v docker-compose >/dev/null 2>&1; then
@@ -14,8 +19,10 @@ detect_compose_cmd() {
 
 detect_compose_cmd
 
-echo "🔧 Fixing LLM WebUI for macOS Docker Desktop..."
-echo "==============================================="
+cd "$REPO_ROOT"
+
+echo "🔧 Fixing LiteMindUI for macOS Docker Desktop..."
+echo "================================================"
 
 # Stop existing containers
 echo "🛑 Stopping existing containers..."

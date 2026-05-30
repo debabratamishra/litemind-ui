@@ -1,7 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# LLMWebUI Application Startup Script
+# LiteMindUI Application Startup Script
 # This script ensures proper application startup and provides helpful information
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 detect_compose_cmd() {
     if command -v docker-compose >/dev/null 2>&1; then
@@ -16,8 +19,10 @@ detect_compose_cmd() {
 
 detect_compose_cmd
 
-echo "🚀 Starting LLMWebUI Application..."
-echo "=================================="
+cd "$REPO_ROOT"
+
+echo "🚀 Starting LiteMindUI..."
+echo "========================="
 
 # Stop any existing containers
 echo "🛑 Stopping existing containers..."
@@ -78,5 +83,5 @@ echo "     - Install: brew install ollama (macOS) or visit ollama.ai"
 echo "     - Run: ollama serve"
 echo "     - Pull models: ollama pull llama2"
 echo ""
-echo "✨ Your LLM WebUI is ready to use!"
+echo "✨ LiteMindUI is ready to use!"
 echo "   Start by visiting: http://localhost:8501"
