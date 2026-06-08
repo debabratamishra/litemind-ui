@@ -34,10 +34,13 @@ Version bump behavior:
 `.github/workflows/docker-publish.yml`:
 
 - runs on pushes to `main` and `develop`
-- runs on version tags and published GitHub releases
+- runs on version tags
 - can also be started manually with `workflow_dispatch`
 - builds `Dockerfile` and `Dockerfile.streamlit`
 - publishes backend and frontend images to Docker Hub
+- pushes the semver image tags from the `v*.*.*` tag build
+- uploads `docker-compose.release.yml` to the matching GitHub release
+- skips the automated `chore: bump version to ...` branch push so the tag run is the only release publish
 
 Current image names:
 

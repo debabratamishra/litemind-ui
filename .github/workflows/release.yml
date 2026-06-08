@@ -120,7 +120,7 @@ jobs:
       - name: Commit version update
         run: |
           git add version.json
-          git commit -m "chore: bump version to ${{ steps.version.outputs.new }} [skip ci]"
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
           git push
 
       - name: Create and push tag
@@ -172,7 +172,10 @@ jobs:
             docker pull debabratamishra1/litemindui-backend:${{ steps.version.outputs.new }}
             docker pull debabratamishra1/litemindui-frontend:${{ steps.version.outputs.new }}
             ```
-            
+
+            The release workflow also uploads a `docker-compose.release.yml` asset after the
+            Docker publish workflow finishes for this tag.
+             
             Or use the `latest` tag:
             ```bash
             docker pull debabratamishra1/litemindui-backend:latest
@@ -201,6 +204,6 @@ jobs:
           prerelease: false
           generate_release_notes: false
         env:
-          # Use RELEASE_PAT so the release:published event triggers docker-publish workflow
-          # (GITHUB_TOKEN doesn't trigger other workflows to prevent infinite loops)
+          # Use RELEASE_PAT so the tag-created release can be updated later by the
+          # Docker publish workflow when it uploads the compose asset.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
