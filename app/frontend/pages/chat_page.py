@@ -16,8 +16,11 @@ from ..components.shared_ui import (
     render_generation_settings,
     render_reasoning_config,
     render_memory_config,
+    render_backend_selector,
     validate_backend_setup,
     create_simple_summary,
+    get_backend_request_config,
+    get_default_openrouter_model,
     get_generation_config_from_session,
 )
 from ..services.backend_service import backend_service
@@ -61,6 +64,8 @@ class ChatPage:
         # Initialize generative UI state
         if "enable_generative_ui" not in st.session_state:
             st.session_state.enable_generative_ui = False
+
+        st.session_state.setdefault("selected_openrouter_chat_model", get_default_openrouter_model())
     
     def _render_web_search_toggle(self) -> bool:
         """
@@ -214,6 +219,8 @@ class ChatPage:
                         frequency_penalty=config["frequency_penalty"],
                         repetition_penalty=config["repetition_penalty"],
                         backend=backend_provider,
+                        api_base=config.get("api_base"),
+                        api_key=config.get("api_key"),
                         placeholder=out,
                         use_fastapi=self.backend_available,
                         conversation_history=conversation_history,
@@ -240,6 +247,8 @@ class ChatPage:
                         frequency_penalty=config["frequency_penalty"],
                         repetition_penalty=config["repetition_penalty"],
                         backend=backend_provider,
+                        api_base=config.get("api_base"),
+                        api_key=config.get("api_key"),
                         placeholder=out,
                         use_fastapi=self.backend_available,
                         conversation_history=conversation_history,
@@ -278,7 +287,11 @@ class ChatPage:
     def _get_chat_config(self, backend_provider: str) -> Dict:
         """Get chat configuration for the current backend."""
         config = get_generation_config_from_session("chat")
-        config["model"] = st.session_state.get("selected_chat_model", "default")
+        config.update(get_backend_request_config(backend_provider))
+        if backend_provider == "openrouter":
+            config["model"] = st.session_state.get("selected_openrouter_chat_model", get_default_openrouter_model())
+        else:
+            config["model"] = st.session_state.get("selected_chat_model", "default")
         
         return config
     
@@ -287,7 +300,7 @@ class ChatPage:
         Get status text for the spinner.
         
         Args:
-            backend_provider: The backend provider (ollama)
+            backend_provider: The selected inference backend
             model: The model name
             web_search_active: Whether web search is active
             
@@ -307,11 +320,12 @@ class ChatPage:
         st.sidebar.markdown("---")
         st.sidebar.subheader("Chat Configuration")
         
-        backend_provider = st.session_state.get("current_backend", "ollama")
+        backend_provider = render_backend_selector()
 
-        if backend_provider != "ollama":
-            st.sidebar.warning("⚠️ Unsupported backend selected. Using Ollama configuration.")
-        self._render_ollama_model_config()
+        if backend_provider == "ollama":
+            self._render_ollama_model_config()
+        else:
+            self._render_openrouter_model_config()
         
         # Generation settings using shared component
         render_generation_settings("chat", expanded=True)
@@ -325,11 +339,6 @@ class ChatPage:
             key="enable_generative_ui",
             help="Enable rich UI components (charts, tables, metrics, buttons) in AI responses"
         )
-        if st.session_state.get("enable_generative_ui", False):
-            st.sidebar.caption(
-                "⚡ Token output is auto-raised to 16 384 tokens so apps and games "
-                "generate completely in one turn."
-            )
         
         # Memory configuration using shared component
         render_memory_config(self.memory_manager, "chat", "history_enabled", "memory_enabled")
@@ -401,6 +410,13 @@ class ChatPage:
 
         # Always store the raw model name for use by the chat pipeline
         st.session_state["selected_chat_model"] = raw_name
+
+    def _render_openrouter_model_config(self):
+        st.sidebar.text_input(
+            "OpenRouter Model:",
+            key="selected_openrouter_chat_model",
+            help="Example: meta-llama/llama-3.3-70b-instruct or openai/gpt-4o-mini",
+        )
     
     def _check_and_trigger_summarization(self):
         """Check if summarization is needed and trigger it."""
@@ -416,12 +432,6 @@ class ChatPage:
             messages_to_summarize = self.memory_manager.prune_for_summarization()
             
             if messages_to_summarize:
-                # Format for summary
-                summary_text = self.memory_manager.format_messages_for_summary_prompt(
-                    messages_to_summarize,
-                    self.memory_manager.summary
-                )
-                
                 simple_summary = create_simple_summary(
                     messages_to_summarize,
                     self.memory_manager.summary

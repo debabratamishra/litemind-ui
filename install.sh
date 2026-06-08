@@ -33,7 +33,7 @@ check_dependencies() {
         exit 1
     fi
     
-    if ! command -v docker-compose &> /dev/null; then
+    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
         echo -e "${RED}❌ Docker Compose is not installed. Please install Docker Compose first.${NC}"
         echo -e "${YELLOW}Visit: https://docs.docker.com/compose/install/${NC}"
         exit 1
@@ -109,6 +109,20 @@ port = 8501
 serverAddress = "localhost"
 CONFIG_EOF
 
+if [ ! -f ".env" ]; then
+cat > .env << 'ENV_EOF'
+OLLAMA_API_URL=http://host.docker.internal:11434
+DEFAULT_OLLAMA_MODEL=gemma3:1b
+OPENROUTER_API_KEY=
+OPENROUTER_API_BASE=https://openrouter.ai/api/v1
+DEFAULT_OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct
+SUMMARY_BACKEND=ollama
+SUMMARY_MODEL=gemma3:1b
+SUMMARY_API_BASE=
+SUMMARY_API_KEY=
+ENV_EOF
+fi
+
 echo "✅ Basic setup completed"
 EOF
     
@@ -137,7 +151,7 @@ start_services() {
     echo -e "${YELLOW}🚀 Starting LiteMindUI services...${NC}"
     echo -e "${BLUE}This will download the Docker images (may take a few minutes)${NC}"
     
-    if docker-compose -f "$COMPOSE_FILE" pull && docker-compose -f "$COMPOSE_FILE" up -d; then
+    if $COMPOSE_CMD -f "$COMPOSE_FILE" pull && $COMPOSE_CMD -f "$COMPOSE_FILE" up -d; then
         echo -e "${GREEN}✅ Services started successfully!${NC}"
         
         # Wait a moment for services to fully start
@@ -154,9 +168,9 @@ start_services() {
         echo "  • API Documentation: http://localhost:8000/docs"
         echo ""
         echo "Useful Commands:"
-        echo "  • View logs: docker-compose -f $COMPOSE_FILE logs -f"
-        echo "  • Stop services: docker-compose -f $COMPOSE_FILE down"
-        echo "  • Restart services: docker-compose -f $COMPOSE_FILE restart"
+        echo "  • View logs: $COMPOSE_CMD -f $COMPOSE_FILE logs -f"
+        echo "  • Stop services: $COMPOSE_CMD -f $COMPOSE_FILE down"
+        echo "  • Restart services: $COMPOSE_CMD -f $COMPOSE_FILE restart"
         echo -e "${NC}"
         
         # Check if services are responding
@@ -198,7 +212,7 @@ show_next_steps() {
 cleanup_on_error() {
     echo -e "${RED}❌ Installation failed. Cleaning up...${NC}"
     if [[ -f "$COMPOSE_FILE" ]]; then
-        docker-compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+        $COMPOSE_CMD -f "$COMPOSE_FILE" down 2>/dev/null || true
     fi
     cd ..
     rm -rf "$REPO_NAME" 2>/dev/null || true

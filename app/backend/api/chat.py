@@ -11,10 +11,10 @@ from fastapi.responses import StreamingResponse
 load_dotenv()
 
 from app.backend.models.api_models import ChatRequestEnhanced, ChatResponse, SerpTokenStatus, MemoryStatsResponse
-from app.services.ollama import stream_ollama
+from app.skills import chat_skill_registry
+from app.services.llm_gateway import complete_text, stream_completion
 from app.services.web_search_service import WebSearchService
-from app.services.web_search_crew import WebSearchOrchestrator
-from app.services.conversation_memory import get_memory_service, generate_session_id
+from app.services.conversation_memory import get_memory_service
 import json
 
 logger = logging.getLogger(__name__)
@@ -253,7 +253,7 @@ async def chat_endpoint(request: ChatRequestEnhanced):
     logger.info(f"Chat request - Backend: {request.backend}, Model: {request.model}")
     
     try:
-        return await _handle_ollama_chat(request)
+        return await _handle_chat_request(request)
             
     except Exception:
         logger.exception("Chat endpoint error")
@@ -267,7 +267,7 @@ async def chat_stream(request: ChatRequestEnhanced):
     
     async def event_generator():
         try:
-            async for chunk in _stream_ollama_chat(request):
+            async for chunk in _stream_chat_response(request):
                 payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
                     
@@ -279,8 +279,8 @@ async def chat_stream(request: ChatRequestEnhanced):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
-    """Handle Ollama chat request with conversation history"""
+async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
+    """Handle a chat request with conversation history."""
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
@@ -292,23 +292,24 @@ async def _handle_ollama_chat(request: ChatRequestEnhanced) -> ChatResponse:
     else:
         max_tokens = request.max_tokens
     
-    response_text = ""
-    async for chunk in stream_ollama(
-        messages, 
-        model=request.model, 
-        temperature=request.temperature, 
+    response_text = await complete_text(
+        messages,
+        backend=request.backend,
+        model=request.model,
+        api_base=request.api_base,
+        api_key=request.api_key,
+        temperature=request.temperature,
         max_tokens=max_tokens,
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
-        repetition_penalty=request.repetition_penalty
-    ):
-        response_text += chunk
+        repetition_penalty=request.repetition_penalty,
+    )
     
     return ChatResponse(response=response_text, model=request.model)
 
 
-async def _stream_ollama_chat(request: ChatRequestEnhanced):
-    """Stream Ollama chat responses with conversation history"""
+async def _stream_chat_response(request: ChatRequestEnhanced):
+    """Stream chat responses with conversation history."""
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
     
@@ -320,14 +321,17 @@ async def _stream_ollama_chat(request: ChatRequestEnhanced):
     else:
         max_tokens = request.max_tokens
     
-    async for chunk in stream_ollama(
-        messages, 
-        model=request.model, 
-        temperature=request.temperature, 
+    async for chunk in stream_completion(
+        messages,
+        backend=request.backend,
+        model=request.model,
+        api_base=request.api_base,
+        api_key=request.api_key,
+        temperature=request.temperature,
         max_tokens=max_tokens,
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
-        repetition_penalty=request.repetition_penalty
+        repetition_penalty=request.repetition_penalty,
     ):
         yield chunk
 
@@ -342,39 +346,20 @@ async def chat_web_search(request: ChatRequestEnhanced):
         if not request.use_web_search:
             logger.info("Web search not requested, routing to standard chat endpoint")
             return await chat_stream(request)
-        
-        # Check if SerpAPI token is configured
-        web_search_service = WebSearchService()
-        token_validation = web_search_service.validate_token()
-        
-        if not token_validation["valid"]:
-            logger.warning(f"SerpAPI token invalid: {token_validation['message']}")
-            logger.info("Falling back to standard chat due to invalid token")
-            
-            # Return error message and fallback to standard chat
-            async def error_and_fallback():
-                error_msg = "SerpAPI token is required to perform Web search. Defaulting to local results.\n\n"
-                yield error_msg
-                
-                # Stream standard chat response
-                async for chunk in _stream_ollama_chat(request):
-                    yield chunk
-            
-            return StreamingResponse(error_and_fallback(), media_type="text/plain")
-        
-        # Route to web search handler
+
         return await _handle_web_search_chat(request)
         
     except Exception as e:
         logger.error(f"Web search endpoint error: {e}", exc_info=True)
         logger.info("Falling back to standard chat due to error")
+        error_text = str(e)
         
         # Fallback to standard chat on any error
         async def error_fallback():
-            error_msg = f"Web search error: {str(e)}. Defaulting to local results.\n\n"
+            error_msg = f"Web search error: {error_text}. Defaulting to local results.\n\n"
             yield error_msg
             
-            async for chunk in _stream_ollama_chat(request):
+            async for chunk in _stream_chat_response(request):
                 yield chunk
         
         return StreamingResponse(error_fallback(), media_type="text/plain")
@@ -400,70 +385,79 @@ async def get_serp_token_status():
                 message=validation["message"]
             )
             
-    except Exception as e:
-        logger.error(f"Error checking SerpAPI token status: {e}")
+    except Exception:
+        logger.error("Error checking SerpAPI token status", exc_info=True)
         return SerpTokenStatus(
             status="error",
-            message=f"Error checking token status: {str(e)}"
+            message="Error checking token status."
         )
 
 
 async def _handle_web_search_chat(request: ChatRequestEnhanced):
-    """Handle web search chat request by routing to orchestrator"""
-    logger.info("Routing to web search orchestrator")
+    """Handle web search chat request through the registered skill layer."""
+    skill = chat_skill_registry.resolve(request)
+    if skill is None:
+        logger.info("No chat skill matched request; routing to standard chat endpoint")
+        return await chat_stream(request)
+
+    validation = skill.validate(request)
+    if not validation.ok:
+        detail = validation.message or "Unknown skill validation error"
+        logger.warning("Chat skill '%s' validation failed: %s", skill.name, detail)
+        logger.info("Falling back to standard chat due to invalid skill prerequisites")
+
+        async def error_and_fallback():
+            error_msg = "SerpAPI token is required to perform Web search. Defaulting to local results.\n\n"
+            yield error_msg
+
+            async for chunk in _stream_chat_response(request):
+                yield chunk
+
+        return StreamingResponse(error_and_fallback(), media_type="text/plain")
+
+    logger.info("Routing to chat skill '%s'", skill.name)
     
     async def event_generator():
         try:
-            # Initialize orchestrator
-            orchestrator = WebSearchOrchestrator()
-            
-            # Build conversation history from request if available
-            conversation_history = []
-            # Note: ChatRequestEnhanced currently only has 'message', not full history
-            # If history is needed, it would be added to the model
-            
-            # Process query through orchestrator with streaming
-            async for chunk in orchestrator.process_query(
-                query=request.message,
-                conversation_history=conversation_history,
-                stream=True
-            ):
+            async for chunk in skill.stream(request):
                 yield chunk + "\n"
                 
-        except Exception as e:
-            logger.error(f"Web search orchestrator error: {e}", exc_info=True)
-            yield f"Error during web search: {str(e)}\n"
+        except Exception:
+            logger.error("Chat skill '%s' failed", skill.name, exc_info=True)
+            yield "Error during web search.\n"
             yield "Falling back to local results...\n\n"
             
             # Fallback to standard chat
-            async for chunk in _stream_ollama_chat(request):
+            async for chunk in _stream_chat_response(request):
                 yield chunk + "\n"
     
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 
 async def _stream_web_search_chat(request: ChatRequestEnhanced):
-    """Stream web search chat responses (helper for streaming)"""
+    """Stream web search chat responses through the skill layer."""
     try:
-        # Initialize orchestrator
-        orchestrator = WebSearchOrchestrator()
-        
-        # Build conversation history from request if available
-        conversation_history = []
-        
-        # Process query through orchestrator with streaming
-        async for chunk in orchestrator.process_query(
-            query=request.message,
-            conversation_history=conversation_history,
-            stream=True
-        ):
+        skill = chat_skill_registry.resolve(request)
+        if skill is None:
+            async for chunk in _stream_chat_response(request):
+                yield chunk
+            return
+
+        validation = skill.validate(request)
+        if not validation.ok:
+            yield "SerpAPI token is required to perform Web search. Defaulting to local results.\n\n"
+            async for chunk in _stream_chat_response(request):
+                yield chunk
+            return
+
+        async for chunk in skill.stream(request):
             yield chunk
             
-    except Exception as e:
-        logger.error(f"Web search streaming error: {e}", exc_info=True)
-        yield f"Error during web search: {str(e)}\n"
+    except Exception:
+        logger.error("Web search streaming error", exc_info=True)
+        yield "Error during web search.\n"
         yield "Falling back to local results...\n\n"
         
         # Fallback to standard chat
-        async for chunk in _stream_ollama_chat(request):
+        async for chunk in _stream_chat_response(request):
             yield chunk

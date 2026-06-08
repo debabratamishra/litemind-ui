@@ -124,19 +124,33 @@ def _get_chat_config_from_session(page_key: str = "chat") -> dict:
     Args:
         page_key: The page key ("chat" or "rag") to determine appropriate model selection.
     """
-    backend_provider = "ollama"
+    backend_provider = st.session_state.get("current_backend", "ollama")
     temperature = st.session_state.get("chat_temperature", 0.7)
 
     # Use appropriate model key based on page
     if page_key == "rag":
-        model = st.session_state.get("selected_ollama_model", "default")
+        if backend_provider == "openrouter":
+            model = st.session_state.get("selected_openrouter_rag_model", "openai/gpt-4o-mini")
+        else:
+            model = st.session_state.get("selected_ollama_model", "default")
     else:
-        model = st.session_state.get("selected_chat_model", "default")
+        if backend_provider == "openrouter":
+            model = st.session_state.get("selected_openrouter_chat_model", "openai/gpt-4o-mini")
+        else:
+            model = st.session_state.get("selected_chat_model", "default")
+
+    api_base = None
+    api_key = None
+    if backend_provider == "openrouter":
+        api_base = (st.session_state.get("openrouter_api_base") or "").strip() or None
+        api_key = (st.session_state.get("openrouter_api_key") or "").strip() or None
 
     return {
         "backend": backend_provider,
         "model": model,
         "temperature": temperature,
+        "api_base": api_base,
+        "api_key": api_key,
     }
 
 
@@ -1345,6 +1359,8 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             use_multi_agent=config.get("use_multi_agent", False),
                             use_hybrid_search=config.get("use_hybrid_search", False),
                             backend=cfg["backend"],
+                            api_base=cfg.get("api_base"),
+                            api_key=cfg.get("api_key"),
                             placeholder=out,
                             tts_callback=tts_streaming_callback,
                             conversation_summary=conversation_summary,
@@ -1357,6 +1373,8 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             model=cfg["model"],
                             temperature=cfg["temperature"],
                             backend=cfg["backend"],
+                            api_base=cfg.get("api_base"),
+                            api_key=cfg.get("api_key"),
                             placeholder=out,
                             use_fastapi=st.session_state.get("backend_available", False),
                             tts_callback=tts_streaming_callback,

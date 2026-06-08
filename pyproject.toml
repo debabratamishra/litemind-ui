@@ -1,9 +1,9 @@
 [project]
 name = "litemind-ui"
-version = "0.1.0"
+version = "0.0.16"
 description = "LiteMindUI - A comprehensive AI assistant with RAG, web search, and multimodal capabilities"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 license = { text = "MIT" }
 dependencies = [
     # Shared core dependencies
@@ -17,6 +17,7 @@ backend = [
     # Shared core dependencies
     "python-dotenv",
     "psutil",
+    "litellm",
     
     # Core FastAPI
     "fastapi",
@@ -30,7 +31,6 @@ backend = [
     # RAG and ML
     "chromadb",
     "sentence-transformers",
-    "ollama",
     "rank-bm25",
     "huggingface-hub",
     "transformers",
@@ -119,6 +119,7 @@ backend = [
     # Shared core dependencies
     "python-dotenv",
     "psutil",
+    "litellm",
     
     # Core FastAPI
     "fastapi",
@@ -132,7 +133,6 @@ backend = [
     # RAG and ML
     "chromadb",
     "sentence-transformers",
-    "ollama",
     "rank-bm25",
     "huggingface-hub",
     "transformers",
@@ -222,6 +222,7 @@ all = [
     # Shared core dependencies
     "python-dotenv",
     "psutil",
+    "litellm",
     
     # Core FastAPI
     "fastapi",
@@ -235,7 +236,6 @@ all = [
     # RAG and ML
     "chromadb",
     "sentence-transformers",
-    "ollama",
     "rank-bm25",
     "huggingface-hub",
     "transformers",
@@ -308,7 +308,7 @@ includes = []
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
@@ -316,10 +316,10 @@ ignore = ["E501"]
 
 [tool.black]
 line-length = 120
-target-version = ["py312"]
+target-version = ["py313"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

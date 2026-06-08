@@ -71,20 +71,9 @@ class StreamlitApp:
     
     def render_sidebar_header(self):
         st.sidebar.markdown("# 🤖 LiteMindUI")
-        st.sidebar.markdown("---")
         
-        self.render_backend_selection()
         self.render_page_navigation()
         self.render_system_status()
-    
-    def render_backend_selection(self):
-        st.sidebar.subheader("Backend Provider")
-
-        if st.session_state.backend_available:
-            st.sidebar.info("🦙 Ollama Backend")
-            st.session_state.current_backend = "ollama"
-        else:
-            st.sidebar.info("🔴 FastAPI backend required for Ollama support")
     
     def render_page_navigation(self):
         st.sidebar.markdown("---")
@@ -102,7 +91,7 @@ class StreamlitApp:
             if st.session_state.page_selector_new != st.session_state.selected_page:
                 st.session_state.selected_page = st.session_state.page_selector_new
         
-        page = st.sidebar.selectbox(
+        st.sidebar.selectbox(
             "Navigate to:", 
             page_options,
             index=current_index,
@@ -114,11 +103,8 @@ class StreamlitApp:
         st.sidebar.markdown("---")
         st.sidebar.subheader("System Status")
         
-        is_docker = st.session_state.get("is_docker_deployment", False)
-        
         if st.session_state.backend_available:
             st.sidebar.success("✅ FastAPI Backend Connected")
-            st.sidebar.info("🦙 Ollama Mode Active")
         else:
             st.sidebar.warning("⚠️ Using Local Backend")
 

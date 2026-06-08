@@ -1,35 +1,34 @@
 """RAG service and CrewAI orchestration utilities.
 Provides ingestion, indexing, hybrid retrieval, and answer composition using ChromaDB,
-BM25, and an Ollama-backed LLM.
+BM25, and a configurable LiteLLM-backed LLM.
 """
-import chromadb
-from chromadb.utils import embedding_functions
-from chromadb.config import Settings
-from .ollama import stream_ollama
-import os
-import re
-import hashlib
-from config import Config
-from crewai import Agent, LLM
-import httpx
-import shutil
-import logging
 import asyncio
 import base64
-from rank_bm25 import BM25Okapi
-import string
-from typing import Any, Dict, List, Tuple
-import numpy as np
-from pathlib import Path
-from PIL import Image
 import gc
-import json
+import hashlib
 import importlib
-from typing import Optional
+import json
+import logging
+import os
+import re
+import shutil
+import string
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import chromadb
+import httpx
+import numpy as np
+from chromadb.config import Settings
+from chromadb.utils import embedding_functions
+from rank_bm25 import BM25Okapi
 
 from app.core.rag_formats import SUPPORTED_EXTENSIONS
 from app.ingestion.enhanced_extractors import process_images_enhanced
 from app.ingestion.file_ingest import get_ingestion_capabilities, ingest_file
+
+from .llm_gateway import resolve_backend_config, stream_completion
 
 # Configuration flags
 ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"
@@ -76,6 +75,29 @@ def _tokenize_text(text: str) -> List[str]:
         logger.info("Using regex tokenizer for BM25 preprocessing")
         _tokenizer_fallback_logged = True
     return re.findall(r"\b\w+\b", text)
+
+
+def _load_crewai_types() -> tuple[Any, Any]:
+    """Load CrewAI lazily so standard RAG remains available without it."""
+    try:
+        crewai = importlib.import_module("crewai")
+    except Exception as exc:
+        version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        raise RuntimeError(
+            "Multi-agent RAG requires a CrewAI build compatible with the current "
+            f"Python runtime. CrewAI is unavailable under Python {version} in this environment."
+        ) from exc
+
+    return crewai.Agent, crewai.LLM
+
+
+def multi_agent_rag_available() -> tuple[bool, str | None]:
+    """Return whether the CrewAI-backed RAG path is available in this runtime."""
+    try:
+        _load_crewai_types()
+        return True, None
+    except RuntimeError as exc:
+        return False, str(exc)
 
 def _flatten_metadata(meta, prefix=""):
     """Flatten a (possibly nested) metadata mapping into a single-level dict.
@@ -1377,8 +1399,8 @@ class RAGService:
         """RAG citations are disabled, so no footer is appended."""
         return ""
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=None, n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048, top_p: float = 0.9, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, is_voice_mode: bool = False):
-        """Answer a query using semantic or hybrid retrieval and stream model tokens via Ollama.
+    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=None, n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, backend: Optional[str] = "ollama", api_base: Optional[str] = None, api_key: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048, top_p: float = 0.9, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, is_voice_mode: bool = False):
+        """Answer a query using semantic or hybrid retrieval and stream model tokens.
         
         Args:
             query_text: The user's query
@@ -1388,6 +1410,9 @@ class RAGService:
             use_hybrid_search: Whether to use hybrid BM25 + semantic search
             model: Model name to use
             conversation_summary: Summary of earlier conversation for context
+            backend: Inference backend name (for example: ollama, openrouter)
+            api_base: Optional provider base URL override
+            api_key: Optional provider API key override
             temperature: Temperature for LLM response generation (0.0 to 1.0)
             max_tokens: Maximum number of tokens to generate
             top_p: Nucleus sampling parameter (0.0 to 1.0)
@@ -1396,7 +1421,6 @@ class RAGService:
             is_voice_mode: Whether this is voice mode (uses shorter, conversational responses)
         """
         messages = messages or []
-        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
         full_query = self.build_retrieval_query(query_text, messages)
         source_records = self.get_retrieval_records(full_query, n_results, use_hybrid_search)
 
@@ -1433,10 +1457,13 @@ class RAGService:
             "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
         })
         
-        async for chunk in stream_ollama(
-            llm_messages, 
-            model=model_name, 
-            temperature=temperature, 
+        async for chunk in stream_completion(
+            llm_messages,
+            backend=backend,
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            temperature=temperature,
             max_tokens=max_tokens,
             top_p=top_p,
             frequency_penalty=frequency_penalty,
@@ -1446,56 +1473,63 @@ class RAGService:
 
 
 class CrewAIRAGOrchestrator:
-    """Coordinates refined querying and answer composition using an Ollama-backed model."""
-    def __init__(self, rag_service: RAGService, model_name="gemma3:1b"):
-        """Configure the Ollama LLM, agent roles, and default context parameters."""
+    """Coordinates refined querying and answer composition using the selected backend."""
+    def __init__(
+        self,
+        rag_service: RAGService,
+        model_name: str = "gemma3:1b",
+        backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        """Configure the CrewAI LLM, agent roles, and default context parameters."""
+        Agent, LLM = _load_crewai_types()
         self.rag_service = rag_service
-        if not model_name.startswith("ollama/"):
-            model_name = f"ollama/{model_name}"
-        
-        self.ollama_llm = LLM(
-            provider="ollama",
+        self.llm_config = resolve_backend_config(
+            backend=backend,
             model=model_name,
-            api_base=self._get_ollama_url(),
+            api_base=api_base,
+            api_key=api_key,
+        )
+        self.backend = self.llm_config.backend
+        self.model_name = self.llm_config.model
+
+        agent_model = self.model_name
+        if self.backend == "ollama" and agent_model.startswith("ollama_chat/"):
+            agent_model = f"ollama/{agent_model[len('ollama_chat/') :]}"
+
+        self.agent_llm = LLM(
+            model=agent_model,
+            base_url=self.llm_config.api_base,
+            api_key=self.llm_config.api_key,
             temperature=0.0
         )
-        self.model_name = model_name
         self.context_length = 4096
         
         self.refiner = Agent(
             role="Query Refiner",
             goal="Clarify user questions for retrieval.",
             backstory="Understands intent of the prompt and rewrites prompts with more details.",
-            llm=self.ollama_llm
+            llm=self.agent_llm
         )
         self.composer = Agent(
             role="Answer Composer",
             goal="Craft final answers with citations.",
             backstory="Synthesises context into helpful replies.",
-            llm=self.ollama_llm
+            llm=self.agent_llm
         )
 
-    def _get_ollama_url(self) -> str:
-        """Get the appropriate Ollama URL based on execution environment."""
-        try:
-            from app.services.host_service_manager import host_service_manager
-            url = host_service_manager.environment_config.ollama_url
-            logger.debug(f"Using Ollama URL from host service manager: {url}")
-            return url
-        except ImportError:
-            logger.warning("Host service manager not available, using fallback config")
-            url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-            logger.debug(f"Using fallback Ollama URL: {url}")
-            return url
-
     async def _get_context_length(self, model_name: str) -> int:
-        """Query Ollama for the model's context length; fall back to a sensible default."""
-        model = model_name.replace("ollama/", "") if "ollama/" in model_name else model_name
+        """Query Ollama for context length when available; otherwise use a safe default."""
+        if self.backend != "ollama":
+            return 4096
+
+        model = model_name.replace("ollama_chat/", "").replace("ollama/", "")
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    f"{self._get_ollama_url()}/api/show",
+                    f"{self.llm_config.api_base}/api/show",
                     json={"name": model}
                 )
                 resp.raise_for_status()
@@ -1534,15 +1568,21 @@ class CrewAIRAGOrchestrator:
             return 4096
 
     async def _generate_summary(self, text: str, system_prompt: str) -> str:
-        """Generate a short summary for a text segment using the configured model."""
+        """Generate a short summary for a text segment using the configured backend."""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text}
         ]
         
-        model = self.model_name.replace("ollama/", "")
         response = ""
-        async for chunk in stream_ollama(messages, model=model):
+        async for chunk in stream_completion(
+            messages,
+            backend=self.backend,
+            model=self.model_name,
+            api_base=self.llm_config.api_base,
+            api_key=self.llm_config.api_key,
+            temperature=0.0,
+        ):
             response += chunk
         
         return response
@@ -1577,13 +1617,27 @@ class CrewAIRAGOrchestrator:
         combined = " ".join(summaries)
         return await self.summarize_context(combined, target_length)
 
-    async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False, model: Optional[str] = None):
+    async def query(
+        self,
+        user_query: str,
+        system_prompt: str,
+        messages=[],
+        n_results: int = 3,
+        use_hybrid_search: bool = False,
+        model: Optional[str] = None,
+        conversation_summary: Optional[str] = None,
+    ):
         """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
-        model_name = (model or os.getenv("DEFAULT_OLLAMA_MODEL", "gemma3:1b")).replace("ollama/","")
-        if self.context_length == 4096:
+        if self.backend == "ollama" and self.context_length == 4096:
             self.context_length = await self._get_context_length(self.model_name)
         
-        history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
+        history_parts = []
+        if conversation_summary:
+            history_parts.append(f"Summary of previous conversation:\n{conversation_summary}")
+        history_parts.extend(
+            f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'
+        )
+        history_context = "\n".join(history_parts)
         refine_prompt = (
             f"Previous conversation:\n{history_context}\n\n"
             "Refine the following user query so it is precise, self-contained and uses full nouns:\n\n"

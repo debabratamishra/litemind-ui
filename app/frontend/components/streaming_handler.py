@@ -6,10 +6,9 @@ import logging
 import requests
 from typing import Optional, Any, Callable, List, Dict
 
-from .text_renderer import StreamingRenderer, plain_text_renderer, web_search_renderer
+from .text_renderer import StreamingRenderer, web_search_renderer
 from ..services.chat_service import chat_service
 from ..services.rag_service import rag_service
-from ..utils.text_processing import normalize_plain_text_spacing, format_web_search_response
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +52,8 @@ class StreamingHandler:
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
         backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         placeholder: Optional[Any] = None,
         use_fastapi: bool = True,
         tts_callback: Optional[Callable[[str], None]] = None,
@@ -86,23 +87,18 @@ class StreamingHandler:
         
         try:
             if not use_fastapi:
-                # Local Ollama fallback with memory
-                return chat_service.stream_local_ollama_chat(
-                    message=message,
-                    model=model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=top_p,
-                    frequency_penalty=frequency_penalty,
-                    repetition_penalty=repetition_penalty,
-                    conversation_history=conversation_history,
-                    conversation_summary=conversation_summary
-                )
+                logger.error("Chat requires the FastAPI backend, but it is unavailable.")
+                if placeholder:
+                    placeholder.error("❌ FastAPI backend is required for chat. Please start the backend server.")
+                return None
             
             # FastAPI streaming with memory
             response = chat_service.stream_fastapi_chat(
                 message=message,
                 model=model,
+                backend=backend,
+                api_base=api_base,
+                api_key=api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 top_p=top_p,
@@ -138,6 +134,8 @@ class StreamingHandler:
         use_multi_agent: bool = False,
         use_hybrid_search: bool = False,
         backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         placeholder: Optional[Any] = None,
         tts_callback: Optional[Callable[[str], None]] = None,
         conversation_summary: Optional[str] = None,
@@ -182,6 +180,8 @@ class StreamingHandler:
                 use_multi_agent=use_multi_agent,
                 use_hybrid_search=use_hybrid_search,
                 backend=backend,
+                api_base=api_base,
+                api_key=api_key,
                 conversation_summary=conversation_summary,
                 session_id=session_id,
                 temperature=temperature,
@@ -215,34 +215,30 @@ class StreamingHandler:
         frequency_penalty: float = 0.0,
         repetition_penalty: float = 1.0,
         backend: str = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
         placeholder: Optional[Any] = None,
         use_fastapi: bool = True,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
         session_id: Optional[str] = None
     ) -> Optional[str]:
-        """Stream a web search response with raw LLM output (no formatting) and memory."""
+        """Stream a web search response with raw LLM output (no formatting) and memory.        """
         
         try:
             if not use_fastapi:
-                # Fallback to local Ollama chat if FastAPI not available
-                logger.warning("Web search requires FastAPI backend. Falling back to local chat.")
-                return chat_service.stream_local_ollama_chat(
-                    message=message,
-                    model=model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=top_p,
-                    frequency_penalty=frequency_penalty,
-                    repetition_penalty=repetition_penalty,
-                    conversation_history=conversation_history,
-                    conversation_summary=conversation_summary
-                )
+                logger.error("Web search requires the FastAPI backend, but it is unavailable.")
+                if placeholder:
+                    placeholder.error("❌ FastAPI backend is required for web search. Please start the backend server.")
+                return None
             
             # FastAPI web search streaming with memory
             response = chat_service.stream_web_search_chat(
                 message=message,
                 model=model,
+                backend=backend,
+                api_base=api_base,
+                api_key=api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 top_p=top_p,

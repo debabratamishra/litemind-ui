@@ -20,6 +20,8 @@ class ChatRequestEnhanced(BaseModel):
     frequency_penalty: Optional[float] = 0.0  # Penalize frequent tokens (-2.0 to 2.0)
     repetition_penalty: Optional[float] = 1.0  # Penalize repeated tokens (0.0 to 2.0)
     backend: Optional[str] = "ollama"
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
     use_web_search: Optional[bool] = False
     is_voice_mode: Optional[bool] = False  # True for voice agent, False for text agent
     enable_generative_ui: Optional[bool] = False
@@ -38,6 +40,8 @@ class RAGQueryRequestEnhanced(BaseModel):
     use_multi_agent: Optional[bool] = False
     use_hybrid_search: Optional[bool] = False
     backend: Optional[str] = "ollama"
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
     temperature: Optional[float] = 0.7  # Temperature for LLM response generation
     max_tokens: Optional[int] = 2048  # Maximum tokens for LLM response generation
     top_p: Optional[float] = 0.9  # Nucleus sampling parameter (0.0 to 1.0)
@@ -57,6 +61,9 @@ class ChatResponse(BaseModel):
 class RAGConfigRequest(BaseModel):
     provider: str
     embedding_model: str
+    embedding_backend: Optional[str] = None
+    embedding_api_base: Optional[str] = None
+    embedding_api_key: Optional[str] = None
     chunk_size: int
 
 
