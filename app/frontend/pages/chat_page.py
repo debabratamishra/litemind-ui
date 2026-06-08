@@ -417,7 +417,6 @@ class ChatPage:
             key="selected_openrouter_chat_model",
             help="Example: meta-llama/llama-3.3-70b-instruct or openai/gpt-4o-mini",
         )
-        st.sidebar.info("Cloud routing happens directly through the LiteLLM SDK using OpenRouter.")
     
     def _check_and_trigger_summarization(self):
         """Check if summarization is needed and trigger it."""
