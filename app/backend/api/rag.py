@@ -13,7 +13,8 @@ from app.backend.models.api_models import (
     UploadResponse, ResetResponse,
 )
 from app.backend.core.config import backend_config
-from app.backend.core.embeddings import create_embedding_function
+from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
+from app.skills import rag_skill_registry
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,12 @@ async def save_rag_config(request: RAGConfigRequest):
 
         # Save configuration
         config = backend_config.load_rag_config()
+        normalized_provider = resolve_embedding_provider(request.provider, request.embedding_backend)
         config.update({
-            "provider": request.provider,
+            "provider": normalized_provider,
             "embedding_model": request.embedding_model,
+            "embedding_backend": None,
+            "embedding_api_base": request.embedding_api_base if normalized_provider == "openrouter" else None,
             "chunk_size": int(request.chunk_size)
         })
         
@@ -77,9 +81,11 @@ async def save_rag_config(request: RAGConfigRequest):
 
         # Update embedding function
         rag_service.embedding_function = create_embedding_function(
-            request.provider, 
-            request.embedding_model, 
-            backend_config.get_ollama_url()
+            normalized_provider,
+            request.embedding_model,
+            backend_config.get_ollama_url(),
+            api_base=request.embedding_api_base,
+            api_key=request.embedding_api_key,
         )
         rag_service.default_chunk_size = int(request.chunk_size)
         
@@ -218,9 +224,13 @@ async def rag_query(request: RAGQueryRequestEnhanced):
     """Query RAG system"""
     try:
         from main import rag_service
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
 
         return await _handle_rag_query(request, rag_service)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"RAG query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -251,25 +261,14 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
 
 
 async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
-    """Handle a RAG query with conversation memory support."""
-    # Prepare messages with conversation summary if available
-    messages = request.messages.copy() if request.messages else []
-    
+    """Handle a RAG query through the registered RAG skill layer."""
+    skill = rag_skill_registry.resolve(request)
+    if skill is None:
+        raise HTTPException(status_code=400, detail="No compatible RAG skill found for request")
+
     async def event_generator():
-        async for chunk in rag_service.query(
-            request.query, request.system_prompt, messages,
-            request.n_results, request.use_hybrid_search, request.model,
-            conversation_summary=request.conversation_summary,
-            backend=request.backend,
-            api_base=request.api_base,
-            api_key=request.api_key,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            top_p=request.top_p,
-            frequency_penalty=request.frequency_penalty,
-            repetition_penalty=request.repetition_penalty,
-            is_voice_mode=request.is_voice_mode,
-        ):
+        logger.info("Routing RAG query through skill '%s'", skill.name)
+        async for chunk in skill.stream(request, rag_service):
             yield chunk + "\n"
 
     return StreamingResponse(event_generator(), media_type="text/plain")

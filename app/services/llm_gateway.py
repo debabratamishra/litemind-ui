@@ -102,7 +102,25 @@ def resolve_backend_config(
     resolved_backend = normalize_backend(backend)
     resolved_api_base = _resolve_api_base(resolved_backend, api_base)
     resolved_api_key = _resolve_api_key(resolved_backend, api_key)
-    resolved_model = _resolve_model_name(resolved_backend, model)
+    resolved_model = _resolve_model_name(resolved_backend, model, purpose="completion")
+    return ResolvedLLMConfig(
+        backend=resolved_backend,
+        model=resolved_model,
+        api_base=resolved_api_base,
+        api_key=resolved_api_key,
+    )
+
+
+def resolve_embedding_config(
+    backend: Optional[str],
+    model: Optional[str],
+    api_base: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> ResolvedLLMConfig:
+    resolved_backend = normalize_backend(backend)
+    resolved_api_base = _resolve_api_base(resolved_backend, api_base)
+    resolved_api_key = _resolve_api_key(resolved_backend, api_key)
+    resolved_model = _resolve_model_name(resolved_backend, model, purpose="embedding")
     return ResolvedLLMConfig(
         backend=resolved_backend,
         model=resolved_model,
@@ -229,7 +247,12 @@ def _resolve_api_key(backend: str, api_key: Optional[str]) -> Optional[str]:
     return None
 
 
-def _resolve_model_name(backend: str, model: Optional[str]) -> str:
+def _resolve_model_name(
+    backend: str,
+    model: Optional[str],
+    *,
+    purpose: str = "completion",
+) -> str:
     requested_model = (model or "").strip()
     if not requested_model or requested_model == "default":
         if backend == "ollama":
@@ -243,7 +266,8 @@ def _resolve_model_name(backend: str, model: Optional[str]) -> str:
 
     if backend == "ollama":
         stripped_model = _strip_known_prefix(requested_model, ("ollama_chat/", "ollama/"))
-        return f"ollama_chat/{stripped_model}"
+        prefix = "ollama/" if purpose == "embedding" else "ollama_chat/"
+        return f"{prefix}{stripped_model}"
 
     if backend == "openrouter":
         if requested_model.startswith("openrouter/"):

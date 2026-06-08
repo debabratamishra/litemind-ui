@@ -24,13 +24,14 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app.backend.api import chat as chat_api
+from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
 from app.backend.core.config import DEFAULT_RAG_CONFIG
 from app.backend.core.ollama_models import build_enhanced_model_payload
+from app.skills import rag_skill_registry
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
 from app.services.tts_service import get_tts_service, preload_tts_model
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from config import Config
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
 
@@ -99,6 +100,9 @@ class ChatResponse(BaseModel):
 class RAGConfigRequest(BaseModel):
     provider: str
     embedding_model: str
+    embedding_backend: Optional[str] = None
+    embedding_api_base: Optional[str] = None
+    embedding_api_key: Optional[str] = None
     chunk_size: int
 
 class STTRequest(BaseModel):
@@ -110,33 +114,6 @@ class TTSRequest(BaseModel):
     text: str
     voice: Optional[str] = None
     use_cache: Optional[bool] = True
-
-
-class LocalHFEmbeddingFunction:
-    """Local HuggingFace embedding function with batching"""
-
-    def __init__(self, model_name: str, device: str = None, batch_size: int = 64):
-        from sentence_transformers import SentenceTransformer
-        if device is None:
-            device = "cuda" if torch and torch.cuda.is_available() else "cpu"
-        self.model = SentenceTransformer(model_name, device=device)
-        self.batch_size = batch_size
-
-    def __call__(self, input):
-        texts = input
-        if isinstance(input, dict):
-            texts = input.get("input") or input.get("texts") or input.get("documents") or []
-        if not isinstance(texts, list):
-            texts = [str(texts)]
-
-        embs = self.model.encode(
-            texts,
-            batch_size=self.batch_size,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
-        return embs.tolist()
 
 
 # Configuration utilities
@@ -190,20 +167,26 @@ async def lifespan(app: FastAPI):
     # Restore configuration
     try:
         cfg = load_rag_config()
-        provider = str(cfg.get("provider", "huggingface")).lower()
+        configured_provider = str(cfg.get("provider", "huggingface"))
+        embedding_backend = cfg.get("embedding_backend")
+        provider = resolve_embedding_provider(configured_provider, embedding_backend)
         model_name = str(cfg.get("embedding_model", DEFAULT_RAG_CONFIG["embedding_model"]))
         chunk_size = int(cfg.get("chunk_size", DEFAULT_RAG_CONFIG["chunk_size"]))
 
-        if provider == "ollama":
-            rag_service.embedding_function = OllamaEmbeddingFunction(
-                model_name=model_name,
-                url=f"{config_info['ollama_url']}/api/embeddings",
-            )
-        else:
-            rag_service.embedding_function = LocalHFEmbeddingFunction(model_name=model_name)
+        rag_service.embedding_function = create_embedding_function(
+            provider,
+            model_name,
+            config_info["ollama_url"],
+            api_base=cfg.get("embedding_api_base"),
+        )
         
         rag_service.default_chunk_size = chunk_size
-        logger.info(f"RAG config restored: provider={provider}, model={model_name}")
+        logger.info(
+            "RAG config restored: provider=%s backend=%s model=%s",
+            provider,
+            embedding_backend,
+            model_name,
+        )
     except Exception as e:
         logger.warning(f"Failed to restore RAG config: {e}")
 
@@ -437,28 +420,31 @@ async def save_rag_config(request: RAGConfigRequest):
 
         # Save configuration
         cfg = load_rag_config()
+        normalized_provider = resolve_embedding_provider(request.provider, request.embedding_backend)
         cfg.update({
-            "provider": request.provider,
+            "provider": normalized_provider,
             "embedding_model": request.embedding_model,
+            "embedding_backend": None,
+            "embedding_api_base": request.embedding_api_base if normalized_provider == "openrouter" else None,
             "chunk_size": int(request.chunk_size)
         })
         save_rag_config_local(cfg)
 
-        if request.provider.lower() == "ollama":
-            current_config = Config.get_dynamic_config()
-            rag_service.embedding_function = OllamaEmbeddingFunction(
-                model_name=request.embedding_model,
-                url=f"{current_config['ollama_url']}/api/embeddings",
-            )
-        elif request.provider.lower() == "huggingface":
-            rag_service.embedding_function = LocalHFEmbeddingFunction(model_name=request.embedding_model)
-        else:
-            raise HTTPException(status_code=400, detail="Invalid provider")
+        current_config = Config.get_dynamic_config()
+        rag_service.embedding_function = create_embedding_function(
+            normalized_provider,
+            request.embedding_model,
+            current_config["ollama_url"],
+            api_base=request.embedding_api_base,
+            api_key=request.embedding_api_key,
+        )
 
         rag_service.default_chunk_size = int(request.chunk_size)
         
         return {"message": "Configuration saved successfully", "status": "success"}
 
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Save config error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save configuration: {str(e)}")
@@ -676,66 +662,20 @@ async def reset_rag_system():
 async def rag_query(request: RAGQueryRequestEnhanced):
     """Query RAG system"""
     try:
-        # Route through either the standard RAG path or the multi-agent orchestrator.
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        skill = rag_skill_registry.resolve(request)
+        if skill is None:
+            raise HTTPException(status_code=400, detail="No compatible RAG skill found for request")
+
         async def event_generator():
-            if request.use_multi_agent:
-                # Use CrewAI multi-agent orchestration
-                logger.info("Using CrewAI multi-agent orchestration")
-                try:
-                    from app.services.rag_service import CrewAIRAGOrchestrator
-
-                    orchestrator = CrewAIRAGOrchestrator(
-                        rag_service=rag_service,
-                        model_name=request.model or "gemma3:1b",
-                        backend=request.backend,
-                        api_base=request.api_base,
-                        api_key=request.api_key,
-                    )
-
-                    async for chunk in orchestrator.query(
-                        user_query=request.query,
-                        system_prompt=request.system_prompt,
-                        messages=request.messages,
-                        n_results=request.n_results,
-                        use_hybrid_search=request.use_hybrid_search,
-                        model=request.model
-                    ):
-                        yield chunk + "\n"
-                    return
-                except RuntimeError as exc:
-                    logger.warning(
-                        "Multi-agent RAG unavailable, falling back to standard RAG: %s",
-                        exc,
-                    )
-                    yield (
-                        "Multi-agent orchestration is not available in this Python "
-                        f"{sys.version_info.major}.{sys.version_info.minor} environment. "
-                        "Falling back to standard RAG.\n\n"
-                    )
-            # Use regular RAG
-            logger.info("Using standard RAG without multi-agent orchestration")
-            async for chunk in rag_service.query(
-                request.query,
-                request.system_prompt,
-                request.messages,
-                request.n_results,
-                request.use_hybrid_search,
-                request.model,
-                conversation_summary=request.conversation_summary,
-                backend=request.backend,
-                api_base=request.api_base,
-                api_key=request.api_key,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                top_p=request.top_p,
-                frequency_penalty=request.frequency_penalty,
-                repetition_penalty=request.repetition_penalty,
-                is_voice_mode=request.is_voice_mode,
-            ):
+            logger.info("Routing RAG query through skill '%s'", skill.name)
+            async for chunk in skill.stream(request, rag_service):
                 yield chunk + "\n"
-
         return StreamingResponse(event_generator(), media_type="text/plain")
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"RAG query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

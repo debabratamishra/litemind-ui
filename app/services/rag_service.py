@@ -90,6 +90,15 @@ def _load_crewai_types() -> tuple[Any, Any]:
 
     return crewai.Agent, crewai.LLM
 
+
+def multi_agent_rag_available() -> tuple[bool, str | None]:
+    """Return whether the CrewAI-backed RAG path is available in this runtime."""
+    try:
+        _load_crewai_types()
+        return True, None
+    except RuntimeError as exc:
+        return False, str(exc)
+
 def _flatten_metadata(meta, prefix=""):
     """Flatten a (possibly nested) metadata mapping into a single-level dict.
     Nested keys are joined with underscores. Iterables are JSON-encoded when possible.
@@ -1608,12 +1617,27 @@ class CrewAIRAGOrchestrator:
         combined = " ".join(summaries)
         return await self.summarize_context(combined, target_length)
 
-    async def query(self, user_query: str, system_prompt: str, messages=[], n_results: int = 3, use_hybrid_search: bool = False, model: Optional[str] = None):
+    async def query(
+        self,
+        user_query: str,
+        system_prompt: str,
+        messages=[],
+        n_results: int = 3,
+        use_hybrid_search: bool = False,
+        model: Optional[str] = None,
+        conversation_summary: Optional[str] = None,
+    ):
         """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
         if self.backend == "ollama" and self.context_length == 4096:
             self.context_length = await self._get_context_length(self.model_name)
         
-        history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'])
+        history_parts = []
+        if conversation_summary:
+            history_parts.append(f"Summary of previous conversation:\n{conversation_summary}")
+        history_parts.extend(
+            f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'
+        )
+        history_context = "\n".join(history_parts)
         refine_prompt = (
             f"Previous conversation:\n{history_context}\n\n"
             "Refine the following user query so it is precise, self-contained and uses full nouns:\n\n"

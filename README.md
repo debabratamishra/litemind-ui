@@ -77,6 +77,7 @@ app/
   frontend/     Streamlit pages, components, and UI helpers
   ingestion/    document ingestion and knowledge-processing flow
   services/     model, RAG, speech, and web-search integrations
+  skills/       pluggable chat and RAG capability layer (web search and RAG strategies use it)
 scripts/        setup, Docker, release, and health-check helpers
 docs/           deeper documentation and docs assets
 main.py         backend entrypoint
@@ -97,4 +98,5 @@ docker-compose*.yml supported container workflows
 
 - Ollama should be reachable at `http://localhost:11434` for native runs and `http://host.docker.internal:11434` from containers unless you override `OLLAMA_API_URL`.
 - The frontend depends on the FastAPI backend for chat, RAG, and web search features.
+- RAG embeddings can use direct Ollama/HuggingFace integrations or OpenRouter via the existing LiteLLM transport.
 - For production-like deployments, prefer the compose workflows over ad hoc process startup.

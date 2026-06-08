@@ -274,15 +274,15 @@ def render_backend_selector() -> str:
             "OpenRouter model ids can be entered as provider/model. The app prefixes openrouter/ automatically."
         )
         st.sidebar.text_input(
+            "OpenRouter API Base",
+            key="openrouter_api_base",
+            help="Defaults to https://openrouter.ai/api/v1",
+        )
+        st.sidebar.text_input(
             "OpenRouter API Key",
             key="openrouter_api_key",
             type="password",
             help="Optional if the FastAPI backend already has OPENROUTER_API_KEY configured.",
-        )
-        st.sidebar.text_input(
-            "OpenRouter API Base",
-            key="openrouter_api_base",
-            help="Defaults to https://openrouter.ai/api/v1",
         )
 
     return backend

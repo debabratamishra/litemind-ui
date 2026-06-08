@@ -61,6 +61,9 @@ class ChatResponse(BaseModel):
 class RAGConfigRequest(BaseModel):
     provider: str
     embedding_model: str
+    embedding_backend: Optional[str] = None
+    embedding_api_base: Optional[str] = None
+    embedding_api_key: Optional[str] = None
     chunk_size: int
 
 

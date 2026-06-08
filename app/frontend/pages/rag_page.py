@@ -10,6 +10,7 @@ from ..components.text_renderer import render_llm_text
 from ..components.streaming_handler import streaming_handler
 from ..components.conversation_sidebar import get_rag_sidebar
 from ..components.shared_ui import (
+    OPENROUTER_DEFAULT_API_BASE,
     render_memory_indicator,
     render_generation_settings,
     render_reasoning_config,
@@ -495,26 +496,84 @@ class RAGPage:
     
     def _render_sidebar_rag_config(self):
         """Render RAG configuration options in sidebar."""
+        provider_options = ["Ollama", "HuggingFace", "OpenRouter"]
+        current_provider = st.session_state.rag_config.get("provider", "Ollama")
+        if current_provider == "LiteLLM":
+            current_provider = (
+                "OpenRouter"
+                if st.session_state.rag_config.get("embedding_backend") == "openrouter"
+                else "Ollama"
+            )
         provider = st.sidebar.selectbox(
             "Embedding Provider:",
-            ["Ollama", "HuggingFace"],
-            index=0,
-            help="Provider used for document embeddings",
+            provider_options,
+            index=provider_options.index(current_provider) if current_provider in provider_options else 0,
+            help="Provider used for document embeddings. OpenRouter embeddings use the same backend routing style as inference.",
         )
 
         if provider == "Ollama":
             available_models = backend_service.get_available_models()
             embedding_models = [m for m in available_models if "embed" in m.lower()] or available_models
+            current_model = st.session_state.rag_config.get("embedding_model")
+            default_index = embedding_models.index(current_model) if current_model in embedding_models else 0
             embedding_model = st.sidebar.selectbox(
                 "Ollama Embedding Model:",
                 embedding_models,
+                index=default_index,
                 help="Select an embedding model from your Ollama installation",
             )
-        else:
+            embedding_backend = "ollama"
+            embedding_api_base = None
+            embedding_api_key = None
+        elif provider == "HuggingFace":
             embedding_model = st.sidebar.text_input(
                 "HuggingFace Model Repo:",
-                value="sentence-transformers/all-MiniLM-L6-v2",
+                value=st.session_state.rag_config.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2"),
                 help="Enter a HuggingFace model repository path",
+            )
+            embedding_backend = None
+            embedding_api_base = None
+            embedding_api_key = None
+        else:
+            st.session_state.setdefault(
+                "embedding_openrouter_api_key",
+                st.session_state.get("openrouter_api_key", ""),
+            )
+            st.session_state.setdefault(
+                "embedding_openrouter_api_base",
+                st.session_state.get("openrouter_api_base", OPENROUTER_DEFAULT_API_BASE),
+            )
+            openrouter_embedding_model = (
+                st.session_state.rag_config.get("embedding_model", "")
+                if current_provider == "OpenRouter"
+                else ""
+            )
+            embedding_backend = None
+            st.sidebar.text_input(
+                "OpenRouter Embedding API Base",
+                key="embedding_openrouter_api_base",
+                help="Defaults to https://openrouter.ai/api/v1",
+            )
+            st.sidebar.text_input(
+                "OpenRouter Embedding API Key",
+                key="embedding_openrouter_api_key",
+                type="password",
+                help="Optional if the FastAPI backend already has OPENROUTER_API_KEY configured.",
+            )
+            embedding_model = st.sidebar.text_input(
+                "OpenRouter Embedding Model:",
+                value=openrouter_embedding_model,
+                help="Example: openai/text-embedding-3-small",
+            )
+            embedding_api_key = (
+                (st.session_state.get("embedding_openrouter_api_key") or "").strip()
+                or (st.session_state.get("openrouter_api_key") or "").strip()
+                or None
+            )
+            embedding_api_base = (
+                (st.session_state.get("embedding_openrouter_api_base") or "").strip()
+                or (st.session_state.get("openrouter_api_base") or "").strip()
+                or OPENROUTER_DEFAULT_API_BASE
             )
 
         chunk_size = st.sidebar.number_input(
@@ -552,6 +611,9 @@ class RAGPage:
             success, message = rag_service.save_configuration(
                 provider=provider,
                 embedding_model=embedding_model,
+                embedding_backend=embedding_backend,
+                embedding_api_base=embedding_api_base,
+                embedding_api_key=embedding_api_key,
                 chunk_size=chunk_size
             )
             st.session_state.config_saved = success
