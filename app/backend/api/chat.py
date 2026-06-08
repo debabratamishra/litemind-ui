@@ -385,11 +385,11 @@ async def get_serp_token_status():
                 message=validation["message"]
             )
             
-    except Exception as e:
-        logger.error(f"Error checking SerpAPI token status: {e}")
+    except Exception:
+        logger.error("Error checking SerpAPI token status", exc_info=True)
         return SerpTokenStatus(
             status="error",
-            message=f"Error checking token status: {str(e)}"
+            message="Error checking token status."
         )
 
 
@@ -422,9 +422,9 @@ async def _handle_web_search_chat(request: ChatRequestEnhanced):
             async for chunk in skill.stream(request):
                 yield chunk + "\n"
                 
-        except Exception as e:
-            logger.error("Chat skill '%s' failed: %s", skill.name, e, exc_info=True)
-            yield f"Error during web search: {str(e)}\n"
+        except Exception:
+            logger.error("Chat skill '%s' failed", skill.name, exc_info=True)
+            yield "Error during web search.\n"
             yield "Falling back to local results...\n\n"
             
             # Fallback to standard chat
@@ -453,9 +453,9 @@ async def _stream_web_search_chat(request: ChatRequestEnhanced):
         async for chunk in skill.stream(request):
             yield chunk
             
-    except Exception as e:
-        logger.error(f"Web search streaming error: {e}", exc_info=True)
-        yield f"Error during web search: {str(e)}\n"
+    except Exception:
+        logger.error("Web search streaming error", exc_info=True)
+        yield "Error during web search.\n"
         yield "Falling back to local results...\n\n"
         
         # Fallback to standard chat

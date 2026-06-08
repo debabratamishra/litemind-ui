@@ -151,7 +151,8 @@ async def stream_completion(
             api_key=api_key,
         )
     except LLMGatewayConfigurationError as exc:
-        yield f"*{exc}*"
+        logger.warning("LLM configuration error while preparing stream completion", exc_info=True)
+        yield "*Unable to process request with current model configuration.*"
         return
 
     kwargs: dict[str, Any] = {
