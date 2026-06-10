@@ -827,7 +827,7 @@ async def get_stt_status():
         return speech_service.get_status()
     except Exception as e:
         logger.error(f"Failed to get STT status: {e}")
-        return {"available": False, "error": str(e)}
+        return {"available": False, "error": "Unable to retrieve STT status"}
 
 
 # Utility functions
