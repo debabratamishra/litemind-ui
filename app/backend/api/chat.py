@@ -352,11 +352,10 @@ async def chat_web_search(request: ChatRequestEnhanced):
     except Exception as e:
         logger.error(f"Web search endpoint error: {e}", exc_info=True)
         logger.info("Falling back to standard chat due to error")
-        error_text = str(e)
         
         # Fallback to standard chat on any error
         async def error_fallback():
-            error_msg = f"Web search error: {error_text}. Defaulting to local results.\n\n"
+            error_msg = "Web search is temporarily unavailable. Defaulting to local results.\n\n"
             yield error_msg
             
             async for chunk in _stream_chat_response(request):
