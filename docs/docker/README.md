@@ -75,7 +75,7 @@ The Docker setup uses repository-local runtime directories so data survives cont
 ## Provider notes
 
 - Native Ollama should usually be exposed to containers through `http://host.docker.internal:11434`.
-- Override provider settings in `.env` when you want to switch from Ollama to OpenRouter or another compatible endpoint.
+- Override provider settings in `.env` when you want to switch from Ollama to OpenRouter, Nvidia NIM, or another compatible endpoint.
 - The Streamlit frontend depends on the FastAPI backend, so both services should stay up together.
 
 ## Troubleshooting

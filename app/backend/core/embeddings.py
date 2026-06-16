@@ -124,11 +124,11 @@ def resolve_embedding_provider(provider: str, embedding_backend: str | None = No
 
     if resolved_provider == "litellm":
         resolved_backend = (embedding_backend or "ollama").lower().strip()
-        if resolved_backend in {"ollama", "openrouter"}:
+        if resolved_backend in {"ollama", "openrouter", "nvidia_nim"}:
             return resolved_backend
         raise ValueError(f"Unsupported LiteLLM embedding backend: {resolved_backend}")
 
-    if resolved_provider in {"ollama", "huggingface", "openrouter"}:
+    if resolved_provider in {"ollama", "huggingface", "openrouter", "nvidia_nim"}:
         return resolved_provider
 
     raise ValueError(f"Unsupported provider: {provider}")
@@ -158,6 +158,13 @@ def create_embedding_function(
     elif provider == "openrouter":
         return LiteLLMEmbeddingFunction(
             backend="openrouter",
+            model_name=model_name,
+            api_base=api_base,
+            api_key=api_key,
+        )
+    elif provider == "nvidia_nim":
+        return LiteLLMEmbeddingFunction(
+            backend="nvidia_nim",
             model_name=model_name,
             api_base=api_base,
             api_key=api_key,

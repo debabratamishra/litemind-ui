@@ -29,8 +29,7 @@ def build_web_search_conversation_history(
 
     if request.conversation_history:
         conversation_history.extend(
-            {"role": message.role, "content": message.content}
-            for message in request.conversation_history
+            {"role": message.role, "content": message.content} for message in request.conversation_history
         )
 
     return conversation_history

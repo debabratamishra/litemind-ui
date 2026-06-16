@@ -24,18 +24,23 @@ import queue
 import re
 import threading
 import time
-import concurrent.futures
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple, List, Callable
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 import requests
 import streamlit as st
 
-from ..config import FASTAPI_URL
+from ..components.shared_ui import (
+    get_backend_request_config,
+    get_default_model_for_backend,
+    get_generation_config_from_session,
+    is_hosted_backend,
+)
 from ..components.streaming_handler import streaming_handler
-from ..utils.memory_manager import ChatMemoryManager, RAGMemoryManager
+from ..config import FASTAPI_URL
 from ..services.backend_service import backend_service
+from ..utils.memory_manager import ChatMemoryManager, RAGMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +49,11 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ============================================================================
 
+
 @dataclass
 class _VadConfig:
     """Configuration for webrtcvad fallback."""
+
     aggressiveness: int = 2
     frame_ms: int = 20
     silence_frames_to_finalize: int = 40  # ~800ms at 20ms frames (increased from 15)
@@ -56,6 +63,7 @@ class _VadConfig:
 @dataclass
 class _PipecatConfig:
     """Configuration for Pipecat VAD."""
+
     frame_ms: int = 20
     segment_sample_rate: int = 16000
     pre_roll_ms: int = 200
@@ -67,7 +75,7 @@ class _PipecatConfig:
 
 
 # Sentence-ending punctuation for streaming TTS
-SENTENCE_ENDINGS = re.compile(r'[.!?;:]\s*')
+SENTENCE_ENDINGS = re.compile(r"[.!?;:]\s*")
 MIN_TTS_CHUNK_SIZE = 15  # Reduced for faster first audio (was 30)
 
 # Greeting message for when realtime voice starts
@@ -85,9 +93,11 @@ GREETING_CACHE_KEY = "realtime_greeting_audio_cached"
 # Utility Functions
 # ============================================================================
 
+
 def _pcm16_to_wav_bytes(pcm16: bytes, sample_rate: int, channels: int = 1) -> bytes:
     """Convert raw PCM16 bytes to WAV format."""
     import wave
+
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(channels)
@@ -106,10 +116,10 @@ def _get_realtime_greeting(page_key: str) -> str:
 
 def _get_memory_manager(page_key: str):
     """Get the appropriate memory manager based on page type.
-    
+
     Args:
         page_key: Either "chat" or "rag"
-        
+
     Returns:
         The appropriate memory manager instance (ChatMemoryManager or RAGMemoryManager)
     """
@@ -120,37 +130,39 @@ def _get_memory_manager(page_key: str):
 
 def _get_chat_config_from_session(page_key: str = "chat") -> dict:
     """Extract chat configuration from session state.
-    
+
     Args:
         page_key: The page key ("chat" or "rag") to determine appropriate model selection.
     """
     backend_provider = st.session_state.get("current_backend", "ollama")
-    temperature = st.session_state.get("chat_temperature", 0.7)
+    generation_config = get_generation_config_from_session(page_key)
 
     # Use appropriate model key based on page
     if page_key == "rag":
-        if backend_provider == "openrouter":
-            model = st.session_state.get("selected_openrouter_rag_model", "openai/gpt-4o-mini")
+        if is_hosted_backend(backend_provider):
+            model = st.session_state.get(
+                f"selected_{backend_provider}_rag_model",
+                get_default_model_for_backend(backend_provider),
+            )
         else:
             model = st.session_state.get("selected_ollama_model", "default")
     else:
-        if backend_provider == "openrouter":
-            model = st.session_state.get("selected_openrouter_chat_model", "openai/gpt-4o-mini")
+        if is_hosted_backend(backend_provider):
+            model = st.session_state.get(
+                f"selected_{backend_provider}_chat_model",
+                get_default_model_for_backend(backend_provider),
+            )
         else:
             model = st.session_state.get("selected_chat_model", "default")
 
-    api_base = None
-    api_key = None
-    if backend_provider == "openrouter":
-        api_base = (st.session_state.get("openrouter_api_base") or "").strip() or None
-        api_key = (st.session_state.get("openrouter_api_key") or "").strip() or None
+    backend_request = get_backend_request_config(backend_provider)
 
     return {
         "backend": backend_provider,
         "model": model,
-        "temperature": temperature,
-        "api_base": api_base,
-        "api_key": api_key,
+        **generation_config,
+        "api_base": backend_request.get("api_base"),
+        "api_key": backend_request.get("api_key"),
     }
 
 
@@ -161,9 +173,7 @@ def _get_messages_key(page_key: str) -> str:
     return "chat_messages"
 
 
-def _decode_audio_bytes_to_pcm16_mono(
-    audio_bytes: bytes, *, target_sample_rate: int
-) -> Tuple[bytes, int]:
+def _decode_audio_bytes_to_pcm16_mono(audio_bytes: bytes, *, target_sample_rate: int) -> Tuple[bytes, int]:
     """Decode common audio formats (mp3/wav) into PCM16 mono at target_sample_rate."""
     try:
         import av
@@ -213,16 +223,17 @@ def _decode_audio_bytes_to_pcm16_mono(
 # Streaming TTS Handler
 # ============================================================================
 
+
 class StreamingTTSHandler:
     """
     Handles streaming TTS synthesis alongside streaming LLM responses.
-    
+
     This class buffers incoming text and synthesizes audio sentence-by-sentence
     to reduce time-to-first-audio latency. Uses a background thread with an
     ordered queue to ensure audio chunks are synthesized and queued in order.
     Supports interruption for barge-in scenarios.
     """
-    
+
     def __init__(self, audio_queue: queue.Queue, target_sample_rate: int = 48000):
         self._buffer = ""
         self._audio_queue = audio_queue  # Output queue for audio chunks
@@ -230,45 +241,46 @@ class StreamingTTSHandler:
         self._synthesized_sentences: List[str] = []
         self._interrupted = threading.Event()  # Flag to stop synthesis on interruption
         self._full_text = ""  # Track complete text for saving
-        
+
         # Ordered synthesis queue - sentences are synthesized in order
         self._sentence_queue: queue.Queue[Optional[str]] = queue.Queue()
         self._synthesis_thread: Optional[threading.Thread] = None
         self._shutdown = threading.Event()
-        
+
         # Start the background synthesis thread
         self._start_synthesis_thread()
-    
+
     def _start_synthesis_thread(self) -> None:
         """Start the background thread that synthesizes sentences in order."""
+
         def synthesis_worker():
             while not self._shutdown.is_set():
                 try:
                     # Wait for next sentence with timeout
                     sentence = self._sentence_queue.get(timeout=0.1)
-                    
+
                     if sentence is None:  # Shutdown signal
                         break
-                    
+
                     if self._interrupted.is_set():
                         continue  # Skip if interrupted
-                    
+
                     # Synthesize this sentence (blocking, maintains order)
                     self._synthesize_sentence(sentence)
-                    
+
                 except queue.Empty:
                     continue  # Keep waiting
                 except Exception as e:
                     logger.debug(f"Synthesis worker error: {e}")
-        
+
         self._synthesis_thread = threading.Thread(target=synthesis_worker, daemon=True)
         self._synthesis_thread.start()
-    
+
     def _synthesize_sentence(self, text: str) -> None:
         """Synthesize a single sentence and add to audio queue (called from worker thread)."""
         if self._interrupted.is_set() or not text:
             return
-            
+
         try:
             # Use the chunk synthesis endpoint for lower latency
             resp = requests.post(
@@ -276,11 +288,11 @@ class StreamingTTSHandler:
                 json={"text": text, "voice": None},
                 timeout=30,
             )
-            
+
             # Check again after network request
             if self._interrupted.is_set():
                 return
-            
+
             if resp.status_code == 200 and resp.content:
                 pcm_out, _ = _decode_audio_bytes_to_pcm16_mono(
                     resp.content, target_sample_rate=self._target_sample_rate
@@ -292,54 +304,54 @@ class StreamingTTSHandler:
                 logger.warning(f"TTS chunk synthesis failed: {resp.status_code}")
         except Exception as e:
             logger.error(f"TTS chunk error: {e}")
-    
+
     def interrupt(self) -> None:
         """
         Signal that synthesis should stop (barge-in occurred).
         Clears pending work and prevents new synthesis.
         """
         self._interrupted.set()
-        
+
         # Clear the sentence queue
         while True:
             try:
                 self._sentence_queue.get_nowait()
             except queue.Empty:
                 break
-        
+
         # Clear the audio queue
         while True:
             try:
                 self._audio_queue.get_nowait()
             except queue.Empty:
                 break
-        
+
         self._buffer = ""
         logger.debug("StreamingTTSHandler interrupted")
-    
+
     def is_interrupted(self) -> bool:
         """Check if synthesis has been interrupted."""
         return self._interrupted.is_set()
-    
+
     def get_full_text(self) -> str:
         """Get the complete text that was fed to the handler."""
         return self._full_text
-    
+
     def feed(self, text_chunk: str) -> None:
         """
         Feed a text chunk from the LLM stream.
-        
+
         Automatically queues complete sentences for synthesis in order.
         """
         if not text_chunk or self._interrupted.is_set():
             return
-        
+
         self._buffer += text_chunk
         self._full_text += text_chunk  # Track for saving
-        
+
         # Check for complete sentences
         sentences = SENTENCE_ENDINGS.split(self._buffer)
-        
+
         if len(sentences) > 1:
             # Queue all complete sentences for synthesis (in order)
             for sentence in sentences[:-1]:
@@ -349,21 +361,21 @@ class StreamingTTSHandler:
                 if sentence and len(sentence) >= MIN_TTS_CHUNK_SIZE:
                     self._sentence_queue.put(sentence)
                     self._synthesized_sentences.append(sentence)
-            
+
             # Keep the incomplete sentence in buffer
             self._buffer = sentences[-1]
-    
+
     def finalize(self) -> None:
         """Synthesize any remaining text in the buffer and wait for completion."""
         if self._interrupted.is_set():
             return
-            
+
         if self._buffer.strip():
             # Queue final chunk
             self._sentence_queue.put(self._buffer.strip())
             self._synthesized_sentences.append(self._buffer.strip())
             self._buffer = ""
-        
+
         # Wait for synthesis queue to drain (with timeout)
         timeout = 30.0  # Max wait time
         start_time = time.time()
@@ -371,13 +383,13 @@ class StreamingTTSHandler:
             if self._interrupted.is_set():
                 break
             time.sleep(0.1)
-    
+
     def shutdown(self) -> None:
         """Shutdown the synthesis thread."""
         self._interrupted.set()
         self._shutdown.set()
         self._sentence_queue.put(None)  # Signal worker to exit
-        
+
         if self._synthesis_thread and self._synthesis_thread.is_alive():
             self._synthesis_thread.join(timeout=2.0)
 
@@ -419,16 +431,16 @@ def _synthesize_and_play(text: str, voice: Optional[str] = None) -> None:
 def _get_or_cache_greeting_audio(page_key: str = "chat") -> Optional[bytes]:
     """
     Get cached greeting audio or synthesize and cache it.
-    
+
     This pre-caches the greeting audio to eliminate TTS latency on startup.
     Uses a thread-safe cache to avoid ScriptRunContext warnings from background threads.
-    
+
     Args:
         page_key: The page key ("chat" or "rag") to determine appropriate greeting.
     """
     cache_key = f"greeting_{page_key}"
     greeting_text = _get_realtime_greeting(page_key)
-    
+
     # Check thread-safe cache first
     with _greeting_cache_lock:
         if cache_key in _greeting_audio_cache:
@@ -436,7 +448,7 @@ def _get_or_cache_greeting_audio(page_key: str = "chat") -> Optional[bytes]:
             if cached:
                 logger.debug(f"Using cached greeting audio for {page_key}")
                 return cached
-    
+
     # Synthesize greeting audio
     try:
         logger.info(f"Synthesizing greeting audio for {page_key}...")
@@ -455,54 +467,52 @@ def _get_or_cache_greeting_audio(page_key: str = "chat") -> Optional[bytes]:
             logger.warning(f"Failed to synthesize greeting: {resp.status_code}")
     except Exception as e:
         logger.error(f"Error caching greeting audio: {e}")
-    
+
     return None
 
 
 def _play_greeting_via_webrtc(audio_processor, audio_bytes: bytes, target_sr: int = 48000) -> bool:
     """
     Play greeting audio through WebRTC audio processor.
-    
+
     Returns True if successful.
     """
     if not audio_bytes or not hasattr(audio_processor, "enqueue_assistant_pcm16"):
         return False
-    
+
     try:
-        pcm_out, _ = _decode_audio_bytes_to_pcm16_mono(
-            audio_bytes, target_sample_rate=target_sr
-        )
+        pcm_out, _ = _decode_audio_bytes_to_pcm16_mono(audio_bytes, target_sample_rate=target_sr)
         if pcm_out:
             audio_processor.enqueue_assistant_pcm16(pcm_out)
             logger.info("Greeting audio enqueued for playback")
             return True
     except Exception as e:
         logger.error(f"Failed to play greeting via WebRTC: {e}")
-    
+
     return False
 
 
 def _play_greeting_via_audio_widget(audio_bytes: bytes) -> bool:
     """
     Play greeting audio using st.audio widget as fallback.
-    
+
     Returns True if successful.
     """
     if not audio_bytes:
         return False
-    
+
     try:
         # Detect format from content
         fmt = "audio/mp3"
-        if audio_bytes[:4] == b'RIFF':
+        if audio_bytes[:4] == b"RIFF":
             fmt = "audio/wav"
-        
+
         st.audio(io.BytesIO(audio_bytes), format=fmt, autoplay=True)
         logger.info("Greeting played via audio widget")
         return True
     except Exception as e:
         logger.error(f"Failed to play greeting via audio widget: {e}")
-    
+
     return False
 
 
@@ -510,9 +520,10 @@ def _play_greeting_via_audio_widget(audio_bytes: bytes) -> bool:
 # Audio Output Queue (for barge-in support)
 # ============================================================================
 
+
 class _InterruptibleAudioOut:
     """Thread-safe audio output queue that supports interruption (barge-in)."""
-    
+
     def __init__(self) -> None:
         self._q: queue.Queue[bytes] = queue.Queue()
         self._buf = bytearray()
@@ -591,6 +602,7 @@ class _InterruptibleAudioOut:
 # Main Render Function
 # ============================================================================
 
+
 def render_realtime_voice_chat(page_key: str = "chat") -> None:
     """Render realtime voice chat UI.
 
@@ -599,7 +611,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     """
     realtime_mode_key = f"realtime_voice_mode_{page_key}"
     initializing_key = f"realtime_initializing_{page_key}"
-    
+
     # Handle first-time initialization with a loading state
     # This gives the WebRTC component time to load its JavaScript assets
     if st.session_state.get(initializing_key, False):
@@ -611,12 +623,11 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
 
     # Check for required packages
     try:
-        from streamlit_webrtc import AudioProcessorBase, WebRtcMode, webrtc_streamer
         import av
+        from streamlit_webrtc import AudioProcessorBase, WebRtcMode, webrtc_streamer
     except ImportError as e:
         st.warning(
-            "Realtime voice chat requires additional packages. "
-            "Install `streamlit-webrtc` and `av` in your environment."
+            "Realtime voice chat requires additional packages. Install `streamlit-webrtc` and `av` in your environment."
         )
         st.code(str(e))
         return
@@ -624,6 +635,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     # Check for webrtcvad (fallback)
     try:
         import webrtcvad
+
         _WEBRTCVAD_AVAILABLE = True
     except ImportError:
         webrtcvad = None
@@ -634,6 +646,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     try:
         from pipecat.audio.vad.silero import SileroVADAnalyzer
         from pipecat.audio.vad.vad_analyzer import VADParams, VADState
+
         _PIPECAT_AVAILABLE = True
     except ImportError:
         SileroVADAnalyzer = None
@@ -650,7 +663,8 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     pipecat_cfg = _PipecatConfig()
 
     # CSS for the modern circle UI
-    st.markdown("""
+    st.markdown(
+        """
         <style>
         .voice-container {
             display: flex;
@@ -689,7 +703,9 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             color: #888;
         }
         </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     # Close button
     col_spacer, col_close = st.columns([10, 1])
@@ -698,68 +714,72 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             # Save any ongoing partial response before closing
             active_tts_key = f"active_tts_handler_{page_key}"
             messages_key = _get_messages_key(page_key)
-            
+
             if active_tts_key in st.session_state and st.session_state[active_tts_key]:
                 try:
                     tts_handler = st.session_state[active_tts_key]
                     # Interrupt the TTS handler
                     tts_handler.interrupt()
-                    
+
                     # Get any partial text that was received
                     partial_text = tts_handler.get_full_text()
                     if partial_text and partial_text.strip():
                         # Check if we already have this response in history (avoid duplicates)
                         messages = st.session_state.get(messages_key, [])
-                        if not messages or messages[-1].get("role") != "assistant" or messages[-1].get("content") != partial_text.strip():
-                            st.session_state[messages_key].append({
-                                "role": "assistant", 
-                                "content": partial_text.strip() + " [interrupted]"
-                            })
+                        if (
+                            not messages
+                            or messages[-1].get("role") != "assistant"
+                            or messages[-1].get("content") != partial_text.strip()
+                        ):
+                            st.session_state[messages_key].append(
+                                {"role": "assistant", "content": partial_text.strip() + " [interrupted]"}
+                            )
                             logger.info(f"Saved interrupted response: {len(partial_text)} chars")
-                    
+
                     tts_handler.shutdown()
                 except Exception as e:
                     logger.debug(f"Error saving partial response on close: {e}")
-                
+
                 st.session_state[active_tts_key] = None
-            
+
             # Clear live transcript
             live_transcript_key = f"live_transcript_{page_key}"
             if live_transcript_key in st.session_state:
                 st.session_state[live_transcript_key] = ""
-            
+
             st.session_state[realtime_mode_key] = False
             st.rerun()
 
     # Visual Indicator
     page_label = "RAG Document Assistant" if page_key == "rag" else "Chat Assistant"
-    page_subtext = "Ask me anything about your documents." if page_key == "rag" else "Speak naturally. I will listen and respond."
-    
+    page_subtext = (
+        "Ask me anything about your documents." if page_key == "rag" else "Speak naturally. I will listen and respond."
+    )
+
     st.markdown('<div class="voice-container">', unsafe_allow_html=True)
     st.markdown('<div class="voice-circle">🎙️</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="voice-status">{page_label}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="voice-subtext">{page_subtext}</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # ========================================================================
     # Audio Processor: Pipecat VAD (preferred)
     # ========================================================================
-    
+
     class PipecatVADProcessor(AudioProcessorBase):
         """Audio processor using Pipecat Silero VAD for speech detection."""
-        
+
         def __init__(self) -> None:
             self._segments: queue.Queue[Tuple[bytes, int]] = queue.Queue()
             self._interim_audio: queue.Queue[Tuple[bytes, int]] = queue.Queue()  # For live transcription
             self._stop = threading.Event()
             self._out = _InterruptibleAudioOut()
-            
+
             # Audio state
             self._io_sample_rate: Optional[int] = None
             self._last_frame_format: Optional[Tuple] = None
             self._resampler: Optional[Any] = None
-            
+
             # VAD state (thread-safe)
             self._vad_lock = threading.Lock()
             self._vad: Optional[Any] = None
@@ -769,10 +789,10 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             self._in_speech = False
             self._silence_frames = 0
             self._interim_counter = 0  # Counter for interim updates
-            
+
             # Initialize VAD
             self._init_vad()
-        
+
         def _init_vad(self) -> None:
             """Initialize Pipecat Silero VAD."""
             if not _PIPECAT_AVAILABLE or SileroVADAnalyzer is None:
@@ -790,43 +810,43 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             except Exception as e:
                 logger.error(f"Failed to initialize Pipecat VAD: {e}")
                 self._vad = None
-        
+
         @property
         def segments(self) -> queue.Queue[Tuple[bytes, int]]:
             return self._segments
-        
+
         @property
         def output_sample_rate(self) -> int:
             return int(self._io_sample_rate or 48000)
-        
+
         def enqueue_assistant_pcm16(self, pcm16: bytes) -> None:
             self._out.enqueue(pcm16)
-        
+
         def interrupt_assistant(self) -> None:
             self._out.interrupt()
-        
+
         def set_tts_interrupt_callback(self, callback: Optional[Callable[[], None]]) -> None:
             """Set a callback to be invoked on barge-in (to stop TTS handler)."""
             self._out.set_interrupt_callback(callback)
-        
+
         def reset_interrupt(self) -> None:
             """Reset the interrupt flag for a new response."""
             self._out.reset_interrupt()
-        
+
         def is_audio_interrupted(self) -> bool:
             """Check if audio output has been interrupted (barge-in occurred)."""
             return self._out.is_interrupted()
-        
+
         def _get_resampler(self, frame) -> Optional[Any]:
             """Get or create a resampler for the current frame format."""
             from av.audio.resampler import AudioResampler
-            
+
             frame_format = (
                 str(frame.format.name) if frame.format else None,
                 str(frame.layout.name) if frame.layout else None,
                 frame.sample_rate,
             )
-            
+
             if self._resampler is None or self._last_frame_format != frame_format:
                 try:
                     self._resampler = AudioResampler(
@@ -838,36 +858,35 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                 except Exception as e:
                     logger.warning(f"Failed to create resampler: {e}")
                     return None
-            
+
             return self._resampler
 
-        
         def _process_vad(self, pcm16_bytes: bytes) -> None:
             """Process audio through VAD (called from main thread, synchronous)."""
             if self._vad is None or VADState is None:
                 return
-            
+
             with self._vad_lock:
                 pre_roll_max = int(pipecat_cfg.segment_sample_rate * pipecat_cfg.pre_roll_ms / 1000 * 2)
                 self._pre_roll.extend(pcm16_bytes)
                 if len(self._pre_roll) > pre_roll_max:
-                    del self._pre_roll[:len(self._pre_roll) - pre_roll_max]
-                
+                    del self._pre_roll[: len(self._pre_roll) - pre_roll_max]
+
                 try:
                     vad_state = self._vad.analyze_audio(pcm16_bytes)
                 except Exception as e:
                     logger.debug(f"VAD analysis error: {e}")
                     return
-                
+
                 is_speech = vad_state in (VADState.STARTING, VADState.SPEAKING)
                 was_speaking = self._in_speech
-                
+
                 # Barge-in: interrupt assistant when user starts speaking
                 if is_speech and not was_speaking:
                     if self._out.is_bot_speaking():
                         self._out.interrupt()
                         logger.debug("Barge-in: interrupted assistant")
-                
+
                 if is_speech:
                     self._in_speech = True
                     self._silence_frames = 0
@@ -876,7 +895,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                         self._utterance = bytearray(self._pre_roll)
                         self._interim_counter = 0
                     self._utterance.extend(pcm16_bytes)
-                    
+
                     # Emit interim audio every ~500ms for live transcription
                     # (25 frames at 20ms each = 500ms)
                     self._interim_counter += 1
@@ -899,7 +918,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     if self._collecting:
                         self._utterance.extend(pcm16_bytes)
                         self._silence_frames += 1
-                        
+
                         silence_threshold = int(pipecat_cfg.vad_stop_secs * 1000 / pipecat_cfg.frame_ms)
                         if self._silence_frames >= silence_threshold:
                             min_bytes = int(pipecat_cfg.segment_sample_rate * pipecat_cfg.min_utterance_ms / 1000 * 2)
@@ -911,23 +930,23 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             self._in_speech = False
                             self._silence_frames = 0
                             self._interim_counter = 0
-        
+
         @property
         def interim_audio(self) -> queue.Queue[Tuple[bytes, int]]:
             """Queue for interim audio chunks for live transcription."""
             return self._interim_audio
-        
+
         @property
         def is_speaking(self) -> bool:
             """Check if user is currently speaking."""
             with self._vad_lock:
                 return self._in_speech
-        
+
         def recv(self, frame):
             """Process a single audio frame (synchronous callback)."""
             sample_rate = getattr(frame, "sample_rate", 48000) or 48000
             self._io_sample_rate = sample_rate
-            
+
             resampler = self._get_resampler(frame)
             if resampler is not None:
                 try:
@@ -944,39 +963,38 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     self._last_frame_format = None
                 except Exception as e:
                     logger.debug(f"Resampling error: {e}")
-            
+
             frame_ms = pipecat_cfg.frame_ms
             samples_per_frame = int(sample_rate * frame_ms / 1000)
             bytes_per_frame = samples_per_frame * 2
-            
+
             out_bytes = self._out.get_bytes_for_frame(bytes_per_frame)
             if not out_bytes or len(out_bytes) < bytes_per_frame:
                 out_bytes = b"\x00" * bytes_per_frame
-            
+
             try:
                 audio_array = np.frombuffer(out_bytes[:bytes_per_frame], dtype=np.int16)
                 if audio_array.size != samples_per_frame:
                     audio_array = np.zeros(samples_per_frame, dtype=np.int16)
                 audio_array = audio_array.reshape(1, -1)
-                out_frame = av.AudioFrame.from_ndarray(audio_array, format='s16', layout='mono')
+                out_frame = av.AudioFrame.from_ndarray(audio_array, format="s16", layout="mono")
                 out_frame.sample_rate = sample_rate
                 out_frame.pts = frame.pts
                 return out_frame
             except Exception as e:
                 logger.debug(f"Output frame error: {e}")
                 return frame
-        
+
         def __del__(self) -> None:
             self._stop.set()
-
 
     # ========================================================================
     # Audio Processor: webrtcvad fallback
     # ========================================================================
-    
+
     class WebRTCVADProcessor(AudioProcessorBase):
         """Fallback audio processor using webrtcvad."""
-        
+
         def __init__(self) -> None:
             self._segments: queue.Queue[Tuple[bytes, int]] = queue.Queue()
             self._byte_buffer = bytearray()
@@ -986,28 +1004,28 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             self._speech_frames = 0
             self._vad = None
             self._sample_rate: Optional[int] = None
-        
+
         @property
         def segments(self) -> queue.Queue[Tuple[bytes, int]]:
             return self._segments
-        
+
         @property
         def output_sample_rate(self) -> int:
             return int(self._sample_rate or 48000)
-        
+
         def _ensure_vad(self) -> None:
             if self._vad is None and _WEBRTCVAD_AVAILABLE and webrtcvad is not None:
                 self._vad = webrtcvad.Vad(vad_cfg.aggressiveness)
-        
+
         def recv(self, frame):
             self._ensure_vad()
-            
+
             sample_rate = getattr(frame, "sample_rate", 48000) or 48000
             self._sample_rate = sample_rate
             frame_ms = vad_cfg.frame_ms
             samples_per_frame = int(sample_rate * frame_ms / 1000)
             bytes_per_frame = samples_per_frame * 2
-            
+
             pcm = frame.to_ndarray()
             if pcm.ndim == 2:
                 if pcm.shape[0] in (1, 2):
@@ -1016,23 +1034,23 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     mono = pcm[:, 0]
             else:
                 mono = pcm
-            
+
             if mono.dtype != np.int16:
                 mono = np.clip(mono, -32768, 32767).astype(np.int16)
-            
+
             self._byte_buffer.extend(mono.tobytes())
-            
+
             while len(self._byte_buffer) >= bytes_per_frame:
                 chunk = bytes(self._byte_buffer[:bytes_per_frame])
                 del self._byte_buffer[:bytes_per_frame]
-                
+
                 is_speech = False
                 try:
                     if self._vad is not None:
                         is_speech = self._vad.is_speech(chunk, sample_rate)
                 except Exception:
                     pass
-                
+
                 if is_speech:
                     self._in_speech = True
                     self._silence = 0
@@ -1042,7 +1060,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     if self._in_speech:
                         self._silence += 1
                         self._current.extend(chunk)
-                        
+
                         if self._silence >= vad_cfg.silence_frames_to_finalize:
                             if self._speech_frames >= vad_cfg.min_speech_frames:
                                 self._segments.put((bytes(self._current), sample_rate))
@@ -1050,31 +1068,30 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             self._in_speech = False
                             self._silence = 0
                             self._speech_frames = 0
-            
-            return frame
 
+            return frame
 
     # ========================================================================
     # WebRTC Widget Setup
     # ========================================================================
-    
+
     use_pipecat = _PIPECAT_AVAILABLE
     ProcessorClass = PipecatVADProcessor if use_pipecat else WebRTCVADProcessor
     webrtc_mode = WebRtcMode.SENDRECV if use_pipecat else WebRtcMode.SENDONLY
-    
+
     # Session state key to track if greeting has been played
     greeting_played_key = f"realtime_greeting_played_{page_key}"
-    
+
     # Track if this is the first render of the WebRTC component
     # We defer greeting cache to after WebRTC is initialized to avoid blocking component loading
     webrtc_initialized_key = f"webrtc_initialized_{page_key}"
-    
+
     col_center = st.columns([1, 2, 1])[1]
     with col_center:
         # Show loading hint for first-time WebRTC initialization
         if not st.session_state.get(webrtc_initialized_key, False):
             st.info("🎤 Initializing voice chat... Please wait a moment.")
-        
+
         try:
             webrtc_ctx = webrtc_streamer(
                 key=f"realtime_voice_webrtc_{page_key}",
@@ -1087,7 +1104,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                         "autoGainControl": True,
                         "sampleRate": 48000,
                     },
-                    "video": False
+                    "video": False,
                 },
                 async_processing=False,
                 rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
@@ -1101,12 +1118,12 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             if st.button("🔄 Refresh Page"):
                 st.rerun()
             return
-        
+
         with st.expander("Audio Settings", expanded=False):
             backend_info = "Pipecat Silero VAD" if use_pipecat else "webrtcvad"
             st.info(f"Using: {backend_info}")
             st.caption("Audio output is handled by your browser.")
-    
+
     # Pre-cache greeting audio AFTER WebRTC component is rendered
     # This avoids blocking the component loading on first page access
     # We add a small delay to ensure WebRTC JS assets have time to load
@@ -1116,35 +1133,34 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
         # Start background thread to cache greeting audio only after first render
         # Add delay to let WebRTC component assets load first
         if cache_key not in _greeting_audio_cache:
+
             def cache_greeting_async():
                 time.sleep(2.0)  # Wait for WebRTC component to fully initialize
                 _get_or_cache_greeting_audio(page_key)
+
             threading.Thread(target=cache_greeting_async, daemon=True).start()
-    
+
     # ========================================================================
     # Play Greeting When Session Starts
     # ========================================================================
-    
+
     # Check if WebRTC is playing and greeting hasn't been played yet
     if webrtc_ctx and getattr(webrtc_ctx.state, "playing", False):
         if not st.session_state.get(greeting_played_key, False):
             # Mark greeting as played (do this first to prevent re-triggering)
             st.session_state[greeting_played_key] = True
-            
+
             # Get the appropriate messages key and greeting for this page
             messages_key = _get_messages_key(page_key)
             greeting_text = _get_realtime_greeting(page_key)
-            
+
             # Add greeting to appropriate messages list
             st.session_state.setdefault(messages_key, [])
-            st.session_state[messages_key].append({
-                "role": "assistant", 
-                "content": greeting_text
-            })
-            
+            st.session_state[messages_key].append({"role": "assistant", "content": greeting_text})
+
             # Get cached or synthesize greeting audio
             greeting_audio = _get_or_cache_greeting_audio(page_key)
-            
+
             if greeting_audio:
                 # Try to play through WebRTC first (lower latency)
                 greeting_played = False
@@ -1152,11 +1168,9 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     if hasattr(webrtc_ctx.audio_processor, "enqueue_assistant_pcm16"):
                         target_sr = webrtc_ctx.audio_processor.output_sample_rate
                         greeting_played = _play_greeting_via_webrtc(
-                            webrtc_ctx.audio_processor, 
-                            greeting_audio, 
-                            target_sr
+                            webrtc_ctx.audio_processor, greeting_audio, target_sr
                         )
-                
+
                 # Fallback to audio widget if WebRTC playback failed
                 if not greeting_played:
                     _play_greeting_via_audio_widget(greeting_audio)
@@ -1164,9 +1178,9 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                 # Last resort: synthesize and play directly
                 logger.warning("No cached greeting, synthesizing inline...")
                 _synthesize_and_play(greeting_text)
-            
+
             logger.info(f"AI greeting played on realtime voice session start for {page_key}")
-    
+
     # Reset greeting flag when WebRTC stops
     if webrtc_ctx and not getattr(webrtc_ctx.state, "playing", False):
         if st.session_state.get(greeting_played_key, False):
@@ -1175,20 +1189,20 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     # ========================================================================
     # Process Finalized Segments with Streaming TTS
     # ========================================================================
-    
+
     # Use page-specific messages key
     messages_key = _get_messages_key(page_key)
     if messages_key not in st.session_state:
         st.session_state[messages_key] = []
-    
+
     # Session state for live transcription
     live_transcript_key = f"live_transcript_{page_key}"
     if live_transcript_key not in st.session_state:
         st.session_state[live_transcript_key] = ""
-    
+
     # Placeholder for live transcription display - always visible
     live_transcript_placeholder = st.empty()
-    
+
     # Display current live transcription state
     current_live_text = st.session_state.get(live_transcript_key, "")
     if current_live_text:
@@ -1212,7 +1226,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                         50% {{ opacity: 0.8; }}
                     }}
                 </style>""",
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
 
     if webrtc_ctx and webrtc_ctx.audio_processor:
@@ -1243,13 +1257,13 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                                     ">
                                         🎙️ <strong>Listening:</strong> {partial_text.strip()}
                                     </div>""",
-                                    unsafe_allow_html=True
+                                    unsafe_allow_html=True,
                                 )
                     except Exception as e:
                         logger.debug(f"Interim transcription error: {e}")
             except queue.Empty:
                 pass
-        
+
         # ====================================================================
         # Process Completed Segments
         # ====================================================================
@@ -1262,13 +1276,13 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             # Clear live transcript when we have a complete segment
             st.session_state[live_transcript_key] = ""
             live_transcript_placeholder.empty()
-            
+
             # BARGE-IN: Interrupt any ongoing TTS playback immediately
             # 1. Clear the audio output queue to stop playback instantly
             if hasattr(webrtc_ctx.audio_processor, "interrupt_assistant"):
                 webrtc_ctx.audio_processor.interrupt_assistant()
                 logger.debug("Cleared audio output queue on barge-in")
-            
+
             # 2. Interrupt the TTS handler to stop generating more audio
             active_tts_key = f"active_tts_handler_{page_key}"
             if active_tts_key in st.session_state and st.session_state[active_tts_key]:
@@ -1278,55 +1292,55 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                 except Exception as e:
                     logger.debug(f"TTS interrupt error: {e}")
                 st.session_state[active_tts_key] = None
-            
+
             with st.spinner("Transcribing..."):
                 wav_bytes = _pcm16_to_wav_bytes(pcm16, sample_rate=sr, channels=1)
                 user_text = backend_service.transcribe_audio(wav_bytes, sample_rate=16000)
 
             if user_text and user_text.strip():
                 user_text = user_text.strip()
-                
+
                 cfg = _get_chat_config_from_session(page_key)
-                
+
                 # Get conversation context BEFORE adding the new message
                 # This ensures the current question is not included in the history
                 memory_manager = _get_memory_manager(page_key)
                 conversation_history = memory_manager.get_history_for_api()
                 conversation_summary = memory_manager.summary
                 session_id = memory_manager.session_id
-                
+
                 # Now add the user message to session state
                 st.session_state[messages_key].append({"role": "user", "content": user_text})
-                
+
                 with st.chat_message("user"):
                     st.markdown(user_text)
 
                 # Generate response with streaming TTS
                 with st.chat_message("assistant"):
                     out = st.empty()
-                    
+
                     # Set up streaming TTS handler for real-time synthesis
                     tts_handler = None
                     audio_processor = webrtc_ctx.audio_processor
                     tts_audio_queue = None
-                    
+
                     if use_pipecat and hasattr(audio_processor, "enqueue_assistant_pcm16"):
                         # Create streaming TTS handler that synthesizes audio in parallel
                         target_sr = audio_processor.output_sample_rate
                         tts_audio_queue = queue.Queue()
                         tts_handler = StreamingTTSHandler(tts_audio_queue, target_sr)
-                        
+
                         # Store in session state for barge-in interruption
                         st.session_state[active_tts_key] = tts_handler
-                        
+
                         # Set up barge-in callback so VAD interrupt triggers TTS stop
                         if hasattr(audio_processor, "set_tts_interrupt_callback"):
                             audio_processor.set_tts_interrupt_callback(tts_handler.interrupt)
-                        
+
                         # Reset interrupt flag for this new response
                         if hasattr(audio_processor, "reset_interrupt"):
                             audio_processor.reset_interrupt()
-                        
+
                         # Create a callback that feeds text to TTS and queues audio
                         def tts_streaming_callback(text_chunk: str) -> None:
                             """Called for each LLM text chunk to synthesize audio in parallel."""
@@ -1342,14 +1356,16 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                                         break
                     else:
                         tts_streaming_callback = None
-                    
+
                     # Stream the response based on page type
                     if page_key == "rag":
                         # RAG query with document context
                         config = st.session_state.get("rag_config", {})
-                        history = [{"role": msg["role"], "content": msg["content"]} 
-                                  for msg in st.session_state[messages_key][:-1]]
-                        
+                        history = [
+                            {"role": msg["role"], "content": msg["content"]}
+                            for msg in st.session_state[messages_key][:-1]
+                        ]
+
                         reply = streaming_handler.stream_rag_response(
                             query=user_text,
                             messages=history,
@@ -1365,6 +1381,11 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             tts_callback=tts_streaming_callback,
                             conversation_summary=conversation_summary,
                             session_id=session_id,
+                            temperature=cfg["temperature"],
+                            max_tokens=cfg["max_tokens"],
+                            top_p=cfg["top_p"],
+                            frequency_penalty=cfg["frequency_penalty"],
+                            repetition_penalty=cfg["repetition_penalty"],
                         )
                     else:
                         # Regular chat response with conversation memory
@@ -1372,6 +1393,10 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             message=user_text,
                             model=cfg["model"],
                             temperature=cfg["temperature"],
+                            max_tokens=cfg["max_tokens"],
+                            top_p=cfg["top_p"],
+                            frequency_penalty=cfg["frequency_penalty"],
+                            repetition_penalty=cfg["repetition_penalty"],
                             backend=cfg["backend"],
                             api_base=cfg.get("api_base"),
                             api_key=cfg.get("api_key"),
@@ -1382,7 +1407,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                             conversation_summary=conversation_summary,
                             session_id=session_id,
                         )
-                    
+
                     # Finalize any remaining TTS audio (if not interrupted)
                     if tts_handler:
                         if not tts_handler.is_interrupted():
@@ -1407,18 +1432,18 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                         # Use TTS handler's text if reply is empty or shorter (interrupted)
                         if not final_reply or len(tts_full_text) > len(final_reply or ""):
                             final_reply = tts_full_text
-                
+
                 if final_reply and final_reply.strip():
                     # Check if response was interrupted (TTS handler has interrupted flag)
                     was_interrupted = tts_handler and tts_handler.is_interrupted() if tts_handler else False
-                    
+
                     # Add message with optional interrupted indicator
                     message_content = final_reply.strip()
                     if was_interrupted:
                         message_content = message_content + " [interrupted]"
-                    
+
                     st.session_state[messages_key].append({"role": "assistant", "content": message_content})
-                    
+
                     # If streaming TTS wasn't available, fall back to full synthesis
                     if not (use_pipecat and hasattr(audio_processor, "enqueue_assistant_pcm16")):
                         _synthesize_and_play(final_reply)

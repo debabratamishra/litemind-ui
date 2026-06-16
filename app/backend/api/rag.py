@@ -1,19 +1,24 @@
 """
 RAG API endpoints
 """
+
 import asyncio
 import logging
 from typing import List
-from fastapi import APIRouter, HTTPException, File, Form, UploadFile
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
-from app.backend.models.api_models import (
-    RAGConfigRequest, RAGQueryRequestEnhanced, RAGStatusResponse,
-    UploadResponse, ResetResponse,
-)
 from app.backend.core.config import backend_config
 from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
+from app.backend.models.api_models import (
+    RAGConfigRequest,
+    RAGQueryRequestEnhanced,
+    RAGStatusResponse,
+    ResetResponse,
+    UploadResponse,
+)
 from app.skills import rag_skill_registry
 
 logger = logging.getLogger(__name__)
@@ -26,17 +31,12 @@ async def get_rag_status():
     """Get RAG system status"""
     try:
         from main import rag_service
-        
+
         if not rag_service:
-            return RAGStatusResponse(
-                status="not_initialized", 
-                uploaded_files=0, 
-                indexed_chunks=0,
-                bm25_corpus_size=0
-            )
+            return RAGStatusResponse(status="not_initialized", uploaded_files=0, indexed_chunks=0, bm25_corpus_size=0)
 
         uploaded_files = len([f for f in backend_config.upload_folder.iterdir() if f.is_file()])
-        
+
         collection_count = 0
         try:
             if getattr(rag_service, "text_collection", None):
@@ -48,9 +48,9 @@ async def get_rag_status():
             status="ready",
             uploaded_files=uploaded_files,
             indexed_chunks=collection_count,
-            bm25_corpus_size=len(rag_service.bm25_corpus) if rag_service.bm25_corpus else 0
+            bm25_corpus_size=len(rag_service.bm25_corpus) if rag_service.bm25_corpus else 0,
         )
-        
+
     except Exception as e:
         logger.error(f"RAG status error: {e}")
         return RAGStatusResponse(status="error", message=str(e))
@@ -61,21 +61,25 @@ async def save_rag_config(request: RAGConfigRequest):
     """Save RAG configuration"""
     try:
         from main import rag_service
-        
+
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
 
         # Save configuration
         config = backend_config.load_rag_config()
         normalized_provider = resolve_embedding_provider(request.provider, request.embedding_backend)
-        config.update({
-            "provider": normalized_provider,
-            "embedding_model": request.embedding_model,
-            "embedding_backend": None,
-            "embedding_api_base": request.embedding_api_base if normalized_provider == "openrouter" else None,
-            "chunk_size": int(request.chunk_size)
-        })
-        
+        config.update(
+            {
+                "provider": normalized_provider,
+                "embedding_model": request.embedding_model,
+                "embedding_backend": None,
+                "embedding_api_base": (
+                    request.embedding_api_base if normalized_provider in {"openrouter", "nvidia_nim"} else None
+                ),
+                "chunk_size": int(request.chunk_size),
+            }
+        )
+
         if not backend_config.save_rag_config(config):
             raise HTTPException(status_code=500, detail="Failed to persist configuration")
 
@@ -88,7 +92,7 @@ async def save_rag_config(request: RAGConfigRequest):
             api_key=request.embedding_api_key,
         )
         rag_service.default_chunk_size = int(request.chunk_size)
-        
+
         return {"message": "Configuration saved successfully", "status": "success"}
 
     except ValueError as e:
@@ -102,7 +106,7 @@ async def save_rag_config(request: RAGConfigRequest):
 async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form(500)):
     """Upload and process files for RAG"""
     from main import rag_service
-    
+
     if not rag_service:
         raise HTTPException(status_code=503, detail="RAG service not initialized")
 
@@ -112,27 +116,29 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
 
     results = []
     saved_paths = []
-    
+
     # Save files and check for duplicates
     for upload_file in files:
         try:
             # Validate file size
             await validate_file_size(upload_file)
-            
+
             # Sanitize filename to prevent path traversal
             safe_filename = sanitize_filename(upload_file.filename)
         except ValueError as e:
-            results.append({
-                "filename": upload_file.filename,
-                "status": "error",
-                "message": f"Invalid filename: {str(e)}",
-                "chunks_created": 0
-            })
+            results.append(
+                {
+                    "filename": upload_file.filename,
+                    "status": "error",
+                    "message": f"Invalid filename: {str(e)}",
+                    "chunks_created": 0,
+                }
+            )
             continue
-        
+
         # Save file with sanitized name
         dest_path = backend_config.upload_folder / safe_filename
-        
+
         # Additional security check: ensure dest_path is within upload_folder
         try:
             dest_resolved = dest_path.resolve()
@@ -140,31 +146,30 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             if not str(dest_resolved).startswith(str(upload_resolved)):
                 raise ValueError("Path traversal attempt detected")
         except (ValueError, OSError, RuntimeError) as e:
-            results.append({
-                "filename": upload_file.filename,
-                "status": "error",
-                "message": f"Security error: {str(e)}",
-                "chunks_created": 0
-            })
+            results.append(
+                {
+                    "filename": upload_file.filename,
+                    "status": "error",
+                    "message": f"Security error: {str(e)}",
+                    "chunks_created": 0,
+                }
+            )
             continue
-        
+
         with open(dest_path, "wb") as f:
             f.write(await upload_file.read())
-        
+
         # Check for duplicates using the saved file path
         is_duplicate, reason = rag_service._is_file_already_processed(str(dest_path), safe_filename)
-        
+
         if is_duplicate:
             # Remove the saved file since it's a duplicate
             dest_path.unlink(missing_ok=True)
-            results.append({
-                "filename": upload_file.filename,
-                "status": "duplicate",
-                "message": reason,
-                "chunks_created": 0
-            })
+            results.append(
+                {"filename": upload_file.filename, "status": "duplicate", "message": reason, "chunks_created": 0}
+            )
             continue
-        
+
         saved_paths.append((dest_path, upload_file.filename))
 
     # Process files concurrently
@@ -183,9 +188,9 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             "successful": len(successful),
             "duplicates": len(duplicates),
             "errors": len(errors),
-            "total_chunks_created": sum(r.get("chunks_created", 0) for r in successful)
+            "total_chunks_created": sum(r.get("chunks_created", 0) for r in successful),
         },
-        results=results
+        results=results,
     )
 
 
@@ -194,7 +199,7 @@ async def reset_rag_system():
     """Reset RAG system"""
     try:
         from main import rag_service
-        
+
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
 
@@ -207,13 +212,11 @@ async def reset_rag_system():
 
         # Reset RAG service
         await rag_service.reset_system()
-        
+
         return ResetResponse(
-            status="success",
-            message=f"RAG system reset. Removed {files_removed} files.",
-            files_removed=files_removed
+            status="success", message=f"RAG system reset. Removed {files_removed} files.", files_removed=files_removed
         )
-        
+
     except Exception as e:
         logger.error(f"Reset error: {e}")
         raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
@@ -224,6 +227,7 @@ async def rag_query(request: RAGQueryRequestEnhanced):
     """Query RAG system"""
     try:
         from main import rag_service
+
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
 
@@ -245,17 +249,14 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
             path, filename = path_info
             try:
                 result = await rag_service.add_document(str(path), filename, chunk_size=chunk_size)
-                results.append({
-                    "filename": filename,
-                    **(result or {"status": "success", "message": f"Processed {filename}", "chunks_created": 0})
-                })
+                results.append(
+                    {
+                        "filename": filename,
+                        **(result or {"status": "success", "message": f"Processed {filename}", "chunks_created": 0}),
+                    }
+                )
             except Exception as e:
-                results.append({
-                    "filename": filename,
-                    "status": "error",
-                    "message": str(e),
-                    "chunks_created": 0
-                })
+                results.append({"filename": filename, "status": "error", "message": str(e), "chunks_created": 0})
 
     await asyncio.gather(*(process_single_file(path_info) for path_info in saved_paths))
 

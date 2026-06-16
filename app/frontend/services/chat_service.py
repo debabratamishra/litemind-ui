@@ -1,25 +1,27 @@
 """
 Chat service for handling chat interactions and streaming with conversation memory.
 """
-import logging
-import requests
-from typing import Dict, List, Optional, Any
 
-from ..config import FASTAPI_URL, CONNECT_TIMEOUT, READ_TIMEOUT
+import logging
+from typing import Any, Dict, List, Optional
+
+import requests
+
+from ..config import CONNECT_TIMEOUT, FASTAPI_URL, READ_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 
 class ChatService:
     """Service for handling chat interactions with conversation memory support."""
-    
+
     def __init__(self):
         self.base_url = FASTAPI_URL
 
     def call_fastapi_chat(
-        self, 
-        message: str, 
-        model: str = "default", 
+        self,
+        message: str,
+        model: str = "default",
         backend: str = "ollama",
         api_base: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -36,8 +38,8 @@ class ChatService:
         """Call the non-streaming chat endpoint with conversation memory."""
         try:
             payload = {
-                "message": message, 
-                "model": model, 
+                "message": message,
+                "model": model,
                 "backend": backend,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
@@ -50,7 +52,7 @@ class ChatService:
                 payload["api_base"] = api_base
             if api_key:
                 payload["api_key"] = api_key
-            
+
             # Add conversation history if provided
             if conversation_history:
                 payload["conversation_history"] = conversation_history
@@ -58,7 +60,7 @@ class ChatService:
                 payload["conversation_summary"] = conversation_summary
             if session_id:
                 payload["session_id"] = session_id
-            
+
             response = requests.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
@@ -107,7 +109,7 @@ class ChatService:
             payload["api_base"] = api_base
         if api_key:
             payload["api_key"] = api_key
-        
+
         # Add conversation history if provided
         if conversation_history:
             payload["conversation_history"] = conversation_history
@@ -115,7 +117,7 @@ class ChatService:
             payload["conversation_summary"] = conversation_summary
         if session_id:
             payload["session_id"] = session_id
-        
+
         response = requests.post(
             f"{self.base_url}/api/chat/stream",
             json=payload,
@@ -139,7 +141,7 @@ class ChatService:
         repetition_penalty: float = 1.0,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         conversation_summary: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
     ) -> requests.Response:
         """Stream a web search chat response from the backend with conversation memory."""
         payload = {
@@ -151,13 +153,13 @@ class ChatService:
             "frequency_penalty": frequency_penalty,
             "repetition_penalty": repetition_penalty,
             "backend": backend,
-            "use_web_search": True
+            "use_web_search": True,
         }
         if api_base:
             payload["api_base"] = api_base
         if api_key:
             payload["api_key"] = api_key
-        
+
         # Add conversation history if provided
         if conversation_history:
             payload["conversation_history"] = conversation_history
@@ -165,7 +167,7 @@ class ChatService:
             payload["conversation_summary"] = conversation_summary
         if session_id:
             payload["session_id"] = session_id
-        
+
         response = requests.post(
             f"{self.base_url}/api/chat/web-search",
             json=payload,
