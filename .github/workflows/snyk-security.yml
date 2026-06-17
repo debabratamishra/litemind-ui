@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      SNYK_ORG: ${{ secrets.SNYK_ORG }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,7 +33,12 @@ jobs:
 
       - name: Run basic dependency vulnerability check (non-blocking)
         if: ${{ env.SNYK_TOKEN != '' }}
-        run: snyk sbom test --file=sbom.snyk.cdx.json || true
+        run: |
+          if [ -n "$SNYK_ORG" ]; then
+            snyk sbom test --org="$SNYK_ORG" --file=sbom.snyk.cdx.json || true
+          else
+            snyk sbom test --file=sbom.snyk.cdx.json || true
+          fi
 
       - name: Skip when token is unavailable (e.g., fork PR)
         if: ${{ env.SNYK_TOKEN == '' }}
