@@ -59,9 +59,9 @@ def clean_url(url: str) -> str:
         u = "https://" + u
 
     u = re.sub(r"(?i)(https?)\s*:\s*/\s*/", r"\1://", u)
-    u = re.sub(r"\s*\.\s*", ".", u)
-    u = re.sub(r"\s*/\s*", "/", u)
-    u = re.sub(r"\s*:\s*", ":", u)
+    u = ".".join(segment.strip() for segment in u.split("."))
+    u = "/".join(segment.strip() for segment in u.split("/"))
+    u = ":".join(segment.strip() for segment in u.split(":"))
     u = re.sub(r"(https?):(//)", r"\1://", u)
 
     parts = u.split()
@@ -152,15 +152,62 @@ def _normalize_bare_urls(text: str) -> str:
     return "".join(normalized_parts)
 
 
-def sanitize_links(text: str) -> str:
-    """Fix common hyperlink formatting issues in Markdown text."""
-    def _md_link_repl(m: re.Match) -> str:
-        disp, url = m.group(1), m.group(2)
+def _normalize_markdown_links(text: str) -> str:
+    """Normalize Markdown links with a linear parser (no regex backtracking)."""
+    normalized_parts: list[str] = []
+    cursor = 0
+    index = 0
+    text_length = len(text)
+
+    while index < text_length:
+        if text[index] != "[":
+            index += 1
+            continue
+
+        link_start = index
+        display_start = link_start + 1
+        display_end = display_start
+
+        while display_end < text_length and text[display_end] != "]":
+            display_end += 1
+
+        if display_end >= text_length:
+            break
+
+        if display_end == display_start or display_end + 1 >= text_length or text[display_end + 1] != "(":
+            index = display_end + 1
+            continue
+
+        url_start = display_end + 2
+        url_end = url_start
+        while url_end < text_length and text[url_end] != ")":
+            url_end += 1
+
+        if url_end >= text_length:
+            break
+
+        if url_end == url_start:
+            index = url_end + 1
+            continue
+
+        disp = text[display_start:display_end]
+        url = text[url_start:url_end]
         clean_url_result = clean_url(url)
         clean_disp = clean_url(disp) if looks_like_url(disp) else disp
-        return f"[{clean_disp}]({clean_url_result})"
 
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _md_link_repl, text)
+        normalized_parts.append(text[cursor:link_start])
+        normalized_parts.append(f"[{clean_disp}]({clean_url_result})")
+
+        cursor = url_end + 1
+        index = cursor
+
+    normalized_parts.append(text[cursor:])
+    return "".join(normalized_parts)
+
+
+def sanitize_links(text: str) -> str:
+    """Fix common hyperlink formatting issues in Markdown text."""
+    text = _normalize_markdown_links(text)
     return _normalize_bare_urls(text)
 
 
