@@ -22,9 +22,17 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' }}
         uses: snyk/actions/setup@806182742461562b67788a64410098c9d9b96adb
 
+      - name: Set up uv
+        if: ${{ env.SNYK_TOKEN != '' }}
+        uses: astral-sh/setup-uv@v5
+
+      - name: Export dependencies for Snyk
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: uv export --format requirements.txt --all-groups --no-hashes --no-emit-project --output-file requirements.snyk.txt
+
       - name: Run basic dependency vulnerability check (non-blocking)
         if: ${{ env.SNYK_TOKEN != '' }}
-        run: snyk test --all-projects --detection-depth=4 || true
+        run: snyk test --file=requirements.snyk.txt --package-manager=pip || true
 
       - name: Skip when token is unavailable (e.g., fork PR)
         if: ${{ env.SNYK_TOKEN == '' }}
