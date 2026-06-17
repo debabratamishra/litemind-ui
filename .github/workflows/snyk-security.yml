@@ -26,13 +26,13 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' }}
         uses: astral-sh/setup-uv@v5
 
-      - name: Export dependencies for Snyk
+      - name: Export CycloneDX SBOM from uv lockfile
         if: ${{ env.SNYK_TOKEN != '' }}
-        run: uv export --format requirements.txt --all-groups --no-hashes --no-emit-project --output-file requirements.snyk.txt
+        run: uv export --preview-features sbom-export --format cyclonedx1.5 --all-groups --no-emit-project --output-file sbom.snyk.cdx.json
 
       - name: Run basic dependency vulnerability check (non-blocking)
         if: ${{ env.SNYK_TOKEN != '' }}
-        run: snyk test --file=requirements.snyk.txt --package-manager=pip || true
+        run: snyk sbom test --file=sbom.snyk.cdx.json || true
 
       - name: Skip when token is unavailable (e.g., fork PR)
         if: ${{ env.SNYK_TOKEN == '' }}
