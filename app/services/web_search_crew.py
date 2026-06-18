@@ -349,7 +349,7 @@ class WebSearchOrchestrator:
             f"CORRECT citation style:\n"
             f'- "The weather will be partly cloudy with temperatures around 25°C [3]."\n'
             f'- "Rain is expected on Tuesday and Wednesday [1][4]."\n\n'
-            f'- "The stock price was up 0.04% relative to the opening price today [5]\n\n'
+            f'- "The stock price was up 0.04% relative to the opening price today [5]."\n\n'
             f"INCORRECT citation style (do NOT do this):\n"
             f'- "[2] and [7] both mention..." (Never start with citations)\n'
             f'- "According to [3]..." (Avoid this pattern)\n\n'
