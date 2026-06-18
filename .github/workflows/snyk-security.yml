@@ -27,7 +27,15 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' }}
         uses: astral-sh/setup-uv@v5
 
-      - name: Run Snyk security test with uv
+      - name: Sync dependencies with uv
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: uv sync --no-install-project
+
+      - name: Export CycloneDX SBOM from uv lockfile
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: uv export --preview-features sbom-export --format cyclonedx1.5 --all-groups --no-emit-project --output-file sbom.cdx.json
+
+      - name: Run Snyk SBOM test
         if: ${{ env.SNYK_TOKEN != '' }}
         run: |
           ORG="$(printf '%s' "${SNYK_ORG:-}" | tr -d '[:space:]')"
@@ -37,7 +45,7 @@ jobs:
           fi
 
           snyk config set org="$ORG"
-          snyk test --file=uv.lock --org="$ORG" || true
+          snyk sbom test --file=sbom.cdx.json --org="$ORG" || true
 
       - name: Skip when token is unavailable (e.g., fork PR)
         if: ${{ env.SNYK_TOKEN == '' }}
