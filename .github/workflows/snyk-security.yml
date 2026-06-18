@@ -37,7 +37,7 @@ jobs:
           fi
 
           snyk config set org="$ORG"
-          snyk test --file=pyproject.toml --org="$ORG" || true
+          snyk test --file=uv.lock --org="$ORG" || true
 
       - name: Skip when token is unavailable (e.g., fork PR)
         if: ${{ env.SNYK_TOKEN == '' }}
