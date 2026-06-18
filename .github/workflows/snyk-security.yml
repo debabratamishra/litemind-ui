@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      SNYK_ORG: ${{ secrets.SNYK_ORG }}
+      SNYK_ORG: ${{ secrets.SNYK_ORG || vars.SNYK_ORG }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,18 +27,17 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' }}
         uses: astral-sh/setup-uv@v5
 
-      - name: Export CycloneDX SBOM from uv lockfile
-        if: ${{ env.SNYK_TOKEN != '' }}
-        run: uv export --preview-features sbom-export --format cyclonedx1.5 --all-groups --no-emit-project --output-file sbom.snyk.cdx.json
-
-      - name: Run basic dependency vulnerability check (non-blocking)
+      - name: Run Snyk security test
         if: ${{ env.SNYK_TOKEN != '' }}
         run: |
-          if [ -n "$SNYK_ORG" ]; then
-            snyk sbom test --org="$SNYK_ORG" --file=sbom.snyk.cdx.json || true
-          else
-            snyk sbom test --file=sbom.snyk.cdx.json || true
+          ORG="$(printf '%s' "${SNYK_ORG:-}" | tr -d '[:space:]')"
+          if [ -z "$ORG" ]; then
+            echo "SNYK_ORG is empty. Add SNYK_ORG as repo secret or repo variable (prefer org ID), then rerun."
+            exit 0
           fi
+
+          snyk config set org="$ORG"
+          snyk test --all-projects --org="$ORG" || true
 
       - name: Skip when token is unavailable (e.g., fork PR)
         if: ${{ env.SNYK_TOKEN == '' }}
