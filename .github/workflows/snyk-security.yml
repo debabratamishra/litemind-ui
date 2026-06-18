@@ -27,15 +27,29 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' }}
         uses: astral-sh/setup-uv@v5
 
+      - name: Debug environment
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: |
+          echo "=== Snyk version ==="
+          snyk version
+          echo "=== Python version ==="
+          python --version
+          echo "=== uv version ==="
+          uv --version
+          echo "=== pyproject.toml exists ==="
+          ls -la pyproject.toml
+          echo "=== uv.lock exists ==="
+          ls -la uv.lock
+          echo "=== .venv exists ==="
+          ls -la .venv 2>/dev/null || echo ".venv not found"
+          echo "=== SNYK_ORG value ==="
+          echo "$SNYK_ORG"
+
       - name: Sync dependencies with uv
         if: ${{ env.SNYK_TOKEN != '' }}
         run: uv sync --no-install-project
 
-      - name: Export CycloneDX SBOM from uv lockfile
-        if: ${{ env.SNYK_TOKEN != '' }}
-        run: uv export --preview-features sbom-export --format cyclonedx1.5 --all-groups --no-emit-project --output-file sbom.cdx.json
-
-      - name: Run Snyk SBOM test
+      - name: Run Snyk test
         if: ${{ env.SNYK_TOKEN != '' }}
         run: |
           ORG="$(printf '%s' "${SNYK_ORG:-}" | tr -d '[:space:]')"
@@ -45,7 +59,7 @@ jobs:
           fi
 
           snyk config set org="$ORG"
-          snyk sbom test --file=sbom.cdx.json --org="$ORG" || true
+          snyk test --all-projects --org="$ORG" || true
 
       - name: Skip when token is unavailable (e.g., fork PR)
         if: ${{ env.SNYK_TOKEN == '' }}
