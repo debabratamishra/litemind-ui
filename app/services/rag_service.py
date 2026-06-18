@@ -2,6 +2,7 @@
 Provides ingestion, indexing, hybrid retrieval, and answer composition using ChromaDB,
 BM25, and a configurable LiteLLM-backed LLM.
 """
+
 import asyncio
 import base64
 import gc
@@ -39,12 +40,66 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEFAULT_STOP_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "for", "from",
-    "had", "has", "have", "he", "her", "hers", "him", "his", "i", "if", "in", "into",
-    "is", "it", "its", "me", "my", "of", "on", "or", "our", "ours", "she", "so",
-    "that", "the", "their", "theirs", "them", "they", "this", "those", "to", "too",
-    "us", "was", "we", "were", "what", "when", "where", "which", "who", "why", "with",
-    "you", "your", "yours",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "but",
+    "by",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "he",
+    "her",
+    "hers",
+    "him",
+    "his",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "ours",
+    "she",
+    "so",
+    "that",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "they",
+    "this",
+    "those",
+    "to",
+    "too",
+    "us",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+    "you",
+    "your",
+    "yours",
 }
 
 _stopwords_fallback_logged = False
@@ -99,6 +154,7 @@ def multi_agent_rag_available() -> tuple[bool, str | None]:
     except RuntimeError as exc:
         return False, str(exc)
 
+
 def _flatten_metadata(meta, prefix=""):
     """Flatten a (possibly nested) metadata mapping into a single-level dict.
     Nested keys are joined with underscores. Iterables are JSON-encoded when possible.
@@ -124,11 +180,11 @@ def _flatten_metadata(meta, prefix=""):
 
 class RAGService:
     """Retrieval-augmented generation service with enhanced document processing capabilities."""
-    
+
     # Class-level ChromaDB client management to avoid conflicts
     _shared_client = None
     _shared_client_path = None
-    
+
     @classmethod
     def _get_or_create_client(cls, chroma_db_path: str):
         """Get or create a shared ChromaDB client to avoid conflicts."""
@@ -139,19 +195,18 @@ class RAGService:
                     cls._shared_client.reset()
                 except:
                     pass
-            
+
             cls._shared_client = chromadb.PersistentClient(
-                path=chroma_db_path, 
-                settings=Settings(anonymized_telemetry=False)
+                path=chroma_db_path, settings=Settings(anonymized_telemetry=False)
             )
             cls._shared_client_path = chroma_db_path
-            
+
         return cls._shared_client
-    
+
     def __init__(self):
         # Get the appropriate ChromaDB path based on environment
         self.chroma_db_path = self._get_chroma_db_path()
-        
+
         # In containerized environments, we can't remove mounted volumes
         # Instead, clean the contents if the directory exists
         if os.path.exists(self.chroma_db_path):
@@ -188,8 +243,7 @@ class RAGService:
         self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
 
         self.text_collection = self.client.get_or_create_collection(
-            name="documents_text",
-            embedding_function=self.embedding_function
+            name="documents_text", embedding_function=self.embedding_function
         )
 
         self.file_paths = []
@@ -199,7 +253,7 @@ class RAGService:
         self.chunk_ids = []
         self.chunk_metadata = []
         self.chunk_metadata_by_id = {}
-        
+
         # Track processed files to prevent duplicates
         self.processed_files = {}  # filename -> {hash, chunk_count, timestamp}
         self.file_hashes = {}  # hash -> filename (for duplicate detection)
@@ -211,14 +265,15 @@ class RAGService:
         self.image_cache_dir = Path(upload_dir) / "imgcache"
         self.image_cache_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Image cache directory initialized at: {self.image_cache_dir}")
-        
+
         # Rebuild indexes from existing collection data
         self._rebuild_indexes_from_collection()
-    
+
     def _get_chroma_db_path(self) -> str:
         """Get the appropriate ChromaDB path based on execution environment."""
         try:
             from app.services.host_service_manager import host_service_manager
+
             path = str(host_service_manager.environment_config.chroma_db_dir)
             logger.debug(f"Using ChromaDB path from host service manager: {path}")
             return path
@@ -226,14 +281,16 @@ class RAGService:
             logger.warning("Host service manager not available, using fallback config")
             # Fallback to config-based detection
             from config import Config
+
             path = Config.get_chroma_db_path()
             logger.debug(f"Using fallback ChromaDB path: {path}")
             return path
-    
+
     def _get_upload_directory(self) -> str:
         """Get the appropriate upload directory based on execution environment."""
         try:
             from app.services.host_service_manager import host_service_manager
+
             path = str(host_service_manager.environment_config.upload_dir)
             logger.debug(f"Using upload directory from host service manager: {path}")
             return path
@@ -241,14 +298,16 @@ class RAGService:
             logger.warning("Host service manager not available, using fallback config")
             # Fallback to config-based detection
             from config import Config
+
             path = Config.get_upload_folder()
             logger.debug(f"Using fallback upload directory: {path}")
             return path
-    
+
     def _get_ollama_url(self) -> str:
         """Get the appropriate Ollama URL based on execution environment."""
         try:
             from app.services.host_service_manager import host_service_manager
+
             url = host_service_manager.environment_config.ollama_url
             logger.debug(f"Using Ollama URL from host service manager: {url}")
             return url
@@ -257,11 +316,11 @@ class RAGService:
             url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
             logger.debug(f"Using fallback Ollama URL: {url}")
             return url
-    
+
     def _calculate_file_hash(self, file_path: str) -> str:
         """Calculate SHA-256 hash of a file for duplicate detection."""
         import hashlib
-        
+
         hash_sha256 = hashlib.sha256()
         try:
             with open(file_path, "rb") as f:
@@ -271,116 +330,111 @@ class RAGService:
         except Exception as e:
             logger.error(f"Error calculating hash for {file_path}: {e}")
             return None
-    
+
     def _is_file_already_processed(self, file_path: str, filename: str) -> tuple[bool, str]:
         """Check if file is already processed. Returns (is_duplicate, reason)."""
         # Check by filename first
         if filename in self.processed_files:
             file_info = self.processed_files[filename]
             return True, f"File '{filename}' already processed ({file_info['chunk_count']} chunks)"
-        
+
         # Check by content hash to detect renamed duplicates
         file_hash = self._calculate_file_hash(file_path)
         if file_hash and file_hash in self.file_hashes:
             original_name = self.file_hashes[file_hash]
             return True, f"File content already processed as '{original_name}' (duplicate content detected)"
-        
+
         return False, ""
-    
+
     def _register_processed_file(self, file_path: str, filename: str, chunk_count: int):
         """Register a file as processed to prevent future duplicates."""
         import time
-        
+
         file_hash = self._calculate_file_hash(file_path)
-        
-        file_info = {
-            "hash": file_hash,
-            "chunk_count": chunk_count,
-            "timestamp": time.time(),
-            "file_path": file_path
-        }
-        
+
+        file_info = {"hash": file_hash, "chunk_count": chunk_count, "timestamp": time.time(), "file_path": file_path}
+
         self.processed_files[filename] = file_info
         if file_hash:
             self.file_hashes[file_hash] = filename
-        
+
         logger.info(f"Registered file: {filename} ({chunk_count} chunks)")
-    
+
     def get_processed_files_info(self) -> dict:
         """Get information about all processed files."""
         import time
-        
+
         files_info = []
         for filename, info in self.processed_files.items():
-            files_info.append({
-                "filename": filename,
-                "chunk_count": info["chunk_count"],
-                "processed_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info["timestamp"])),
-                "file_path": info.get("file_path", "unknown")
-            })
-        
+            files_info.append(
+                {
+                    "filename": filename,
+                    "chunk_count": info["chunk_count"],
+                    "processed_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info["timestamp"])),
+                    "file_path": info.get("file_path", "unknown"),
+                }
+            )
+
         return {
             "total_files": len(self.processed_files),
             "total_chunks": sum(info["chunk_count"] for info in self.processed_files.values()),
-            "files": files_info
+            "files": files_info,
         }
-    
+
     def remove_processed_file(self, filename: str) -> bool:
         """Remove a file from processed files tracking and from collections."""
         if filename not in self.processed_files:
             return False
-        
+
         try:
             # Remove from ChromaDB collection
             # Get all chunks for this file
-            results = self.text_collection.get(
-                where={"filename": filename}
-            )
-            
-            if results and results['ids']:
-                self.text_collection.delete(ids=results['ids'])
+            results = self.text_collection.get(where={"filename": filename})
+
+            if results and results["ids"]:
+                self.text_collection.delete(ids=results["ids"])
                 logger.info(f"Removed {len(results['ids'])} chunks for file: {filename}")
-            
+
             # Remove from tracking
             file_info = self.processed_files[filename]
             if file_info.get("hash") and file_info["hash"] in self.file_hashes:
                 del self.file_hashes[file_info["hash"]]
-            
+
             del self.processed_files[filename]
-            
+
             # Rebuild BM25 index
             self._rebuild_bm25_index()
-            
+
             logger.info(f"Successfully removed file: {filename}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error removing file {filename}: {e}")
             return False
-    
+
     def _rebuild_bm25_index(self):
         """Rebuild the BM25 index from current collection."""
         try:
             # Get all documents from collection
             all_docs = self.text_collection.get()
-            
-            if all_docs and all_docs['documents']:
-                self.document_chunks = all_docs['documents']
-                self.chunk_ids = all_docs['ids']
-                raw_metadatas = all_docs.get('metadatas') or []
+
+            if all_docs and all_docs["documents"]:
+                self.document_chunks = all_docs["documents"]
+                self.chunk_ids = all_docs["ids"]
+                raw_metadatas = all_docs.get("metadatas") or []
                 if len(raw_metadatas) < len(self.document_chunks):
                     raw_metadatas = list(raw_metadatas) + [{}] * (len(self.document_chunks) - len(raw_metadatas))
-                self.chunk_metadata = [(metadata or {}) for metadata in raw_metadatas[:len(self.document_chunks)]]
+                self.chunk_metadata = [(metadata or {}) for metadata in raw_metadatas[: len(self.document_chunks)]]
                 self.chunk_metadata_by_id = {
-                    chunk_id: metadata
-                    for chunk_id, metadata in zip(self.chunk_ids, self.chunk_metadata)
+                    chunk_id: metadata for chunk_id, metadata in zip(self.chunk_ids, self.chunk_metadata)
                 }
-                
+
                 # Rebuild BM25 corpus
                 self.bm25_corpus = [self.preprocess_text(doc) for doc in self.document_chunks]
-                
+
                 if self.bm25_corpus:
                     from rank_bm25 import BM25Okapi
+
                     self.bm25_model = BM25Okapi(self.bm25_corpus)
                     logger.info(f"Rebuilt BM25 index with {len(self.bm25_corpus)} documents")
                 else:
@@ -392,7 +446,7 @@ class RAGService:
                 self.chunk_metadata_by_id = {}
                 self.bm25_corpus = []
                 self.bm25_model = None
-                
+
         except Exception as e:
             logger.error(f"Error rebuilding BM25 index: {e}")
 
@@ -401,38 +455,38 @@ class RAGService:
         try:
             # First rebuild the BM25 index which also populates document_chunks and chunk_ids
             self._rebuild_bm25_index()
-            
+
             # Rebuild processed files tracking from metadata
             all_docs = self.text_collection.get()
-            if all_docs and all_docs['metadatas']:
+            if all_docs and all_docs["metadatas"]:
                 processed_files = {}
                 file_hashes = {}
                 file_paths_set = set()
-                
-                for metadata in all_docs['metadatas']:
-                    doc_id = metadata.get('doc_id')
-                    file_path = metadata.get('file_path')
-                    
+
+                for metadata in all_docs["metadatas"]:
+                    doc_id = metadata.get("doc_id")
+                    file_path = metadata.get("file_path")
+
                     if doc_id and file_path:
                         file_paths_set.add(file_path)
-                        
+
                         if doc_id not in processed_files:
                             # Calculate basic info for this file
-                            chunk_count = sum(1 for m in all_docs['metadatas'] if m.get('doc_id') == doc_id)
+                            chunk_count = sum(1 for m in all_docs["metadatas"] if m.get("doc_id") == doc_id)
                             processed_files[doc_id] = {
-                                'hash': None,  # We don't store hash in metadata, will calculate if needed
-                                'chunk_count': chunk_count,
-                                'timestamp': 0,  # Unknown timestamp for existing files
-                                'file_path': file_path
+                                "hash": None,  # We don't store hash in metadata, will calculate if needed
+                                "chunk_count": chunk_count,
+                                "timestamp": 0,  # Unknown timestamp for existing files
+                                "file_path": file_path,
                             }
-                
+
                 self.processed_files = processed_files
                 self.file_hashes = file_hashes  # We can't rebuild this without recalculating hashes
                 self.file_paths = list(file_paths_set)
-                
+
                 if processed_files:
                     logger.info(f"Rebuilt tracking for {len(processed_files)} processed files")
-                    
+
         except Exception as e:
             logger.error(f"Error rebuilding indexes from collection: {e}")
             # Don't fail completely, just use empty state
@@ -455,31 +509,30 @@ class RAGService:
             "supported_extensions": SUPPORTED_EXTENSIONS,
         }
 
-
     def preprocess_text(self, text: str) -> List[str]:
         """Tokenize, lowercase, and remove stop words/punctuation for BM25 indexing."""
         if not text or not text.strip():
             return []
-        
+
         # Clean text before tokenization
         text = self._clean_text_for_indexing(text)
-        
+
         tokens = _tokenize_text(text.lower())
         tokens = [t for t in tokens if t not in self.stop_words and t not in string.punctuation and len(t) > 1]
         return tokens
-    
+
     def _clean_text_for_indexing(self, text: str) -> str:
         """Clean text for better indexing and search."""
         # Normalize whitespace
-        text = re.sub(r'\s+', ' ', text)
-        
+        text = re.sub(r"\s+", " ", text)
+
         # Remove excessive formatting artifacts
-        text = re.sub(r'[^\w\s\.\!\?\,\;\:\-\(\)]', ' ', text)
-        
+        text = re.sub(r"[^\w\s\.\!\?\,\;\:\-\(\)]", " ", text)
+
         # Clean up common document artifacts
-        text = re.sub(r'PAGE\s+\d+\s+(?:HEADERS?|LISTS?|ANALYSIS):', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'(?:Document|Filename|Page):\s*[^\n]+', '', text, flags=re.IGNORECASE)
-        
+        text = re.sub(r"PAGE\s+\d+\s+(?:HEADERS?|LISTS?|ANALYSIS):", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"(?:Document|Filename|Page):\s*[^\n]+", "", text, flags=re.IGNORECASE)
+
         return text.strip()
 
     def chunk_text(self, text, chunk_size=500):
@@ -492,7 +545,7 @@ class RAGService:
         overlap = max(60, min(200, chunk_size // 6))
         chunks = []
 
-        paragraphs = [paragraph.strip() for paragraph in re.split(r'\n\s*\n+', text) if paragraph.strip()]
+        paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n+", text) if paragraph.strip()]
         if not paragraphs:
             return self._fallback_character_chunking(text, chunk_size, overlap)
 
@@ -518,13 +571,13 @@ class RAGService:
             return self._fallback_character_chunking(text, chunk_size, overlap)
 
         return chunks
-    
+
     def _clean_text_for_chunking(self, text: str) -> str:
         """Clean text before chunking to improve formatting."""
-        text = text.replace('\r\n', '\n').replace('\r', '\n')
-        text = re.sub(r'[ \t]+', ' ', text)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        text = re.sub(r'(?m)^ +', '', text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r"(?m)^ +", "", text)
         return text.strip()
 
     def _split_paragraph_for_chunking(self, paragraph: str, chunk_size: int) -> List[str]:
@@ -536,7 +589,7 @@ class RAGService:
         if len(paragraph) <= chunk_size:
             return [paragraph]
 
-        sentences = [segment.strip() for segment in re.split(r'(?<=[.!?])\s+', paragraph) if segment.strip()]
+        sentences = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", paragraph) if segment.strip()]
         if not sentences:
             return self._fallback_character_chunking(paragraph, chunk_size, max(40, chunk_size // 10))
 
@@ -602,7 +655,7 @@ class RAGService:
         if (
             first_line
             and len(first_line) <= 120
-            and not first_line.endswith('.')
+            and not first_line.endswith(".")
             and self._is_meaningful_section_title(first_line, metadata)
         ):
             return first_line
@@ -619,28 +672,30 @@ class RAGService:
 
     def _dedupe_chunk_key(self, content: str, metadata: dict) -> str:
         """Generate a stable dedupe key for extracted content blocks."""
-        normalized_content = re.sub(r'\s+', ' ', content).strip().lower()
+        normalized_content = re.sub(r"\s+", " ", content).strip().lower()
         identity_parts = [
-            str(metadata.get('content_type', '')),
-            str(metadata.get('page_number', '')),
-            str(metadata.get('slide_number', '')),
-            str(metadata.get('sheet', '')),
+            str(metadata.get("content_type", "")),
+            str(metadata.get("page_number", "")),
+            str(metadata.get("slide_number", "")),
+            str(metadata.get("sheet", "")),
             normalized_content,
         ]
-        return hashlib.sha1('|'.join(identity_parts).encode('utf-8')).hexdigest()
+        return hashlib.sha1("|".join(identity_parts).encode("utf-8")).hexdigest()
 
-    def _prepare_extracted_chunks(self, extracted_chunks: List, doc_id: str, file_path: str, chunk_size: int) -> List[dict]:
+    def _prepare_extracted_chunks(
+        self, extracted_chunks: List, doc_id: str, file_path: str, chunk_size: int
+    ) -> List[dict]:
         """Normalize, split, and deduplicate extracted blocks before indexing."""
         prepared_chunks = []
         seen_keys = set()
 
         for source_index, chunk in enumerate(extracted_chunks):
             if isinstance(chunk, dict):
-                content = chunk.get('content', '')
-                metadata = {**chunk.get('metadata', {})}
+                content = chunk.get("content", "")
+                metadata = {**chunk.get("metadata", {})}
             else:
                 content = str(chunk)
-                metadata = {'content_type': 'legacy_text'}
+                metadata = {"content_type": "legacy_text"}
 
             clean_content = self._clean_text_for_chunking(content)
             if not clean_content:
@@ -658,25 +713,27 @@ class RAGService:
                     continue
                 seen_keys.add(dedupe_key)
 
-                prepared_chunks.append({
-                    'content': final_content,
-                    'metadata': {
-                        **metadata,
-                        'doc_id': doc_id,
-                        'file_path': str(file_path),
-                        'source_index': source_index,
-                        'chunk_index': chunk_index,
-                        'section_title': section_title,
-                    },
-                })
+                prepared_chunks.append(
+                    {
+                        "content": final_content,
+                        "metadata": {
+                            **metadata,
+                            "doc_id": doc_id,
+                            "file_path": str(file_path),
+                            "source_index": source_index,
+                            "chunk_index": chunk_index,
+                            "section_title": section_title,
+                        },
+                    }
+                )
 
         return prepared_chunks
-    
+
     def _fallback_character_chunking(self, text: str, chunk_size: int, overlap: int) -> List[str]:
         """Fallback character-based chunking when sentence-based fails."""
         chunks = []
         for i in range(0, len(text), chunk_size - overlap):
-            chunk = text[i:i + chunk_size].strip()
+            chunk = text[i : i + chunk_size].strip()
             if chunk:
                 chunks.append(chunk)
         return chunks
@@ -685,23 +742,23 @@ class RAGService:
         """Create lightweight, human-readable references for extracted images to index with text."""
         if not (ENABLE_SIMPLE_IMAGE_INDEXING and images):
             return []
-        
+
         references = []
         for i, rec in enumerate(images[:MAX_IMAGES_PER_DOC]):
             try:
-                meta = rec.get('metadata', {})
-                filename = meta.get('filename', 'unknown')
-                if 'page_number' in meta:
-                    ref = f"[IMAGE REFERENCE] Document: {filename}, Page: {meta['page_number']}, Image: {i+1}"
-                elif 'slide_number' in meta:
-                    ref = f"[IMAGE REFERENCE] Presentation: {filename}, Slide: {meta['slide_number']}, Image: {i+1}"
+                meta = rec.get("metadata", {})
+                filename = meta.get("filename", "unknown")
+                if "page_number" in meta:
+                    ref = f"[IMAGE REFERENCE] Document: {filename}, Page: {meta['page_number']}, Image: {i + 1}"
+                elif "slide_number" in meta:
+                    ref = f"[IMAGE REFERENCE] Presentation: {filename}, Slide: {meta['slide_number']}, Image: {i + 1}"
                 else:
-                    ref = f"[IMAGE REFERENCE] File: {filename}, Image: {i+1}"
+                    ref = f"[IMAGE REFERENCE] File: {filename}, Image: {i + 1}"
                 references.append(ref)
             except Exception as e:
                 logger.warning(f"Failed to create image reference {i}: {e}")
                 continue
-        
+
         logger.info(f"Created {len(references)} image references")
         return references
 
@@ -723,17 +780,21 @@ class RAGService:
             try:
                 image_bytes = base64.b64decode(image_b64)
             except Exception as exc:
-                logger.warning(f"Failed to decode embedded image bytes for {metadata.get('filename', 'unknown')}: {exc}")
+                logger.warning(
+                    f"Failed to decode embedded image bytes for {metadata.get('filename', 'unknown')}: {exc}"
+                )
                 continue
 
             clean_metadata = {k: v for k, v in metadata.items() if k != "image_bytes"}
             clean_metadata["embedded_image"] = True
             clean_metadata["source_content_type"] = content_type
 
-            embedded_records.append({
-                "image_bytes": image_bytes,
-                "metadata": clean_metadata,
-            })
+            embedded_records.append(
+                {
+                    "image_bytes": image_bytes,
+                    "metadata": clean_metadata,
+                }
+            )
 
         return embedded_records
 
@@ -742,24 +803,24 @@ class RAGService:
         try:
             if not chunk_batch:
                 return
-                
+
             texts = [c["content"] for c in chunk_batch if c.get("content", "").strip()]
             raw_metas = [c.get("metadata", {}) for c in chunk_batch if c.get("content", "").strip()]
             metadatas = [_flatten_metadata(m) for m in raw_metas]
-            
+
             if not texts:
                 logger.warning("No valid texts in chunk batch")
                 return
-            
+
             base_id = f"{doc_id}_batch_{len(self.chunk_ids)}"
             ids = [f"{base_id}_{i}" for i in range(len(texts))]
-            
+
             self.text_collection.add(
                 documents=texts,
                 metadatas=metadatas,
                 ids=ids,
             )
-            
+
             for i, text in enumerate(texts):
                 tokens = self.preprocess_text(text)
                 self.bm25_corpus.append(tokens)
@@ -768,12 +829,12 @@ class RAGService:
                 metadata = metadatas[i] if i < len(metadatas) else {}
                 self.chunk_metadata.append(metadata)
                 self.chunk_metadata_by_id[ids[i]] = metadata
-            
+
             if self.bm25_corpus:
                 self.bm25_model = BM25Okapi(self.bm25_corpus)
-            
+
             logger.info(f"Indexed batch of {len(texts)} chunks")
-            
+
         except Exception as e:
             logger.error(f"Error indexing batch: {e}")
             raise
@@ -783,28 +844,28 @@ class RAGService:
         try:
             if not chunk_data.get("content", "").strip():
                 return
-                
+
             content = chunk_data["content"]
             metadata = _flatten_metadata(chunk_data.get("metadata", {}))
-            
+
             chunk_id = f"single_{len(self.chunk_ids)}_{hash(content) % 1000000}"
-            
+
             self.text_collection.add(
                 documents=[content],
                 metadatas=[metadata],
                 ids=[chunk_id],
             )
-            
+
             tokens = self.preprocess_text(content)
             self.bm25_corpus.append(tokens)
             self.document_chunks.append(content)
             self.chunk_ids.append(chunk_id)
             self.chunk_metadata.append(metadata)
             self.chunk_metadata_by_id[chunk_id] = metadata
-            
+
             if self.bm25_corpus:
                 self.bm25_model = BM25Okapi(self.bm25_corpus)
-                
+
         except Exception as e:
             logger.error(f"Error indexing single chunk: {e}")
             raise
@@ -838,149 +899,139 @@ class RAGService:
         """Filter out or deprioritize metadata-heavy content to improve RAG relevance."""
         if not text_chunks:
             return text_chunks
-            
+
         # Define metadata-heavy content types that should be excluded or deprioritized
         metadata_content_types = {
             # PDF metadata types
-            'pdf_document_overview',
-            'page_layout_analysis', 
-            'document_structure_analysis',
-            'pdf_document_analysis',
-            'document_metadata',
-            'document_overview',
-            'pdf_image_enhanced',
-            
+            "pdf_document_overview",
+            "page_layout_analysis",
+            "document_structure_analysis",
+            "pdf_document_analysis",
+            "document_metadata",
+            "document_overview",
+            "pdf_image_enhanced",
             # Image metadata types
-            'image_analysis',
-            'image_reference',
-            'partial_structure',
-            
+            "image_analysis",
+            "image_reference",
+            "partial_structure",
             # CSV/Excel metadata types
-            'dataset_overview',
-            'statistical_summary',
-            'column_analysis',
-            'large_dataset_overview',
-            
+            "dataset_overview",
+            "statistical_summary",
+            "column_analysis",
+            "large_dataset_overview",
             # DOCX metadata types
-            'document_analysis',
-            'docx_metadata',
-            'docx_image',
-            
-            # EPUB metadata types  
-            'epub_metadata',
-            'book_structure',
-            
+            "document_analysis",
+            "docx_metadata",
+            "docx_image",
+            # EPUB metadata types
+            "epub_metadata",
+            "book_structure",
             # Generic metadata types
-            'metadata_summary',
-            'file_analysis'
+            "metadata_summary",
+            "file_analysis",
         }
-        
+
         # Define content that should be prioritized (actual document content)
         priority_content_types = {
             # PDF content types
-            'pdf_text_body',
-            'pdf_text_header', 
-            'pdf_text_footer',
-            'pdf_headers',
-            'pdf_table_camelot',
-            'pdf_table_pdfplumber',
-            'pdf_content_block',
-            'pdf_page_ocr',
-            
+            "pdf_text_body",
+            "pdf_text_header",
+            "pdf_text_footer",
+            "pdf_headers",
+            "pdf_table_camelot",
+            "pdf_table_pdfplumber",
+            "pdf_content_block",
+            "pdf_page_ocr",
             # Image content types
-            'ocr_text',
-            'structured_content',
-            
+            "ocr_text",
+            "structured_content",
             # CSV/Excel content types
-            'data_chunk',
-            'table_content',
-            
+            "data_chunk",
+            "table_content",
             # DOCX content types
-            'docx_section',
-            'docx_paragraph',
-            'docx_table',
-            'docx_content',
-            
+            "docx_section",
+            "docx_paragraph",
+            "docx_table",
+            "docx_content",
             # EPUB content types
-            'epub_chapter',
-            'epub_content',
-            'epub_text',
-            
+            "epub_chapter",
+            "epub_content",
+            "epub_text",
             # Generic content types
-            'text_content',
-            'main_content'
+            "text_content",
+            "main_content",
         }
-        
+
         filtered_chunks = []
-        
+
         for chunk in text_chunks:
             if not isinstance(chunk, dict):
                 # Handle legacy string chunks
                 filtered_chunks.append(chunk)
                 continue
-                
-            content_type = chunk.get('metadata', {}).get('content_type', '')
-            content = chunk.get('content', '')
-            
+
+            content_type = chunk.get("metadata", {}).get("content_type", "")
+            content = chunk.get("content", "")
+
             # Skip metadata-heavy content types entirely
             if content_type.lower() in metadata_content_types:
                 logger.debug(f"Filtering out metadata content type: {content_type}")
                 continue
-                
+
             # Also filter based on content patterns (in case content_type is missing)
             metadata_patterns = [
-                'document metadata',
-                'document statistics', 
-                'document overview',
-                'statistical summary',
-                'column analysis',
-                'dataset overview',
-                'image analysis',
-                'layout analysis',
-                'document analysis',
-                'total pages:',
-                'file size:',
-                'creation date:',
-                'document characteristics:',
-                'layout characteristics:',
-                'page size:',
-                'text blocks:',
-                'word count:',
-                'reading time:',
-                'document type is categorized',
-                'dimensions:',
-                'aspect ratio:',
-                'average brightness:',
-                'color variance:',
-                'unique values:',
-                'missing values:',
-                'data types breakdown:',
-                'rows processed:',
-                'columns (',
-                'processing mode:'
+                "document metadata",
+                "document statistics",
+                "document overview",
+                "statistical summary",
+                "column analysis",
+                "dataset overview",
+                "image analysis",
+                "layout analysis",
+                "document analysis",
+                "total pages:",
+                "file size:",
+                "creation date:",
+                "document characteristics:",
+                "layout characteristics:",
+                "page size:",
+                "text blocks:",
+                "word count:",
+                "reading time:",
+                "document type is categorized",
+                "dimensions:",
+                "aspect ratio:",
+                "average brightness:",
+                "color variance:",
+                "unique values:",
+                "missing values:",
+                "data types breakdown:",
+                "rows processed:",
+                "columns (",
+                "processing mode:",
             ]
-            
+
             # Check if content is metadata-heavy
             content_lower = content.lower()
             is_metadata_heavy = any(pattern in content_lower for pattern in metadata_patterns)
-            
+
             # Skip if it's primarily metadata and short
             if is_metadata_heavy and len(content) < 1000:  # Allow longer content even if it mentions metadata
                 logger.debug(f"Filtering out metadata-heavy content: {content[:100]}...")
                 continue
-                
+
             # Additional filtering for very short non-informative chunks
             if len(content.strip()) < 50 and content_type not in priority_content_types:
                 logger.debug(f"Filtering out too-short content: {content[:50]}...")
                 continue
-                
+
             # Keep the chunk
             filtered_chunks.append(chunk)
-            
-        logger.info(f"Filtered {len(text_chunks) - len(filtered_chunks)} metadata chunks, keeping {len(filtered_chunks)} content chunks")
+
+        logger.info(
+            f"Filtered {len(text_chunks) - len(filtered_chunks)} metadata chunks, keeping {len(filtered_chunks)} content chunks"
+        )
         return filtered_chunks
-
-
 
     async def add_document(self, file_path, doc_id, chunk_size=None):
         """Ingest a file, extract content using enhanced loaders, and index text/table data.
@@ -1002,10 +1053,8 @@ class RAGService:
                 return {"status": "duplicate", "message": reason, "filename": doc_id}
 
             logger.info(f"Processing document with enhanced extraction: {doc_id}")
-            
-            text_chunks, image_records, table_texts = await asyncio.to_thread(
-                self._ingest_file_with_enhancement, path
-            )
+
+            text_chunks, image_records, table_texts = await asyncio.to_thread(self._ingest_file_with_enhancement, path)
             gc.collect()
 
             all_chunks = self._prepare_extracted_chunks(text_chunks, doc_id, str(file_path), chunk_size)
@@ -1018,25 +1067,29 @@ class RAGService:
                     "message": f"No extractable content found in {doc_id}",
                     "chunks_created": 0,
                 }
-            
+
             logger.info(f"Total chunks to index: {len(all_chunks)}")
-            
+
             batch_size = int(os.getenv("INDEX_BATCH_SIZE", "128"))
             for i in range(0, len(all_chunks), batch_size):
-                batch = all_chunks[i:i+batch_size]
+                batch = all_chunks[i : i + batch_size]
                 self._index_chunk_batch(batch, doc_id)
                 if i % 200 == 0:
                     gc.collect()
-            
+
             if str(file_path) not in self.file_paths:
                 self.file_paths.append(str(file_path))
-            
+
             # Register the file as processed to prevent future duplicates
             self._register_processed_file(str(file_path), doc_id, len(all_chunks))
-            
+
             logger.info(f"Successfully indexed {len(all_chunks)} chunks for {doc_id}")
-            return {"status": "success", "message": f"Successfully processed {doc_id}", "chunks_created": len(all_chunks)}
-            
+            return {
+                "status": "success",
+                "message": f"Successfully processed {doc_id}",
+                "chunks_created": len(all_chunks),
+            }
+
         except Exception as e:
             logger.error(f"Error indexing {doc_id}: {str(e)}")
             raise
@@ -1049,8 +1102,7 @@ class RAGService:
             pass
 
         self.text_collection = self.client.create_collection(
-            name="documents_text",
-            embedding_function=self.embedding_function
+            name="documents_text", embedding_function=self.embedding_function
         )
 
         self.bm25_corpus = []
@@ -1076,8 +1128,7 @@ class RAGService:
 
             # Recreate empty collection
             self.text_collection = self.client.create_collection(
-                name="documents_text",
-                embedding_function=self.embedding_function
+                name="documents_text", embedding_function=self.embedding_function
             )
 
             # Clear all in-memory indexes and references
@@ -1085,13 +1136,13 @@ class RAGService:
             self.bm25_corpus.clear()
             self.bm25_model = None
             self.document_chunks.clear()
-            
+
             # Clear chunk_ids if it exists
-            if hasattr(self, 'chunk_ids'):
+            if hasattr(self, "chunk_ids"):
                 self.chunk_ids.clear()
-            if hasattr(self, 'chunk_metadata'):
+            if hasattr(self, "chunk_metadata"):
                 self.chunk_metadata.clear()
-            if hasattr(self, 'chunk_metadata_by_id'):
+            if hasattr(self, "chunk_metadata_by_id"):
                 self.chunk_metadata_by_id.clear()
 
             # Clear file tracking to allow re-uploads after reset
@@ -1100,7 +1151,7 @@ class RAGService:
 
             # Force garbage collection to free memory
             gc.collect()
-            
+
             logger.info("RAG system reset completed successfully")
 
         except Exception as e:
@@ -1111,19 +1162,19 @@ class RAGService:
         """Run a BM25 keyword search and return (chunk_id, text, score) tuples for top hits."""
         if not self.bm25_model or not self.document_chunks:
             return []
-        
+
         q_tokens = self.preprocess_text(query)
         if not q_tokens:
             return []
-        
+
         scores = self.bm25_model.get_scores(q_tokens)
         top_indices = np.argsort(scores)[::-1][:n_results]
-        
+
         results = []
         for idx in top_indices:
             if scores[idx] > 0:
                 results.append((self.chunk_ids[idx], self.document_chunks[idx], float(scores[idx])))
-        
+
         return results
 
     def _build_search_record(
@@ -1161,18 +1212,14 @@ class RAGService:
         """Run semantic search over text chunks and return (chunk_id, text, similarity)."""
         try:
             results = self.text_collection.query(query_texts=[query], n_results=n_results)
-            if not results['documents'] or not results['documents'][0]:
+            if not results["documents"] or not results["documents"][0]:
                 return []
-            
+
             out = []
-            for doc_id, document, distance in zip(
-                results['ids'][0], 
-                results['documents'][0], 
-                results['distances'][0]
-            ):
+            for doc_id, document, distance in zip(results["ids"][0], results["documents"][0], results["distances"][0]):
                 similarity = 1 - distance
                 out.append((doc_id, document, similarity))
-            
+
             return out
         except Exception as e:
             logger.error(f"Vector text search error: {str(e)}")
@@ -1217,20 +1264,25 @@ class RAGService:
 
     def reciprocal_rank_fusion(self, bm25_results: List[Tuple], vector_results: List[Tuple], k: int = 60) -> List[str]:
         """Fuse BM25 and vector results using Reciprocal Rank Fusion and return sorted IDs."""
+
         def extract_id(result: Any) -> str:
             if isinstance(result, dict):
                 return result.get("id", "")
             return result[0]
 
-        bm25_scores = {extract_id(result): 1 / (k + rank + 1) for rank, result in enumerate(bm25_results) if extract_id(result)}
-        vector_scores = {extract_id(result): 1 / (k + rank + 1) for rank, result in enumerate(vector_results) if extract_id(result)}
-        
+        bm25_scores = {
+            extract_id(result): 1 / (k + rank + 1) for rank, result in enumerate(bm25_results) if extract_id(result)
+        }
+        vector_scores = {
+            extract_id(result): 1 / (k + rank + 1) for rank, result in enumerate(vector_results) if extract_id(result)
+        }
+
         all_doc_ids = set(bm25_scores.keys()) | set(vector_scores.keys())
         combined_scores = {}
-        
+
         for doc_id in all_doc_ids:
             combined_scores[doc_id] = bm25_scores.get(doc_id, 0) + vector_scores.get(doc_id, 0)
-        
+
         sorted_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
         return [doc_id for doc_id, _ in sorted_results]
 
@@ -1260,13 +1312,13 @@ class RAGService:
         """Build a retrieval query that includes non-system conversation history."""
         messages = messages or []
         history_context = "\n".join(
-            f"{msg['role']}: {msg['content']}"
-            for msg in messages
-            if msg.get('role') != 'system' and msg.get('content')
+            f"{msg['role']}: {msg['content']}" for msg in messages if msg.get("role") != "system" and msg.get("content")
         )
         return f"{history_context}\nUser: {query_text}" if history_context else query_text
 
-    def get_retrieval_records(self, query: str, n_results: int = 3, use_hybrid_search: bool = False) -> List[Dict[str, Any]]:
+    def get_retrieval_records(
+        self, query: str, n_results: int = 3, use_hybrid_search: bool = False
+    ) -> List[Dict[str, Any]]:
         """Retrieve source-aware records for grounded prompt construction."""
         if use_hybrid_search and self.bm25_model:
             logger.info("Using hybrid search (BM25 + semantic)")
@@ -1352,12 +1404,14 @@ class RAGService:
 
     def _truncate_source_content(self, content: str, max_chars: int = 1600) -> str:
         """Keep prompt source blocks readable and bounded."""
-        normalized = re.sub(r'\n{3,}', '\n\n', content.strip())
+        normalized = re.sub(r"\n{3,}", "\n\n", content.strip())
         if len(normalized) <= max_chars:
             return normalized
         return normalized[: max_chars - 3].rstrip() + "..."
 
-    def build_grounded_user_prompt(self, query_text: str, source_records: List[Dict[str, Any]], voice_mode: bool = False) -> str:
+    def build_grounded_user_prompt(
+        self, query_text: str, source_records: List[Dict[str, Any]], voice_mode: bool = False
+    ) -> str:
         """Create a grounded prompt without exposing citation markers in the answer."""
         if voice_mode:
             instruction_block = (
@@ -1391,7 +1445,9 @@ class RAGService:
             f"User question: {query_text}"
         )
 
-    def build_cited_user_prompt(self, query_text: str, source_records: List[Dict[str, Any]], voice_mode: bool = False) -> str:
+    def build_cited_user_prompt(
+        self, query_text: str, source_records: List[Dict[str, Any]], voice_mode: bool = False
+    ) -> str:
         """Backward-compatible alias for grounded prompts after citation removal."""
         return self.build_grounded_user_prompt(query_text, source_records, voice_mode=voice_mode)
 
@@ -1399,9 +1455,27 @@ class RAGService:
         """RAG citations are disabled, so no footer is appended."""
         return ""
 
-    async def query(self, query_text, system_prompt="You are a helpful assistant.", messages=None, n_results=3, use_hybrid_search=False, model: Optional[str] = None, conversation_summary: Optional[str] = None, backend: Optional[str] = "ollama", api_base: Optional[str] = None, api_key: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 2048, top_p: float = 0.9, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, is_voice_mode: bool = False):
+    async def query(
+        self,
+        query_text,
+        system_prompt="You are a helpful assistant.",
+        messages=None,
+        n_results=3,
+        use_hybrid_search=False,
+        model: Optional[str] = None,
+        conversation_summary: Optional[str] = None,
+        backend: Optional[str] = "ollama",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        top_p: float = 0.9,
+        frequency_penalty: float = 0.0,
+        repetition_penalty: float = 1.0,
+        is_voice_mode: bool = False,
+    ):
         """Answer a query using semantic or hybrid retrieval and stream model tokens.
-        
+
         Args:
             query_text: The user's query
             system_prompt: System prompt for the LLM
@@ -1426,37 +1500,41 @@ class RAGService:
 
         # Build messages with conversation memory support
         llm_messages = []
-        
+
         # Add conversation summary if available
         if conversation_summary:
-            llm_messages.append({
-                "role": "system",
-                "content": f"Summary of previous conversation:\n{conversation_summary}"
-            })
-        
+            llm_messages.append(
+                {"role": "system", "content": f"Summary of previous conversation:\n{conversation_summary}"}
+            )
+
         # Add conversation history
         llm_messages.extend(messages)
-        
+
         # Use voice-optimized system prompt if in voice mode
         if is_voice_mode and system_prompt == "You are a helpful assistant.":
             from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+
             system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
-        
+
         # Adjust max_tokens for voice mode
         if is_voice_mode:
             max_tokens = min(max_tokens, 300)
-        
+
         # Add system prompt and current query with context
         llm_messages.append({"role": "system", "content": system_prompt})
-        llm_messages.append({
-            "role": "system",
-            "content": "Do not include citations, source numbers, filenames, bracketed references, or a Sources section unless the user explicitly asks for sources.",
-        })
-        llm_messages.append({
-            "role": "user",
-            "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
-        })
-        
+        llm_messages.append(
+            {
+                "role": "system",
+                "content": "Do not include citations, source numbers, filenames, bracketed references, or a Sources section unless the user explicitly asks for sources.",
+            }
+        )
+        llm_messages.append(
+            {
+                "role": "user",
+                "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
+            }
+        )
+
         async for chunk in stream_completion(
             llm_messages,
             backend=backend,
@@ -1467,13 +1545,14 @@ class RAGService:
             max_tokens=max_tokens,
             top_p=top_p,
             frequency_penalty=frequency_penalty,
-            repetition_penalty=repetition_penalty
+            repetition_penalty=repetition_penalty,
         ):
             yield chunk
 
 
 class CrewAIRAGOrchestrator:
     """Coordinates refined querying and answer composition using the selected backend."""
+
     def __init__(
         self,
         rag_service: RAGService,
@@ -1498,25 +1577,27 @@ class CrewAIRAGOrchestrator:
         if self.backend == "ollama" and agent_model.startswith("ollama_chat/"):
             agent_model = f"ollama/{agent_model[len('ollama_chat/') :]}"
 
-        self.agent_llm = LLM(
-            model=agent_model,
-            base_url=self.llm_config.api_base,
-            api_key=self.llm_config.api_key,
-            temperature=0.0
-        )
+        agent_llm_kwargs = {
+            "model": agent_model,
+            "base_url": self.llm_config.api_base,
+            "api_key": self.llm_config.api_key,
+            "temperature": 0.0,
+        }
+
+        self.agent_llm = LLM(**agent_llm_kwargs)
         self.context_length = 4096
-        
+
         self.refiner = Agent(
             role="Query Refiner",
             goal="Clarify user questions for retrieval.",
             backstory="Understands intent of the prompt and rewrites prompts with more details.",
-            llm=self.agent_llm
+            llm=self.agent_llm,
         )
         self.composer = Agent(
             role="Answer Composer",
             goal="Craft final answers with citations.",
             backstory="Synthesises context into helpful replies.",
-            llm=self.agent_llm
+            llm=self.agent_llm,
         )
 
     async def _get_context_length(self, model_name: str) -> int:
@@ -1525,35 +1606,34 @@ class CrewAIRAGOrchestrator:
             return 4096
 
         model = model_name.replace("ollama_chat/", "").replace("ollama/", "")
-        
+
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"{self.llm_config.api_base}/api/show",
-                    json={"name": model}
-                )
+                resp = await client.post(f"{self.llm_config.api_base}/api/show", json={"name": model})
                 resp.raise_for_status()
                 data = resp.json()
-                params = data.get('model_info', '')
-                
+                params = data.get("model_info", "")
+
                 # Security: Use JSON parsing instead of ast.literal_eval
                 if isinstance(params, str):
                     import json
+
                     try:
                         params = json.loads(params)
                     except json.JSONDecodeError:
                         # If JSON parsing fails, try ast.literal_eval as fallback
                         # ast.literal_eval is safe for literal structures only
                         import ast
+
                         try:
                             params = ast.literal_eval(params)
                         except (ValueError, SyntaxError) as e:
                             logger.warning(f"Failed to parse model_info: {e}")
                             return 4096
-                
+
                 if not isinstance(params, dict):
                     return 4096
-                
+
                 for key, value in params.items():
                     if key.endswith("context_length"):
                         try:
@@ -1561,7 +1641,7 @@ class CrewAIRAGOrchestrator:
                         except (ValueError, TypeError):
                             logger.warning(f"Invalid context_length value: {value}")
                             return 4096
-                
+
                 return 4096
         except Exception as e:
             logger.warning(f"Error getting context length: {e}")
@@ -1569,11 +1649,8 @@ class CrewAIRAGOrchestrator:
 
     async def _generate_summary(self, text: str, system_prompt: str) -> str:
         """Generate a short summary for a text segment using the configured backend."""
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
-        ]
-        
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}]
+
         response = ""
         async for chunk in stream_completion(
             messages,
@@ -1584,18 +1661,18 @@ class CrewAIRAGOrchestrator:
             temperature=0.0,
         ):
             response += chunk
-        
+
         return response
 
     def chunk_text(self, text: str, chunk_size: int):
         """Simple character-based chunking without overlap (used for specific cases)."""
         if not text or not text.strip():
             return []
-        
+
         text = text.strip()
         chunks = []
         for i in range(0, len(text), chunk_size):
-            chunk = text[i:i + chunk_size].strip()
+            chunk = text[i : i + chunk_size].strip()
             if chunk:
                 chunks.append(chunk)
         return chunks
@@ -1604,16 +1681,16 @@ class CrewAIRAGOrchestrator:
         """Recursively summarize text until it fits within a target character budget."""
         if len(text) <= target_length:
             return text
-        
+
         chunk_size = target_length // 2
         chunks = self.chunk_text(text, chunk_size)
         summaries = []
-        
+
         for chunk in chunks:
             sum_prompt = "Provide a concise summary of the following text:"
             summ = await self._generate_summary(chunk, sum_prompt)
             summaries.append(summ)
-        
+
         combined = " ".join(summaries)
         return await self.summarize_context(combined, target_length)
 
@@ -1630,46 +1707,44 @@ class CrewAIRAGOrchestrator:
         """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
         if self.backend == "ollama" and self.context_length == 4096:
             self.context_length = await self._get_context_length(self.model_name)
-        
+
         history_parts = []
         if conversation_summary:
             history_parts.append(f"Summary of previous conversation:\n{conversation_summary}")
-        history_parts.extend(
-            f"{msg['role']}: {msg['content']}" for msg in messages if msg['role'] != 'system'
-        )
+        history_parts.extend(f"{msg['role']}: {msg['content']}" for msg in messages if msg["role"] != "system")
         history_context = "\n".join(history_parts)
         refine_prompt = (
             f"Previous conversation:\n{history_context}\n\n"
             "Refine the following user query so it is precise, self-contained and uses full nouns:\n\n"
             f"{user_query}"
         )
-        
+
         refined = await self.refiner.kickoff_async(refine_prompt)
         refined_query = refined.raw.strip()
         logger.info(f"Refined query: {refined_query}")
-        
+
         if use_hybrid_search and self.rag_service.bm25_model:
             documents = self.rag_service.hybrid_search(refined_query, n_results)
             context = " ".join(documents)
         else:
             res = self.rag_service.text_collection.query(query_texts=[refined_query], n_results=n_results)
             context = " ".join(res["documents"][0]) if res["documents"] else ""
-        
+
         approx_tokens = len(context) // 4 + 1
         target_tokens = self.context_length * 0.6
-        
+
         if approx_tokens > target_tokens:
             target_chars = int(target_tokens * 4)
             context = await self.summarize_context(context, target_chars)
-        
+
         compose_prompt = (
             f"Previous conversation:\n{history_context}\n\n"
             f"Context:\n{context}\n\nOriginal question:\n{user_query}\n\n"
             f"Follow these instructions when you answer:\n{system_prompt}"
         )
-        
+
         final = await self.composer.kickoff_async(compose_prompt)
         answer = final.raw
-        
+
         for i in range(0, len(answer), 400):
             yield answer[i : i + 400]

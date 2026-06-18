@@ -1,6 +1,6 @@
 # LiteMindUI
 
-LiteMindUI is a local-first AI workspace with a FastAPI backend and a Streamlit frontend for chat, RAG, web search, and voice-enabled workflows. It supports Ollama for local models and OpenRouter for hosted models.
+LiteMindUI is a local-first AI workspace with a FastAPI backend and a Streamlit frontend for chat, RAG, web search, and voice-enabled workflows. It supports Ollama for local models plus OpenRouter and Nvidia NIM for LiteLLM-hosted models.
 
 ![LiteMindUI demo](docs/assets/litemindui-demo.gif)
 
@@ -98,5 +98,5 @@ docker-compose*.yml supported container workflows
 
 - Ollama should be reachable at `http://localhost:11434` for native runs and `http://host.docker.internal:11434` from containers unless you override `OLLAMA_API_URL`.
 - The frontend depends on the FastAPI backend for chat, RAG, and web search features.
-- RAG embeddings can use direct Ollama/HuggingFace integrations or OpenRouter via the existing LiteLLM transport.
+- RAG embeddings can use direct Ollama/HuggingFace integrations or hosted LiteLLM providers such as OpenRouter and Nvidia NIM.
 - For production-like deployments, prefer the compose workflows over ad hoc process startup.

@@ -1,8 +1,10 @@
 """
 Chat API endpoints with conversation memory support
 """
+
 import logging
-from typing import List, Dict
+from typing import Dict, List
+
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -10,12 +12,13 @@ from fastapi.responses import StreamingResponse
 # Ensure environment variables are loaded before importing services
 load_dotenv()
 
-from app.backend.models.api_models import ChatRequestEnhanced, ChatResponse, SerpTokenStatus, MemoryStatsResponse
-from app.skills import chat_skill_registry
+import json
+
+from app.backend.models.api_models import ChatRequestEnhanced, ChatResponse, MemoryStatsResponse, SerpTokenStatus
+from app.services.conversation_memory import get_memory_service
 from app.services.llm_gateway import complete_text, stream_completion
 from app.services.web_search_service import WebSearchService
-from app.services.conversation_memory import get_memory_service
-import json
+from app.skills import chat_skill_registry
 
 logger = logging.getLogger(__name__)
 
@@ -42,34 +45,34 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     "EXAMPLE – interactive webapp:\n"
     "```ui:webapp\n"
     "<!-- height: 620 -->\n"
-    "<div class=\"toy-counter\">\n"
+    '<div class="toy-counter">\n'
     "  <h3>Toy Counter</h3>\n"
-    "  <p id=\"count\">0</p>\n"
-    "  <button id=\"increment\">Increment</button>\n"
-    "  <button id=\"reset\">Reset</button>\n"
+    '  <p id="count">0</p>\n'
+    '  <button id="increment">Increment</button>\n'
+    '  <button id="reset">Reset</button>\n'
     "</div>\n"
     "<style>\n"
     "  .toy-counter { display: grid; gap: 12px; justify-items: start; }\n"
     "  .toy-counter button { border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer; }\n"
     "</style>\n"
     "<script>\n"
-    "  const countEl = document.getElementById(\"count\");\n"
+    '  const countEl = document.getElementById("count");\n'
     "  let count = 0;\n"
-    "  document.getElementById(\"increment\").addEventListener(\"click\", () => {\n"
+    '  document.getElementById("increment").addEventListener("click", () => {\n'
     "    count += 1;\n"
     "    countEl.textContent = String(count);\n"
     "  });\n"
-    "  document.getElementById(\"reset\").addEventListener(\"click\", () => {\n"
+    '  document.getElementById("reset").addEventListener("click", () => {\n'
     "    count = 0;\n"
-    "    countEl.textContent = \"0\";\n"
+    '    countEl.textContent = "0";\n'
     "  });\n"
     "</script>\n"
     "```\n\n"
     "EXAMPLE – playable iframe app:\n"
     "```ui:iframe_app\n"
     "<!-- height: 720 -->\n"
-    "<div id=\"app\" data-autofocus>\n"
-    "  <canvas id=\"maze\" width=\"480\" height=\"480\" aria-label=\"Arcade demo\"></canvas>\n"
+    '<div id="app" data-autofocus>\n'
+    '  <canvas id="maze" width="480" height="480" aria-label="Arcade demo"></canvas>\n'
     "  <p>Use the arrow keys to move.</p>\n"
     "</div>\n"
     "<style>\n"
@@ -77,16 +80,16 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
     "  canvas { background: #111827; border-radius: 16px; }\n"
     "</style>\n"
     "<script>\n"
-    "  const canvas = document.getElementById(\"maze\");\n"
-    "  const ctx = canvas.getContext(\"2d\");\n"
+    '  const canvas = document.getElementById("maze");\n'
+    '  const ctx = canvas.getContext("2d");\n'
     "  let x = 40;\n"
-    "  window.addEventListener(\"keydown\", (event) => {\n"
-    "    if (event.key === \"ArrowRight\") x = Math.min(x + 16, canvas.width - 24);\n"
-    "    if (event.key === \"ArrowLeft\") x = Math.max(x - 16, 8);\n"
+    '  window.addEventListener("keydown", (event) => {\n'
+    '    if (event.key === "ArrowRight") x = Math.min(x + 16, canvas.width - 24);\n'
+    '    if (event.key === "ArrowLeft") x = Math.max(x - 16, 8);\n'
     "  });\n"
     "  function draw() {\n"
     "    ctx.clearRect(0, 0, canvas.width, canvas.height);\n"
-    "    ctx.fillStyle = \"#facc15\";\n"
+    '    ctx.fillStyle = "#facc15";\n'
     "    ctx.beginPath();\n"
     "    ctx.arc(x, 240, 18, 0.25 * Math.PI, 1.75 * Math.PI);\n"
     "    ctx.lineTo(x, 240);\n"
@@ -151,44 +154,35 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
     """
     Build the messages list including conversation history and summary.
     Also applies voice mode optimizations if is_voice_mode is True.
-    
+
     Args:
         request: The chat request with optional history/summary
-        
+
     Returns:
         List of messages ready for LLM
     """
     messages = []
-    
+
     # Add voice mode system prompt if voice mode is active
     if request.is_voice_mode:
         from app.frontend.config import DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
-        messages.append({
-            "role": "system",
-            "content": DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
-        })
+
+        messages.append({"role": "system", "content": DEFAULT_CHAT_SYSTEM_PROMPT_VOICE})
 
     if request.enable_generative_ui:
-        messages.append({
-            "role": "system",
-            "content": GENERATIVE_UI_SYSTEM_PROMPT
-        })
-    
+        messages.append({"role": "system", "content": GENERATIVE_UI_SYSTEM_PROMPT})
+
     # Add conversation summary as system context if available
     if request.conversation_summary:
-        messages.append({
-            "role": "system",
-            "content": f"Summary of previous conversation:\n{request.conversation_summary}"
-        })
-    
+        messages.append(
+            {"role": "system", "content": f"Summary of previous conversation:\n{request.conversation_summary}"}
+        )
+
     # Add conversation history if available
     if request.conversation_history:
         for msg in request.conversation_history:
-            messages.append({
-                "role": msg.role,
-                "content": msg.content
-            })
-    
+            messages.append({"role": msg.role, "content": msg.content})
+
     # Add the current user message (with optional generative UI hint)
     user_content = request.message
     if request.enable_generative_ui:
@@ -203,7 +197,7 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
             "and **Bold Label:** Value lines instead.]"
         )
     messages.append({"role": "user", "content": user_content})
-    
+
     return messages
 
 
@@ -212,7 +206,7 @@ async def get_memory_stats(session_id: str):
     """Get memory statistics for a session"""
     memory_service = get_memory_service()
     stats = memory_service.get_session_stats(session_id)
-    
+
     return MemoryStatsResponse(
         session_id=stats["session_id"],
         message_count=stats["message_count"],
@@ -222,7 +216,7 @@ async def get_memory_stats(session_id: str):
         max_context_tokens=memory_service.max_context_tokens,
         usage_percentage=round(
             (stats["total_tokens"] + stats["summary_tokens"]) / memory_service.max_context_tokens * 100, 2
-        )
+        ),
     )
 
 
@@ -240,21 +234,17 @@ async def summarize_memory(session_id: str):
     memory_service = get_memory_service()
     summarized = await memory_service.summarize_if_needed(session_id, force=True)
     stats = memory_service.get_session_stats(session_id)
-    return {
-        "status": "summarized" if summarized else "no_action",
-        "session_id": session_id,
-        "stats": stats
-    }
+    return {"status": "summarized" if summarized else "no_action", "session_id": session_id, "stats": stats}
 
 
 @router.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequestEnhanced):
     """Single chat message processing"""
     logger.info(f"Chat request - Backend: {request.backend}, Model: {request.model}")
-    
+
     try:
         return await _handle_chat_request(request)
-            
+
     except Exception:
         logger.exception("Chat endpoint error")
         raise HTTPException(status_code=500, detail="An internal error occurred")
@@ -264,13 +254,13 @@ async def chat_endpoint(request: ChatRequestEnhanced):
 async def chat_stream(request: ChatRequestEnhanced):
     """Stream chat responses"""
     logger.info(f"Streaming chat - Backend: {request.backend}, Model: {request.model}")
-    
+
     async def event_generator():
         try:
             async for chunk in _stream_chat_response(request):
                 payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
-                    
+
         except Exception:
             logger.exception("Chat streaming error")
             payload = json.dumps({"error": "An internal error occurred"}, ensure_ascii=False)
@@ -283,7 +273,7 @@ async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
     """Handle a chat request with conversation history."""
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
-    
+
     # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
     if request.is_voice_mode:
         max_tokens = 300
@@ -291,7 +281,7 @@ async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
         max_tokens = max(request.max_tokens or 2048, GENUI_MIN_MAX_TOKENS)
     else:
         max_tokens = request.max_tokens
-    
+
     response_text = await complete_text(
         messages,
         backend=request.backend,
@@ -304,7 +294,7 @@ async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
         frequency_penalty=request.frequency_penalty,
         repetition_penalty=request.repetition_penalty,
     )
-    
+
     return ChatResponse(response=response_text, model=request.model)
 
 
@@ -312,7 +302,7 @@ async def _stream_chat_response(request: ChatRequestEnhanced):
     """Stream chat responses with conversation history."""
     # Build messages with conversation history
     messages = _build_messages_with_history(request)
-    
+
     # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
     if request.is_voice_mode:
         max_tokens = 300
@@ -320,7 +310,7 @@ async def _stream_chat_response(request: ChatRequestEnhanced):
         max_tokens = max(request.max_tokens or 2048, GENUI_MIN_MAX_TOKENS)
     else:
         max_tokens = request.max_tokens
-    
+
     async for chunk in stream_completion(
         messages,
         backend=request.backend,
@@ -340,7 +330,7 @@ async def _stream_chat_response(request: ChatRequestEnhanced):
 async def chat_web_search(request: ChatRequestEnhanced):
     """Process chat with optional web search integration"""
     logger.info(f"Web search chat request - use_web_search: {request.use_web_search}, Model: {request.model}")
-    
+
     try:
         # Validate that web search is requested
         if not request.use_web_search:
@@ -348,19 +338,19 @@ async def chat_web_search(request: ChatRequestEnhanced):
             return await chat_stream(request)
 
         return await _handle_web_search_chat(request)
-        
+
     except Exception as e:
         logger.error(f"Web search endpoint error: {e}", exc_info=True)
         logger.info("Falling back to standard chat due to error")
-        
+
         # Fallback to standard chat on any error
         async def error_fallback():
             error_msg = "Web search is temporarily unavailable. Defaulting to local results.\n\n"
             yield error_msg
-            
+
             async for chunk in _stream_chat_response(request):
                 yield chunk
-        
+
         return StreamingResponse(error_fallback(), media_type="text/plain")
 
 
@@ -368,28 +358,19 @@ async def chat_web_search(request: ChatRequestEnhanced):
 async def get_serp_token_status():
     """Get SerpAPI token validation status"""
     logger.info("Checking SerpAPI token status")
-    
+
     try:
         web_search_service = WebSearchService()
         validation = web_search_service.validate_token()
-        
+
         if validation["valid"]:
-            return SerpTokenStatus(
-                status="valid",
-                message=validation["message"]
-            )
+            return SerpTokenStatus(status="valid", message=validation["message"])
         else:
-            return SerpTokenStatus(
-                status="invalid",
-                message=validation["message"]
-            )
-            
+            return SerpTokenStatus(status="invalid", message=validation["message"])
+
     except Exception:
         logger.error("Error checking SerpAPI token status", exc_info=True)
-        return SerpTokenStatus(
-            status="error",
-            message="Error checking token status."
-        )
+        return SerpTokenStatus(status="error", message="Error checking token status.")
 
 
 async def _handle_web_search_chat(request: ChatRequestEnhanced):
@@ -415,21 +396,21 @@ async def _handle_web_search_chat(request: ChatRequestEnhanced):
         return StreamingResponse(error_and_fallback(), media_type="text/plain")
 
     logger.info("Routing to chat skill '%s'", skill.name)
-    
+
     async def event_generator():
         try:
             async for chunk in skill.stream(request):
                 yield chunk + "\n"
-                
+
         except Exception:
             logger.error("Chat skill '%s' failed", skill.name, exc_info=True)
             yield "Error during web search.\n"
             yield "Falling back to local results...\n\n"
-            
+
             # Fallback to standard chat
             async for chunk in _stream_chat_response(request):
                 yield chunk + "\n"
-    
+
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 
@@ -451,12 +432,12 @@ async def _stream_web_search_chat(request: ChatRequestEnhanced):
 
         async for chunk in skill.stream(request):
             yield chunk
-            
+
     except Exception:
         logger.error("Web search streaming error", exc_info=True)
         yield "Error during web search.\n"
         yield "Falling back to local results...\n\n"
-        
+
         # Fallback to standard chat
         async for chunk in _stream_chat_response(request):
             yield chunk

@@ -1,28 +1,32 @@
 """
 Chat interface for LLM conversations with voice input support and conversation memory.
 """
+
 import logging
-import streamlit as st
 from typing import Dict, List, Optional
 
-from ..components.voice_input import get_voice_input
-from ..components.text_renderer import render_llm_text, render_plain_text, render_web_search_text
-from ..components.streaming_handler import streaming_handler
-from ..components.web_search_toggle import WebSearchToggle
-from ..components.tts_player import render_tts_button
+import streamlit as st
+
 from ..components.conversation_sidebar import get_chat_sidebar
 from ..components.shared_ui import (
-    render_memory_indicator,
-    render_generation_settings,
-    render_reasoning_config,
-    render_memory_config,
-    render_backend_selector,
-    validate_backend_setup,
     create_simple_summary,
     get_backend_request_config,
-    get_default_openrouter_model,
+    get_default_model_for_backend,
     get_generation_config_from_session,
+    get_hosted_backend_config,
+    is_hosted_backend,
+    render_backend_selector,
+    render_generation_settings,
+    render_memory_config,
+    render_memory_indicator,
+    render_reasoning_config,
+    validate_backend_setup,
 )
+from ..components.streaming_handler import streaming_handler
+from ..components.text_renderer import render_llm_text, render_plain_text, render_web_search_text
+from ..components.tts_player import render_tts_button
+from ..components.voice_input import get_voice_input
+from ..components.web_search_toggle import WebSearchToggle
 from ..services.backend_service import backend_service
 from ..utils.memory_manager import ChatMemoryManager
 
@@ -37,121 +41,128 @@ def _is_embedding_model(name: str) -> bool:
 
 class ChatPage:
     """Chat interface controller with conversation memory support"""
-    
+
     def __init__(self):
         self.backend_available = st.session_state.get("backend_available", False)
         self.web_search_toggle = WebSearchToggle()
         self.memory_manager = ChatMemoryManager()
         self.conversation_sidebar = get_chat_sidebar()
         self._initialize_session_state()
-    
+
     def _initialize_session_state(self):
         """Initialize session state variables for web search and memory"""
         if "web_search_enabled" not in st.session_state:
             st.session_state.web_search_enabled = False
-        
+
         if "serp_api_token_status" not in st.session_state:
             st.session_state.serp_api_token_status = None
-        
+
         # Initialize memory-related session state
         if "chat_memory_enabled" not in st.session_state:
             st.session_state.chat_memory_enabled = True
-        
+
         # Initialize conversation history enabled state
         if "chat_history_enabled" not in st.session_state:
             st.session_state.chat_history_enabled = True
-        
+
         # Initialize generative UI state
         if "enable_generative_ui" not in st.session_state:
             st.session_state.enable_generative_ui = False
 
-        st.session_state.setdefault("selected_openrouter_chat_model", get_default_openrouter_model())
-    
+        st.session_state.setdefault(
+            "selected_openrouter_chat_model",
+            get_default_model_for_backend("openrouter"),
+        )
+        st.session_state.setdefault(
+            "selected_nvidia_nim_chat_model",
+            get_default_model_for_backend("nvidia_nim"),
+        )
+
     def _render_web_search_toggle(self) -> bool:
         """
         Render web search toggle in prompt area.
-        
+
         Returns:
             bool: Current toggle state
         """
         return self.web_search_toggle.render()
-    
+
     def _get_web_search_status(self) -> Dict[str, bool]:
         """
         Check if web search is enabled and token is valid.
-        
+
         Returns:
             dict: Dictionary with 'enabled' and 'token_valid' keys
         """
         web_search_enabled = st.session_state.get("web_search_enabled", False)
-        
+
         if not web_search_enabled:
             return {"enabled": False, "token_valid": False}
-        
+
         # Get token status
         token_status = st.session_state.get("serp_api_token_status")
         if token_status is None:
             token_status = self.web_search_toggle.get_token_status()
             st.session_state.serp_api_token_status = token_status
-        
+
         token_valid = token_status.get("status") == "valid"
-        
+
         return {"enabled": True, "token_valid": token_valid}
-    
+
     def _get_conversation_context(self) -> tuple[List[Dict[str, str]], Optional[str]]:
         """
         Get conversation history and summary for API calls.
-        
+
         Returns:
             Tuple of (conversation_history, conversation_summary)
         """
         if not st.session_state.get("chat_memory_enabled", True):
             return [], None
-        
+
         # Get history excluding the most recent user message (which we're about to send)
         history = self.memory_manager.get_history_for_api(exclude_last=1)
         summary = self.memory_manager.summary
-        
+
         return history, summary
-        
+
     def render(self):
         realtime_active = st.session_state.get("realtime_voice_mode_chat", False)
 
         if not realtime_active:
             st.title("LLM Chat Interface")
-            
+
             # Display memory indicator if memory is enabled
             if st.session_state.get("chat_memory_enabled", True):
                 stats = self.memory_manager.get_stats()
                 if stats.total_messages > 0:
                     self._render_memory_indicator(stats)
-        
+
         if "chat_messages" not in st.session_state:
             st.session_state.chat_messages = []
-        
+
         backend_provider = st.session_state.get("current_backend", "ollama")
-        
+
         if not realtime_active:
             self._display_chat_history()
-            
+
             # Handle generative UI button interactions
             pending_genui_input = st.session_state.pop("genui_pending_input", None)
             if pending_genui_input:
                 self._process_user_input(pending_genui_input, backend_provider)
                 return
-            
+
             # Render web search toggle before voice input
             self._render_web_search_toggle()
-        
+
         user_input = get_voice_input("Enter your message...", "chat")
-        
+
         if user_input:
             self._process_user_input(user_input, backend_provider)
-    
+
     def _render_memory_indicator(self, stats):
         """Render a visual memory usage indicator."""
         render_memory_indicator(stats)
-    
+
     def _display_chat_history(self):
         if st.session_state.chat_messages:
             for idx, msg in enumerate(st.session_state.chat_messages):
@@ -163,7 +174,7 @@ class ChatPage:
                         render_plain_text(msg["content"])
                     else:
                         render_llm_text(msg["content"], msg_index=idx)
-                    
+
                     # Add TTS play button for assistant messages (always show)
                     if msg["role"] == "assistant":
                         render_tts_button(msg["content"], "chat", idx)
@@ -176,39 +187,39 @@ class ChatPage:
                 """,
                 unsafe_allow_html=True,
             )
-    
+
     def _process_user_input(self, user_input: str, backend_provider: str):
         # Validate setup
         if not self._validate_setup(backend_provider):
             return
-        
+
         config = self._get_chat_config(backend_provider)
-        
+
         # Get conversation context BEFORE adding the new message
         conversation_history, conversation_summary = self._get_conversation_context()
-        
+
         # Add user message
         st.session_state.chat_messages.append({"role": "user", "content": user_input})
-        
+
         # Save user message to conversation history if enabled
         if st.session_state.get("chat_history_enabled", True):
             self.conversation_sidebar.save_message("user", user_input)
-        
+
         with st.chat_message("user"):
             render_llm_text(user_input)
-        
+
         # Check web search status
         web_search_status = self._get_web_search_status()
         use_web_search = web_search_status["enabled"] and web_search_status["token_valid"]
-        
+
         # Generate response
         with st.chat_message("assistant"):
             out = st.empty()
-            
+
             # Route to web search endpoint if enabled and token valid
             if use_web_search:
                 status_text = "Searching web..."
-                
+
                 with st.spinner(status_text):
                     reply = streaming_handler.stream_web_search_response(
                         message=user_input,
@@ -225,18 +236,18 @@ class ChatPage:
                         use_fastapi=self.backend_available,
                         conversation_history=conversation_history,
                         conversation_summary=conversation_summary,
-                        session_id=self.memory_manager.session_id
+                        session_id=self.memory_manager.session_id,
                     )
             else:
                 # Display error message if web search enabled but token invalid
                 if web_search_status["enabled"] and not web_search_status["token_valid"]:
                     st.warning("⚠️ SerpAPI token is required to perform Web search. Defaulting to local results")
-                
+
                 # Check if realtime voice mode is active
                 is_voice_mode = st.session_state.get("realtime_voice_mode_chat", False)
-                
+
                 status_text = self._get_status_text(backend_provider, config.get("model", "default"))
-                
+
                 with st.spinner(status_text):
                     reply = streaming_handler.stream_chat_response(
                         message=user_input,
@@ -255,23 +266,23 @@ class ChatPage:
                         conversation_summary=conversation_summary,
                         session_id=self.memory_manager.session_id,
                         is_voice_mode=is_voice_mode,
-                        enable_generative_ui=st.session_state.get("enable_generative_ui", False)
+                        enable_generative_ui=st.session_state.get("enable_generative_ui", False),
                     )
-        
+
         if reply:
             assistant_message = {"role": "assistant", "content": reply}
             if use_web_search:
                 assistant_message["format"] = "web_search"
             st.session_state.chat_messages.append(assistant_message)
-            
+
             # Save assistant message to conversation history if enabled
             if st.session_state.get("chat_history_enabled", True):
                 metadata = {"format": "web_search"} if use_web_search else None
                 self.conversation_sidebar.save_message("assistant", reply, metadata)
-            
+
             # Check if we need to trigger summarization
             self._check_and_trigger_summarization()
-            
+
             # Use rerun sparingly - only when necessary for UI updates
             st.rerun()
         else:
@@ -279,31 +290,34 @@ class ChatPage:
             st.error(error_msg)
             st.session_state.chat_messages.append({"role": "assistant", "content": "No response."})
             # Don't rerun on error - let user try again naturally
-    
+
     def _validate_setup(self, backend_provider: str) -> bool:
         """Validate backend setup for the current provider."""
         return validate_backend_setup(backend_provider)
-    
+
     def _get_chat_config(self, backend_provider: str) -> Dict:
         """Get chat configuration for the current backend."""
         config = get_generation_config_from_session("chat")
         config.update(get_backend_request_config(backend_provider))
-        if backend_provider == "openrouter":
-            config["model"] = st.session_state.get("selected_openrouter_chat_model", get_default_openrouter_model())
+        if is_hosted_backend(backend_provider):
+            config["model"] = st.session_state.get(
+                f"selected_{backend_provider}_chat_model",
+                get_default_model_for_backend(backend_provider),
+            )
         else:
             config["model"] = st.session_state.get("selected_chat_model", "default")
-        
+
         return config
-    
+
     def _get_status_text(self, backend_provider: str, model: str, web_search_active: bool = False) -> str:
         """
         Get status text for the spinner.
-        
+
         Args:
             backend_provider: The selected inference backend
             model: The model name
             web_search_active: Whether web search is active
-            
+
         Returns:
             str: Status text to display
         """
@@ -311,38 +325,41 @@ class ChatPage:
             return "Searching web..."
 
         return "Thinking..."
-    
+
     def render_sidebar_config(self):
         # Render conversation history sidebar first
         if st.session_state.get("chat_history_enabled", True):
             self.conversation_sidebar.render()
-        
+
         st.sidebar.markdown("---")
         st.sidebar.subheader("Chat Configuration")
-        
+
         backend_provider = render_backend_selector()
 
         if backend_provider == "ollama":
             self._render_ollama_model_config()
         else:
-            self._render_openrouter_model_config()
-        
+            self._render_hosted_model_config(backend_provider)
+
         # Generation settings using shared component
-        render_generation_settings("chat", expanded=True)
-        
+        render_generation_settings(
+            "chat",
+            expanded=True,
+        )
+
         # Reasoning settings using shared component
         render_reasoning_config()
-        
+
         # Generative UI toggle
         st.sidebar.checkbox(
             "Generative UI",
             key="enable_generative_ui",
-            help="Enable rich UI components (charts, tables, metrics, buttons) in AI responses"
+            help="Enable rich UI components (charts, tables, metrics, buttons) in AI responses",
         )
-        
+
         # Memory configuration using shared component
         render_memory_config(self.memory_manager, "chat", "history_enabled", "memory_enabled")
-        
+
         # Clear chat (clears current session, not history)
         if st.sidebar.button("🗑️ Clear Current Chat", type="secondary"):
             st.session_state.chat_messages.clear()
@@ -352,15 +369,12 @@ class ChatPage:
             if "last_user_input" in st.session_state:
                 del st.session_state.last_user_input
             st.rerun()
-    
+
     def _render_ollama_model_config(self):
         if self.backend_available:
             enhanced = backend_service.get_enhanced_models()
             # Exclude embedding / reranking models from the chat model list
-            local_models = [
-                m["name"] for m in enhanced.get("local_models", [])
-                if not _is_embedding_model(m["name"])
-            ]
+            local_models = [m["name"] for m in enhanced.get("local_models", []) if not _is_embedding_model(m["name"])]
             cloud_models = enhanced.get("cloud_models", [])
         else:
             local_models = []
@@ -398,11 +412,11 @@ class ChatPage:
         raw_name = selected_label
         for prefix in ("🟢 ", "☁️ "):
             if raw_name.startswith(prefix):
-                raw_name = raw_name[len(prefix):]
+                raw_name = raw_name[len(prefix) :]
                 break
         # Strip description suffix if present
         if "  (" in raw_name:
-            raw_name = raw_name[:raw_name.index("  (")]
+            raw_name = raw_name[: raw_name.index("  (")]
 
         # Cloud models are catalog entries only (no pull action in UI)
         if selected_label not in local_set:
@@ -411,32 +425,30 @@ class ChatPage:
         # Always store the raw model name for use by the chat pipeline
         st.session_state["selected_chat_model"] = raw_name
 
-    def _render_openrouter_model_config(self):
+    def _render_hosted_model_config(self, backend_provider: str):
+        provider_config = get_hosted_backend_config(backend_provider)
         st.sidebar.text_input(
-            "OpenRouter Model:",
-            key="selected_openrouter_chat_model",
-            help="Example: meta-llama/llama-3.3-70b-instruct or openai/gpt-4o-mini",
+            f"{provider_config['display_name']} Model:",
+            key=f"selected_{backend_provider}_chat_model",
+            help=f"Example: {provider_config['model_example']}",
         )
-    
+
     def _check_and_trigger_summarization(self):
         """Check if summarization is needed and trigger it."""
         if not st.session_state.get("chat_memory_enabled", True):
             return
-        
+
         stats = self.memory_manager.get_stats()
-        
+
         if stats.needs_summarization:
             logger.info("Context limit approaching, triggering summarization...")
-            
+
             # Get messages to summarize
             messages_to_summarize = self.memory_manager.prune_for_summarization()
-            
+
             if messages_to_summarize:
-                simple_summary = create_simple_summary(
-                    messages_to_summarize,
-                    self.memory_manager.summary
-                )
-                
+                simple_summary = create_simple_summary(messages_to_summarize, self.memory_manager.summary)
+
                 self.memory_manager.set_summary(simple_summary)
                 logger.info(f"Created summary with {len(simple_summary)} characters")
 

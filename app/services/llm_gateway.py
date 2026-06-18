@@ -30,8 +30,7 @@ class _LiteLLMOptionalProviderWarningFilter(logging.Filter):
 def _install_litellm_log_filter() -> None:
     litellm_logger = logging.getLogger("LiteLLM")
     if any(
-        isinstance(existing_filter, _LiteLLMOptionalProviderWarningFilter)
-        for existing_filter in litellm_logger.filters
+        isinstance(existing_filter, _LiteLLMOptionalProviderWarningFilter) for existing_filter in litellm_logger.filters
     ):
         return
 
@@ -52,9 +51,11 @@ litellm.suppress_debug_info = True
 
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = 2.0
-_SUPPORTED_BACKENDS = {"ollama", "openrouter"}
+_SUPPORTED_BACKENDS = {"ollama", "openrouter", "nvidia_nim"}
 _OPENROUTER_DEFAULT_API_BASE = "https://openrouter.ai/api/v1"
 _DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini"
+_NVIDIA_NIM_DEFAULT_API_BASE = "https://integrate.api.nvidia.com/v1"
+_DEFAULT_NVIDIA_NIM_MODEL = "meta/llama3-70b-instruct"
 
 
 class LLMGatewayConfigurationError(ValueError):
@@ -150,7 +151,7 @@ async def stream_completion(
             api_base=api_base,
             api_key=api_key,
         )
-    except LLMGatewayConfigurationError as exc:
+    except LLMGatewayConfigurationError:
         logger.warning("LLM configuration error while preparing stream completion", exc_info=True)
         yield "*Unable to process request with current model configuration.*"
         return
@@ -224,11 +225,10 @@ def _resolve_api_base(backend: str, api_base: Optional[str]) -> Optional[str]:
         return get_ollama_api_base()
 
     if backend == "openrouter":
-        return (
-            os.getenv("OPENROUTER_API_BASE")
-            or os.getenv("OPENROUTER_BASE_URL")
-            or _OPENROUTER_DEFAULT_API_BASE
-        )
+        return os.getenv("OPENROUTER_API_BASE") or os.getenv("OPENROUTER_BASE_URL") or _OPENROUTER_DEFAULT_API_BASE
+
+    if backend == "nvidia_nim":
+        return os.getenv("NVIDIA_NIM_API_BASE") or _NVIDIA_NIM_DEFAULT_API_BASE
 
     return None
 
@@ -245,6 +245,14 @@ def _resolve_api_key(backend: str, api_key: Optional[str]) -> Optional[str]:
             "OpenRouter requires an API key. Set OPENROUTER_API_KEY or pass api_key in the request."
         )
 
+    if backend == "nvidia_nim":
+        env_api_key = os.getenv("NVIDIA_NIM_API_KEY")
+        if env_api_key:
+            return env_api_key
+        raise LLMGatewayConfigurationError(
+            "Nvidia NIM requires an API key. Set NVIDIA_NIM_API_KEY or pass api_key in the request."
+        )
+
     return None
 
 
@@ -257,13 +265,11 @@ def _resolve_model_name(
     requested_model = (model or "").strip()
     if not requested_model or requested_model == "default":
         if backend == "ollama":
-            requested_model = (
-                os.getenv("DEFAULT_OLLAMA_MODEL")
-                or os.getenv("OLLAMA_MODEL")
-                or "gemma3:1b"
-            )
+            requested_model = os.getenv("DEFAULT_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL") or "gemma3:1b"
         elif backend == "openrouter":
             requested_model = os.getenv("DEFAULT_OPENROUTER_MODEL", _DEFAULT_OPENROUTER_MODEL)
+        elif backend == "nvidia_nim":
+            requested_model = os.getenv("DEFAULT_NVIDIA_NIM_MODEL", _DEFAULT_NVIDIA_NIM_MODEL)
 
     if backend == "ollama":
         stripped_model = _strip_known_prefix(requested_model, ("ollama_chat/", "ollama/"))
@@ -275,13 +281,18 @@ def _resolve_model_name(
             return requested_model
         return f"openrouter/{requested_model}"
 
+    if backend == "nvidia_nim":
+        if requested_model.startswith("nvidia_nim/"):
+            return requested_model
+        return f"nvidia_nim/{requested_model}"
+
     return requested_model
 
 
 def _strip_known_prefix(value: str, prefixes: tuple[str, ...]) -> str:
     for prefix in prefixes:
         if value.startswith(prefix):
-            return value[len(prefix):]
+            return value[len(prefix) :]
     return value
 
 
@@ -349,5 +360,10 @@ def _build_error_message(config: ResolvedLLMConfig, *, interrupted: bool) -> str
         if interrupted:
             return "*The OpenRouter response stream was interrupted. Please retry.*"
         return "*OpenRouter request failed. Check the API key, base URL, and model name, then retry.*"
+
+    if config.backend == "nvidia_nim":
+        if interrupted:
+            return "*The Nvidia NIM response stream was interrupted. Please retry.*"
+        return "*Nvidia NIM request failed. Check the API key, base URL, and model name, then retry.*"
 
     return "*The language model request failed. Please retry.*"

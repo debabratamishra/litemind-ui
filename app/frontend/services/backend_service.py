@@ -1,18 +1,20 @@
 """
 Backend API service for FastAPI server communication.
 """
-import logging
-import requests
-from typing import Dict, List, Optional, Any, Tuple
 
-from ..config import FASTAPI_URL, FASTAPI_TIMEOUT, CONNECT_TIMEOUT, READ_TIMEOUT
+import logging
+from typing import Any, Dict, List, Optional
+
+import requests
+
+from ..config import CONNECT_TIMEOUT, FASTAPI_TIMEOUT, FASTAPI_URL, READ_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 
 class BackendService:
     """FastAPI backend client"""
-    
+
     def __init__(self):
         self.base_url = FASTAPI_URL
         self.timeout = FASTAPI_TIMEOUT
@@ -58,18 +60,19 @@ class BackendService:
 
     def transcribe_audio(self, audio_bytes: bytes, sample_rate: int = 16000) -> Optional[str]:
         """Transcribe audio using the backend STT service.
-        
+
         Args:
             audio_bytes: Raw audio data bytes
             sample_rate: Audio sample rate (default 16000)
-            
+
         Returns:
             Transcribed text or None if transcription fails
         """
         import base64
+
         try:
             # Encode audio as base64 for JSON transport
-            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
             response = requests.post(
                 f"{self.base_url}/api/stt/transcribe",
                 json={"audio_data": audio_b64, "sample_rate": sample_rate},

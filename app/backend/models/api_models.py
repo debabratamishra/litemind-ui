@@ -1,12 +1,15 @@
 """
 API request and response models
 """
+
 from typing import Dict, List, Optional
+
 from pydantic import BaseModel
 
 
 class ChatMessage(BaseModel):
     """A single message in a conversation."""
+
     role: str  # "user", "assistant", or "system"
     content: str
 
@@ -85,6 +88,7 @@ class ModelListResponse(BaseModel):
 
 class OllamaModelInfo(BaseModel):
     """Extended info for a single Ollama model."""
+
     name: str
     parameter_size: Optional[str] = None
     quantization: Optional[str] = None
@@ -163,6 +167,7 @@ class SerpTokenStatus(BaseModel):
 
 class MemoryStatsResponse(BaseModel):
     """Response model for conversation memory statistics."""
+
     session_id: str
     message_count: int
     total_tokens: int
