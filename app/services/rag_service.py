@@ -1837,6 +1837,7 @@ class CrewAIRAGOrchestrator:
                 "Given the user question below, use the retrieve_knowledge tool to find "
                 "the most relevant chunks. Then produce a concise research summary of what you found, "
                 "including any key facts, definitions, or statements that are relevant to the question.\n\n"
+                "IMPORTANT: When calling retrieve_knowledge, set n_results={n_results} to get exactly that many chunks.\n\n"
                 "User question: {user_query}"
             ),
             expected_output=(
@@ -1910,6 +1911,7 @@ class CrewAIRAGOrchestrator:
             "user_query": user_query,
             "system_prompt": system_prompt,
             "history_context": history_context,
+            "n_results": n_results,
         }
         logger.info("  Running Crew.kickoff_async now …")
 
