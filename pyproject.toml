@@ -57,6 +57,7 @@ backend = [
     "easyocr",
     "pandas",
     "nltk",
+    "ollama",
     
     # Web Search
     "crewai",
@@ -159,7 +160,8 @@ backend = [
     "easyocr",
     "pandas",
     "nltk",
-    
+    "ollama",
+
     # Web Search
     "crewai",
     # Note: google-search-results removed - SerpAPI is called via httpx REST API directly

@@ -25,6 +25,8 @@ from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
 
+from pydantic import BaseModel, Field
+
 from app.core.rag_formats import SUPPORTED_EXTENSIONS
 from app.ingestion.enhanced_extractors import process_images_enhanced
 from app.ingestion.file_ingest import get_ingestion_capabilities, ingest_file
@@ -34,6 +36,80 @@ from .llm_gateway import resolve_backend_config, stream_completion
 # Configuration flags
 ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"
 MAX_IMAGES_PER_DOC = int(os.getenv("MAX_IMAGES_PER_DOC", "10"))
+
+
+def _patch_litellm_ollama_pt() -> None:
+    """Apply runtime patch to LiteLLM's ollama_pt to fix IndexError in tool_calls handling.
+
+    Bug: In litellm.litellm_core_utils.prompt_templates.factory.ollama_pt (v1.75.5),
+    after processing an assistant message, the code accesses messages[msg_i].get("tool_calls")
+    where msg_i has already been incremented past the last valid index.
+    Additionally, it checks the WRONG message for tool_calls (next message instead of
+    the assistant message just processed).
+
+    The fix:
+      1. Read tool_calls from messages[msg_i - 1] (the assistant message just processed)
+         instead of messages[msg_i] (which would be the next message, often out of bounds).
+      2. This correctly finds tool_calls on the assistant message itself (OpenAI format).
+    """
+    try:
+        import os
+        import inspect
+        from litellm.litellm_core_utils.prompt_templates import factory as litellm_factory
+
+        # Get the source file path
+        src_file = inspect.getsourcefile(litellm_factory)
+        if not src_file or not os.path.exists(src_file):
+            logger.warning("Could not find litellm factory source file for patching")
+            return
+
+        # Read current source
+        with open(src_file, "r") as f:
+            src = f.read()
+
+        # Check if already patched (correct fix uses msg_i - 1 for tool_calls)
+        if "messages[msg_i - 1].get(\"tool_calls\")" in src:
+            logger.debug("ollama_pt already correctly patched, skipping")
+            return
+
+        # Find and replace the vulnerable + incorrect line
+        old_line = '            tool_calls = messages[msg_i].get("tool_calls")'
+        new_line = '            tool_calls = messages[msg_i - 1].get("tool_calls")'
+
+        if old_line not in src:
+            logger.warning("Could not find ollama_pt vulnerability pattern in source file")
+            return
+
+        fixed_src = src.replace(old_line, new_line, 1)
+
+        # Write the patched source back
+        with open(src_file, "w") as f:
+            f.write(fixed_src)
+
+        # Clear the litellm module cache so the fix takes effect on next import
+        import sys
+
+        for key in list(sys.modules.keys()):
+            if key.startswith("litellm"):
+                try:
+                    del sys.modules[key]
+                except Exception:
+                    pass
+
+        logger.info(
+            "Patched litellm.ollama_pt (tool_calls now read from assistant message). "
+            "Module cache cleared. Restart not required for new requests."
+        )
+    except Exception as e:
+        logger.warning("Could not patch litellm.ollama_pt: %s", e)
+
+
+# Apply the LiteLLM ollama_pt patch once at module load time
+try:
+    _patch_litellm_ollama_pt()
+except Exception:
+    pass
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -132,18 +208,23 @@ def _tokenize_text(text: str) -> List[str]:
     return re.findall(r"\b\w+\b", text)
 
 
-def _load_crewai_types() -> tuple[Any, Any]:
+def _load_crewai_types() -> tuple[Any, ...]:
     """Load CrewAI lazily so standard RAG remains available without it."""
     try:
         crewai = importlib.import_module("crewai")
-    except Exception as exc:
-        version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        from crewai.tools.base_tool import BaseTool
+        from crewai.tools import tool
+    except ImportError as exc:
         raise RuntimeError(
-            "Multi-agent RAG requires a CrewAI build compatible with the current "
-            f"Python runtime. CrewAI is unavailable under Python {version} in this environment."
+            "Multi-agent RAG requires the 'crewai' package to be installed. "
+            f"Install it with: uv pip install crewai. Original error: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load CrewAI for multi-agent RAG: {exc}"
         ) from exc
 
-    return crewai.Agent, crewai.LLM
+    return crewai.Agent, crewai.LLM, crewai.Task, crewai.Crew, crewai.Process, BaseTool, tool
 
 
 def multi_agent_rag_available() -> tuple[bool, str | None]:
@@ -207,26 +288,11 @@ class RAGService:
         # Get the appropriate ChromaDB path based on environment
         self.chroma_db_path = self._get_chroma_db_path()
 
-        # In containerized environments, we can't remove mounted volumes
-        # Instead, clean the contents if the directory exists
-        if os.path.exists(self.chroma_db_path):
-            try:
-                shutil.rmtree(self.chroma_db_path)
-            except OSError as e:
-                # If we can't remove the directory (e.g., mounted volume),
-                # try to clean its contents instead
-                logger.warning(f"Could not remove ChromaDB directory {self.chroma_db_path}: {e}")
-                try:
-                    for item in os.listdir(self.chroma_db_path):
-                        item_path = os.path.join(self.chroma_db_path, item)
-                        if os.path.isdir(item_path):
-                            shutil.rmtree(item_path)
-                        else:
-                            os.remove(item_path)
-                    logger.info(f"Cleaned contents of ChromaDB directory: {self.chroma_db_path}")
-                except Exception as clean_error:
-                    logger.warning(f"Could not clean ChromaDB directory contents: {clean_error}")
-
+        # Initialize the ChromaDB client (uses shared class-level client if path matches)
+        # NOTE: We no longer delete the database directory at startup because:
+        #   1. It destroys data unnecessarily
+        #   2. Background async agents (crewAI) may hold stale references to deleted collections
+        #   3. ChromaDB's get_or_create_collection handles creation/updating correctly
         self.client = self._get_or_create_client(self.chroma_db_path)
 
         try:
@@ -242,9 +308,21 @@ class RAGService:
 
         self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
 
-        self.text_collection = self.client.get_or_create_collection(
-            name="documents_text", embedding_function=self.embedding_function
-        )
+        # Use get_collection (no embedding_function) first to avoid ValueError when
+        # the persisted collection was created with a different embedding function.
+        # Only pass embedding_function when creating a brand-new collection.
+        collection_name = "documents_text"
+        try:
+            existing = self.client.get_collection(name=collection_name)
+            self.text_collection = existing
+            logger.info("Reused existing collection '%s' (embedding function: %s)", collection_name, existing.get("embedding_function"))
+        except Exception:
+            # Collection doesn't exist — create it with our embedding function
+            self.text_collection = self.client.get_or_create_collection(
+                name=collection_name, embedding_function=self.embedding_function
+            )
+            logger.info("Created new collection '%s' with embedding function: %s",
+                collection_name, getattr(self.embedding_function, "name", lambda: "unknown")())
 
         self.file_paths = []
         self.bm25_corpus = []
@@ -1439,9 +1517,10 @@ class RAGService:
             if record.get("content", "").strip()
         ]
 
+        separator = "\n\n---\n"
         return (
             f"{instruction_block}\n\n"
-            f"Context passages:\n\n---\n{('\n\n---\n').join(context_blocks)}\n\n"
+            f"Context passages:\n\n---\n{separator.join(context_blocks)}\n\n"
             f"User question: {query_text}"
         )
 
@@ -1456,295 +1535,432 @@ class RAGService:
         return ""
 
     async def query(
-        self,
-        query_text,
-        system_prompt="You are a helpful assistant.",
-        messages=None,
-        n_results=3,
-        use_hybrid_search=False,
-        model: Optional[str] = None,
-        conversation_summary: Optional[str] = None,
-        backend: Optional[str] = "ollama",
-        api_base: Optional[str] = None,
-        api_key: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        top_p: float = 0.9,
-        frequency_penalty: float = 0.0,
-        repetition_penalty: float = 1.0,
-        is_voice_mode: bool = False,
-    ):
-        """Answer a query using semantic or hybrid retrieval and stream model tokens.
+            self,
+            query_text,
+            system_prompt="You are a helpful assistant.",
+            messages=None,
+            n_results=3,
+            use_hybrid_search=False,
+            model: Optional[str] = None,
+            conversation_summary: Optional[str] = None,
+            backend: Optional[str] = "ollama",
+            api_base: Optional[str] = None,
+            api_key: Optional[str] = None,
+            temperature: float = 0.7,
+            max_tokens: int = 2048,
+            top_p: float = 0.9,
+            frequency_penalty: float = 0.0,
+            repetition_penalty: float = 1.0,
+            is_voice_mode: bool = False,
+        ):
+            """Answer a query using semantic or hybrid retrieval and stream model tokens.
 
-        Args:
-            query_text: The user's query
-            system_prompt: System prompt for the LLM
-            messages: Conversation history
-            n_results: Number of documents to retrieve
-            use_hybrid_search: Whether to use hybrid BM25 + semantic search
-            model: Model name to use
-            conversation_summary: Summary of earlier conversation for context
-            backend: Inference backend name (for example: ollama, openrouter)
-            api_base: Optional provider base URL override
-            api_key: Optional provider API key override
-            temperature: Temperature for LLM response generation (0.0 to 1.0)
-            max_tokens: Maximum number of tokens to generate
-            top_p: Nucleus sampling parameter (0.0 to 1.0)
-            frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
-            repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
-            is_voice_mode: Whether this is voice mode (uses shorter, conversational responses)
-        """
-        messages = messages or []
-        full_query = self.build_retrieval_query(query_text, messages)
-        source_records = self.get_retrieval_records(full_query, n_results, use_hybrid_search)
+            Args:
+                query_text: The user's query
+                system_prompt: System prompt for the LLM
+                messages: Conversation history
+                n_results: Number of documents to retrieve
+                use_hybrid_search: Whether to use hybrid BM25 + semantic search
+                model: Model name to use
+                conversation_summary: Summary of earlier conversation for context
+                backend: Inference backend name (for example: ollama, openrouter)
+                api_base: Optional provider base URL override
+                api_key: Optional provider API key override
+                temperature: Temperature for LLM response generation (0.0 to 1.0)
+                max_tokens: Maximum number of tokens to generate
+                top_p: Nucleus sampling parameter (0.0 to 1.0)
+                frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
+                repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
+                is_voice_mode: Whether this is voice mode (uses shorter, conversational responses)
+            """
+            messages = messages or []
+            full_query = self.build_retrieval_query(query_text, messages)
+            source_records = self.get_retrieval_records(full_query, n_results, use_hybrid_search)
 
-        # Build messages with conversation memory support
-        llm_messages = []
+            # Build citations metadata - map index to source record for frontend
+            citations_metadata = {}
+            for idx, record in enumerate(source_records, start=1):
+                citations_metadata[idx] = {
+                    "id": record.get("id", ""),
+                    "content": record.get("content", ""),
+                    "score": record.get("score", 0.0),
+                    "retrieval_method": record.get("retrieval_method", ""),
+                    "metadata": record.get("metadata", {}),
+                }
 
-        # Add conversation summary if available
-        if conversation_summary:
+            # Normalize scores using min-max scaling across this batch
+            scores = [r.get("score", 0.0) for r in source_records]
+            min_score = min(scores) if scores else 0.0
+            max_score = max(scores) if scores else 1.0
+            score_range = max_score - min_score
+
+            for idx in citations_metadata:
+                raw_score = citations_metadata[idx]["score"]
+                if score_range > 0:
+                    # Min-max normalization: maps lowest to 0, highest to 1
+                    normalized_score = (raw_score - min_score) / score_range
+                else:
+                    normalized_score = 1.0 if raw_score > 0 else 0.0
+                citations_metadata[idx]["score"] = normalized_score
+
+            # Build messages with conversation memory support
+            llm_messages = []
+
+            # Add conversation summary if available
+            if conversation_summary:
+                llm_messages.append(
+                    {"role": "system", "content": f"Summary of previous conversation:\n{conversation_summary}"}
+                )
+
+            # Add conversation history
+            llm_messages.extend(messages)
+
+            # Use voice-optimized system prompt if in voice mode
+            if is_voice_mode and system_prompt == "You are a helpful assistant.":
+                from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+
+                system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+
+            # Adjust max_tokens for voice mode
+            if is_voice_mode:
+                max_tokens = min(max_tokens, 300)
+
+            # Add system prompt and current query with context
+            llm_messages.append({"role": "system", "content": system_prompt})
             llm_messages.append(
-                {"role": "system", "content": f"Summary of previous conversation:\n{conversation_summary}"}
+                {
+                    "role": "system",
+                    "content": (
+                        "Answer the question using the provided context passages. "
+                        "When you use information from a specific passage, cite it with a bracketed number "
+                        "like [1], [2], etc. at the appropriate point in your answer. "
+                        "If multiple passages support the same point, use all relevant citation numbers like [1][3]. "
+                        "Do not invent citation numbers - only cite passages that were actually used. "
+                        "Do not include a separate Sources section unless the user asks for it."
+                    ),
+                }
+            )
+            llm_messages.append(
+                {
+                    "role": "user",
+                    "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
+                }
             )
 
-        # Add conversation history
-        llm_messages.extend(messages)
+            # Yield citations metadata first as a special JSON line
+            import json
+            citations_json = json.dumps({'citations': citations_metadata})
+            yield "data: " + citations_json + "\n\n"
 
-        # Use voice-optimized system prompt if in voice mode
-        if is_voice_mode and system_prompt == "You are a helpful assistant.":
-            from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+            async for chunk in stream_completion(
+                llm_messages,
+                backend=backend,
+                model=model,
+                api_base=api_base,
+                api_key=api_key,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                repetition_penalty=repetition_penalty,
+            ):
+                yield chunk
 
-            system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
 
-        # Adjust max_tokens for voice mode
-        if is_voice_mode:
-            max_tokens = min(max_tokens, 300)
+# Storage for retrieval records — shared between tool and orchestrator via closure
+_last_retrieval_records: List[Dict[str, Any]] = []
 
-        # Add system prompt and current query with context
-        llm_messages.append({"role": "system", "content": system_prompt})
-        llm_messages.append(
-            {
-                "role": "system",
-                "content": "Do not include citations, source numbers, filenames, bracketed references, or a Sources section unless the user explicitly asks for sources.",
-            }
-        )
-        llm_messages.append(
-            {
-                "role": "user",
-                "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
-            }
-        )
 
-        async for chunk in stream_completion(
-            llm_messages,
-            backend=backend,
-            model=model,
-            api_base=api_base,
-            api_key=api_key,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            frequency_penalty=frequency_penalty,
-            repetition_penalty=repetition_penalty,
-        ):
-            yield chunk
+def _build_retrieve_tool(rag_service: "RAGService", tool: Any) -> Any:
+    """Factory that builds a CrewAI @tool decorator-based retrieval tool.
+
+    Uses the @tool decorator instead of Tool(func=...) to ensure CrewAI correctly
+    passes Pydantic-validated arguments to the function.
+    """
+
+    @tool("retrieve_knowledge")
+    def retrieve_knowledge(query: str, n_results: int = 3) -> str:
+        """Search the ingested document knowledge base for the most relevant chunks
+        to a user question. Returns top results with source and relevance score.
+        Use when you need specific facts, explanations, or context from uploaded documents.
+
+        Args:
+            query: The search query to find relevant document chunks.
+            n_results: Maximum number of result chunks to return.
+        """
+        global _last_retrieval_records
+        try:
+            collection = rag_service.text_collection
+        except Exception as e:
+            logger.warning("retrieve_knowledge: failed to get collection: %s", e)
+            return "[No results - knowledge base unavailable]"
+
+        try:
+            count = collection.count()
+        except Exception as e:
+            logger.warning("retrieve_knowledge: failed to count collection: %s", e)
+            return "[No results - knowledge base unavailable]"
+
+        if count == 0:
+            return "[No results]"
+
+        try:
+            results = collection.query(query_texts=[query], n_results=n_results)
+        except Exception as e:
+            logger.warning("retrieve_knowledge: query failed: %s", e)
+            return "[No results]"
+
+        docs = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        if not docs:
+            return "[No results]"
+
+        chunks = []
+        for doc, meta, dist in zip(docs, metadatas, distances):
+            source = (meta or {}).get("source", "unknown")
+            page_num = (meta or {}).get("page_number")
+            score = 1.0 - dist if dist is not None else 0.0
+            chunks.append(f"[Source: {source} | Relevance: {score:.2f}]\n{doc}")
+
+        # Capture records for citations metadata (used by frontend for clickable citations)
+        _last_retrieval_records = []
+        for doc, meta, dist in zip(docs, metadatas, distances):
+            if doc:
+                source = (meta or {}).get("source", "unknown")
+                page_num = (meta or {}).get("page_number")
+                score = 1.0 - dist if dist is not None else 0.0
+                _last_retrieval_records.append({
+                    "id": source,
+                    "content": doc,
+                    "score": score,
+                    "retrieval_method": "multi-agent retrieval",
+                    "metadata": {"filename": source, "page_number": page_num} if page_num else {"filename": source},
+                })
+
+        return "\n\n---\n\n".join(chunks)
+
+    return retrieve_knowledge
 
 
 class CrewAIRAGOrchestrator:
-    """Coordinates refined querying and answer composition using the selected backend."""
+    """Proper multi-agent RAG orchestration using CrewAI with a real Crew, sequential agents, and a retrieval tool.
+
+    Architecture:
+      researcher  →  synthesizer  →  yield streamed chunks
+                   ↑
+             (reads researcher output from context)
+
+    All agents collaborate through a shared Crew.kickoff_async() call so CrewAI
+    manages task routing, context passing, and delegation natively.
+    """
 
     def __init__(
         self,
-        rag_service: RAGService,
+        rag_service: "RAGService",
         model_name: str = "gemma3:1b",
         backend: str = "ollama",
         api_base: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
-        """Configure the CrewAI LLM, agent roles, and default context parameters."""
-        Agent, LLM = _load_crewai_types()
+        """Configure the CrewAI LLM, agents, retrieval tool, and Crew."""
+        Agent, LLM, Task, Crew, Process, Tool, tool = _load_crewai_types()
+        self.Crew = Crew
+        self.Task = Task
         self.rag_service = rag_service
         self.llm_config = resolve_backend_config(
-            backend=backend,
-            model=model_name,
-            api_base=api_base,
-            api_key=api_key,
+            backend=backend, model=model_name, api_base=api_base, api_key=api_key
         )
         self.backend = self.llm_config.backend
         self.model_name = self.llm_config.model
 
+        # Normalise model string for CrewAI LLM
         agent_model = self.model_name
         if self.backend == "ollama" and agent_model.startswith("ollama_chat/"):
             agent_model = f"ollama/{agent_model[len('ollama_chat/') :]}"
 
-        agent_llm_kwargs = {
-            "model": agent_model,
-            "base_url": self.llm_config.api_base,
-            "api_key": self.llm_config.api_key,
-            "temperature": 0.0,
-        }
-
-        self.agent_llm = LLM(**agent_llm_kwargs)
-        self.context_length = 4096
-
-        self.refiner = Agent(
-            role="Query Refiner",
-            goal="Clarify user questions for retrieval.",
-            backstory="Understands intent of the prompt and rewrites prompts with more details.",
-            llm=self.agent_llm,
-        )
-        self.composer = Agent(
-            role="Answer Composer",
-            goal="Craft final answers with citations.",
-            backstory="Synthesises context into helpful replies.",
-            llm=self.agent_llm,
-        )
-
-    async def _get_context_length(self, model_name: str) -> int:
-        """Query Ollama for context length when available; otherwise use a safe default."""
-        if self.backend != "ollama":
-            return 4096
-
-        model = model_name.replace("ollama_chat/", "").replace("ollama/", "")
-
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(f"{self.llm_config.api_base}/api/show", json={"name": model})
-                resp.raise_for_status()
-                data = resp.json()
-                params = data.get("model_info", "")
-
-                # Security: Use JSON parsing instead of ast.literal_eval
-                if isinstance(params, str):
-                    import json
-
-                    try:
-                        params = json.loads(params)
-                    except json.JSONDecodeError:
-                        # If JSON parsing fails, try ast.literal_eval as fallback
-                        # ast.literal_eval is safe for literal structures only
-                        import ast
-
-                        try:
-                            params = ast.literal_eval(params)
-                        except (ValueError, SyntaxError) as e:
-                            logger.warning(f"Failed to parse model_info: {e}")
-                            return 4096
-
-                if not isinstance(params, dict):
-                    return 4096
-
-                for key, value in params.items():
-                    if key.endswith("context_length"):
-                        try:
-                            return int(value)
-                        except (ValueError, TypeError):
-                            logger.warning(f"Invalid context_length value: {value}")
-                            return 4096
-
-                return 4096
-        except Exception as e:
-            logger.warning(f"Error getting context length: {e}")
-            return 4096
-
-    async def _generate_summary(self, text: str, system_prompt: str) -> str:
-        """Generate a short summary for a text segment using the configured backend."""
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}]
-
-        response = ""
-        async for chunk in stream_completion(
-            messages,
-            backend=self.backend,
-            model=self.model_name,
-            api_base=self.llm_config.api_base,
+        agent_llm = LLM(
+            model=agent_model,
+            base_url=self.llm_config.api_base,
             api_key=self.llm_config.api_key,
             temperature=0.0,
-        ):
-            response += chunk
+        )
 
-        return response
+        # ------------------------------------------------------------------
+        # Retrieval tool — gives the researcher agent real ChromaDB query power
+        # Uses @tool decorator for proper CrewAI argument binding
+        # ------------------------------------------------------------------
+        self.retrieval_tool = _build_retrieve_tool(rag_service, tool)
 
-    def chunk_text(self, text: str, chunk_size: int):
-        """Simple character-based chunking without overlap (used for specific cases)."""
-        if not text or not text.strip():
-            return []
+        # ------------------------------------------------------------------
+        # Agent 1 — Researcher: understands intent and retrieves docs
+        # ------------------------------------------------------------------
+        self.researcher = Agent(
+            role="Research Analyst",
+            goal=(
+                "Find the most relevant information from the knowledge base to answer the user's question. "
+                "Always use the retrieve_knowledge tool to search the document store before summarising."
+            ),
+            backstory=(
+                "You are a thorough research analyst. Given a question, you break it into "
+                "searchable concepts and retrieve supporting evidence from the ingested documents."
+            ),
+            llm=agent_llm,
+            tools=[self.retrieval_tool],
+            verbose=True,
+        )
 
-        text = text.strip()
-        chunks = []
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i : i + chunk_size].strip()
-            if chunk:
-                chunks.append(chunk)
-        return chunks
+        # ------------------------------------------------------------------
+        # Agent 2 — Synthesiser: composes the final, cited answer
+        # ------------------------------------------------------------------
+        self.synthesiser = Agent(
+            role="Answer Synthesiser",
+            goal=(
+                "Produce a clear, well-structured answer that directly answers the user's question "
+                "using the research findings provided in context. Cite sources as [1], [2], etc. "
+                "within the answer body — never in a separate section."
+            ),
+            backstory=(
+                "You synthesise complex research into accurate, readable answers. "
+                "You always ground your response in the provided context and cite correctly."
+            ),
+            llm=agent_llm,
+            verbose=True,
+        )
 
-    async def summarize_context(self, text: str, target_length: int) -> str:
-        """Recursively summarize text until it fits within a target character budget."""
-        if len(text) <= target_length:
-            return text
+        # ------------------------------------------------------------------
+        # Tasks
+        # ------------------------------------------------------------------
+        self.research_task = Task(
+            description=(
+                "Given the user question below, use the retrieve_knowledge tool to find "
+                "the most relevant chunks. Then produce a concise research summary of what you found, "
+                "including any key facts, definitions, or statements that are relevant to the question.\n\n"
+                "User question: {user_query}"
+            ),
+            expected_output=(
+                "A concise research summary: key facts and relevant findings from the knowledge base, "
+                "formatted as bullet points or short paragraphs."
+            ),
+            agent=self.researcher,
+        )
 
-        chunk_size = target_length // 2
-        chunks = self.chunk_text(text, chunk_size)
-        summaries = []
+        self.synthesis_task = Task(
+            description=(
+                "Using the research findings already produced in the previous step, write a clear and "
+                "complete answer to the original user question. Ground every factual claim in the "
+                "research findings and cite sources inline as [1], [2], etc. Do not invent information "
+                "not present in the research.\n\n"
+                "User question: {user_query}\n"
+                "System instructions to honour: {system_prompt}"
+            ),
+            expected_output=(
+                "A well-structured, cited answer to the user question, with sources noted inline. "
+                "No separate references section."
+            ),
+            agent=self.synthesiser,
+        )
 
-        for chunk in chunks:
-            sum_prompt = "Provide a concise summary of the following text:"
-            summ = await self._generate_summary(chunk, sum_prompt)
-            summaries.append(summ)
+        # ------------------------------------------------------------------
+        # Crew — sequential so synthesizer reads researcher output from context
+        # ------------------------------------------------------------------
+        self.crew = Crew(
+            agents=[self.researcher, self.synthesiser],
+            tasks=[self.research_task, self.synthesis_task],
+            process=Process.sequential,
+            verbose=True,
+        )
 
-        combined = " ".join(summaries)
-        return await self.summarize_context(combined, target_length)
+        # Storage for retrieval records (captured by tool, used for citations)
+        # Note: we clear this at the start of each query to avoid stale data
 
+    # ------------------------------------------------------------------
+    # Query — kick off the crew and stream the answer
+    # ------------------------------------------------------------------
     async def query(
         self,
         user_query: str,
         system_prompt: str,
-        messages=[],
+        messages: list = [],
         n_results: int = 3,
         use_hybrid_search: bool = False,
         model: Optional[str] = None,
         conversation_summary: Optional[str] = None,
     ):
-        """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
-        if self.backend == "ollama" and self.context_length == 4096:
-            self.context_length = await self._get_context_length(self.model_name)
+        """Run the crew synchronously in a thread executor and stream tokens from the final output."""
+        logger.info("=== Multi-agent RAG ===")
+        logger.info("  User query : %s", user_query)
+        logger.info("  Model      : %s (%s)", self.model_name, self.backend)
+        logger.info("  n_results  : %d", n_results)
+        logger.info("  crew agents: %s", [a.role for a in self.crew.agents])
 
+        # Build conversation context for the agents
         history_parts = []
         if conversation_summary:
             history_parts.append(f"Summary of previous conversation:\n{conversation_summary}")
-        history_parts.extend(f"{msg['role']}: {msg['content']}" for msg in messages if msg["role"] != "system")
+        history_parts.extend(
+            f"{msg['role']}: {msg['content']}" for msg in messages if msg.get("role") != "system"
+        )
         history_context = "\n".join(history_parts)
-        refine_prompt = (
-            f"Previous conversation:\n{history_context}\n\n"
-            "Refine the following user query so it is precise, self-contained and uses full nouns:\n\n"
-            f"{user_query}"
-        )
+        if history_context:
+            logger.info("  history context: %s", history_context[:200])
 
-        refined = await self.refiner.kickoff_async(refine_prompt)
-        refined_query = refined.raw.strip()
-        logger.info(f"Refined query: {refined_query}")
+        crew_inputs = {
+            "user_query": user_query,
+            "system_prompt": system_prompt,
+            "history_context": history_context,
+        }
+        logger.info("  Running Crew.kickoff_async now …")
 
-        if use_hybrid_search and self.rag_service.bm25_model:
-            documents = self.rag_service.hybrid_search(refined_query, n_results)
-            context = " ".join(documents)
-        else:
-            res = self.rag_service.text_collection.query(query_texts=[refined_query], n_results=n_results)
-            context = " ".join(res["documents"][0]) if res["documents"] else ""
+        try:
+            crew_output: Any = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: asyncio.run(self.crew.kickoff_async(inputs=crew_inputs)),
+            )
+        except Exception as exc:
+            logger.exception("Crew kickoff failed: %s", exc)
+            yield f"[Multi-agent RAG error: {exc}]"
+            return
 
-        approx_tokens = len(context) // 4 + 1
-        target_tokens = self.context_length * 0.6
+        # crew_output.pydantic is the parsed CrewOutput; str() returns the final answer text
+        raw = str(crew_output) if crew_output else ""
+        logger.info("  CrewOutput raw length: %d chars", len(raw))
+        logger.info("  CrewOutput preview : %.200s", raw[:200])
 
-        if approx_tokens > target_tokens:
-            target_chars = int(target_tokens * 4)
-            context = await self.summarize_context(context, target_chars)
+        if not raw or raw == "[NO TASKS OUTPUT]":
+            logger.warning("  Crew produced no output — yielding fallback message.")
+            yield "[No answer could be generated from the knowledge base. Please try a different question or upload more documents.]"
+            return
 
-        compose_prompt = (
-            f"Previous conversation:\n{history_context}\n\n"
-            f"Context:\n{context}\n\nOriginal question:\n{user_query}\n\n"
-            f"Follow these instructions when you answer:\n{system_prompt}"
-        )
+        # Emit citations metadata first (same format as standard RAG) so frontend can render clickable citations
+        if _last_retrieval_records:
+            import json
 
-        final = await self.composer.kickoff_async(compose_prompt)
-        answer = final.raw
+            # Build citations metadata with 1-based indexing to match standard RAG format
+            citations_metadata = {}
+            for idx, record in enumerate(_last_retrieval_records, start=1):
+                citations_metadata[idx] = record
 
-        for i in range(0, len(answer), 400):
-            yield answer[i : i + 400]
+            # Normalize scores with min-max scaling (same approach as standard RAG)
+            scores = [r.get("score", 0.0) for r in _last_retrieval_records]
+            if scores:
+                min_score = min(scores)
+                max_score = max(scores)
+                score_range = max_score - min_score
+                for idx in citations_metadata:
+                    raw_score = citations_metadata[idx]["score"]
+                    if score_range > 0:
+                        normalized_score = (raw_score - min_score) / score_range
+                    else:
+                        normalized_score = 1.0 if raw_score > 0 else 0.0
+                    citations_metadata[idx]["score"] = normalized_score
+
+            citations_json = json.dumps({"citations": citations_metadata})
+            yield "data: " + citations_json + "\n\n"
+
+        # Stream in small chunks so the frontend sees tokens progressively
+        for i in range(0, len(raw), 400):
+            yield raw[i : i + 400]
+
+

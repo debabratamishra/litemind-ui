@@ -48,6 +48,11 @@ logger = logging.getLogger(__name__)
 
 litellm.drop_params = True
 litellm.suppress_debug_info = True
+# Disable streaming usage logging to prevent stream_chunk_builder failures with
+# Ollama models (e.g. gemma4:31b-cloud) that return non-standard streaming chunks
+# where the first chunk lacks a `delta.role` field. This prevents LiteLLM's
+# _assemble_complete_response_from_streaming_chunks from raising AttributeError.
+litellm.disable_streaming_logging = True
 
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = 2.0

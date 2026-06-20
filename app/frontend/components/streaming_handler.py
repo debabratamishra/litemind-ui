@@ -194,7 +194,8 @@ class StreamingHandler:
                 is_voice_mode=is_voice_mode,
             )
 
-            return self._process_streaming_response(response, placeholder, tts_callback=tts_callback)
+            # Process the streaming response and capture citations
+            return self._process_streaming_response_with_citations(response, placeholder, tts_callback=tts_callback)
 
         except requests.Timeout:
             logger.error("RAG API timed out while streaming.")
@@ -286,6 +287,63 @@ class StreamingHandler:
                 continue
 
             chunk = self._decode_stream_line(line)
+            if chunk == "":
+                continue
+
+            buf += chunk
+            if segregator is not None:
+                segregator.feed(chunk)
+
+            # Call TTS callback with the text chunk for streaming synthesis
+            if tts_callback is not None:
+                try:
+                    tts_callback(chunk)
+                except Exception as e:
+                    logger.debug(f"TTS callback error: {e}")
+
+        return buf
+
+    def _process_streaming_response_with_citations(
+        self,
+        response: requests.Response,
+        placeholder: Optional[Any],
+        tts_callback: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """Process streaming response and extract citations metadata.
+
+        The first line of the stream may be a JSON object with citations metadata.
+        All subsequent lines are text chunks to be concatenated.
+
+        Returns:
+            str: The complete text response (citations are stored in session state).
+        """
+        buf = ""
+        citations_found = False
+        segregator = StreamingRenderer(placeholder) if placeholder is not None else None
+
+        for line in response.iter_lines(decode_unicode=True, chunk_size=1):
+            if line is None:
+                continue
+
+            # Ensure line is a string (iter_lines can return bytes in some cases)
+            line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+
+            # Check if this is the citations metadata line
+            if not citations_found and line_str.startswith("data:"):
+                payload = line_str[5:].lstrip()
+                try:
+                    parsed = json.loads(payload)
+                    if isinstance(parsed, dict) and "citations" in parsed:
+                        # Store citations in session state for retrieval
+                        import streamlit as st
+                        st.session_state["rag_citations"] = parsed["citations"]
+                        citations_found = True
+                        continue
+                except (json.JSONDecodeError, ImportError):
+                    # Not a valid JSON line, treat as regular text
+                    pass
+
+            chunk = self._decode_stream_line(line_str)
             if chunk == "":
                 continue
 
