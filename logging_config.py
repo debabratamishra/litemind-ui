@@ -75,7 +75,6 @@ class CleanFormatter(logging.Formatter):
         'uvicorn': 'server',
         'app.services.host_service_manager': 'host_service',
         'app.services.rag_service': 'rag_service',
-        'sentence_transformers.SentenceTransformer': 'sentence_transformers',
         'logging_config': 'config',
     }
     
@@ -194,11 +193,6 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'handlers': ['console'],
                 'propagate': False
             },
-            'sentence_transformers': {
-                'level': 'INFO',
-                'handlers': ['console'],
-                'propagate': False
-            },
             'app.services.host_service_manager': {
                 'level': 'WARNING',
                 'handlers': ['console'],
@@ -282,11 +276,6 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
             },
             'chromadb': {
                 'level': 'WARNING',
-                'handlers': ['console', 'file_debug'],
-                'propagate': False
-            },
-            'sentence_transformers': {
-                'level': 'INFO',
                 'handlers': ['console', 'file_debug'],
                 'propagate': False
             },

@@ -19,7 +19,6 @@ import chromadb
 import httpx
 import numpy as np
 from chromadb.config import Settings
-from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
 
 from pydantic import BaseModel, Field
@@ -268,34 +267,32 @@ class RAGService:
         #   3. ChromaDB's get_or_create_collection handles creation/updating correctly
         self.client = self._get_or_create_client(self.chroma_db_path)
 
-        try:
-            self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="all-MiniLM-L6-v2"
-            )
-        except Exception as e:
-            logger.warning(f"SentenceTransformerEmbeddingFunction not available ({e}), using ChromaDB default")
-            try:
-                self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
-            except Exception:
-                self.embedding_function = None
+        # Embedding function must be supplied exclusively via the inference provider
+        # factory (app.backend.core.embeddings.create_embedding_function). The RAG
+        # service intentionally ships with no embedded default (e.g. no
+        # SentenceTransformer / DefaultEmbedding fallback) so all embeddings flow
+        # through the configured provider (ollama / huggingface / openrouter /
+        # nvidia_nim). main.py wires the active provider immediately after init.
+        self.embedding_function: Optional[Any] = None
 
         self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
 
-        # Use get_collection (no embedding_function) first to avoid ValueError when
-        # the persisted collection was created with a different embedding function.
-        # Only pass embedding_function when creating a brand-new collection.
         collection_name = "documents_text"
         try:
             existing = self.client.get_collection(name=collection_name)
             self.text_collection = existing
-            logger.info("Reused existing collection '%s' (embedding function: %s)", collection_name, existing.get("embedding_function"))
+            logger.info("Reused existing collection '%s'", collection_name)
         except Exception:
-            # Collection doesn't exist — create it with our embedding function
+            # Collection doesn't exist — create it without an embedding function
+            # so ChromaDB does not embed at all until a provider is wired in by
+            # the caller. Indexing/search will fail-fast if the caller forgot to
+            # register an inference-provider-backed embedding_function.
             self.text_collection = self.client.get_or_create_collection(
-                name=collection_name, embedding_function=self.embedding_function
+                name=collection_name
             )
-            logger.info("Created new collection '%s' with embedding function: %s",
-                collection_name, getattr(self.embedding_function, "name", lambda: "unknown")())
+            logger.info("Created new collection '%s' without an embedding function; a "
+                "provider-backed embedding function must be assigned before indexing.",
+                collection_name)
 
         self.file_paths = []
         self.bm25_corpus = []
@@ -866,11 +863,20 @@ class RAGService:
             base_id = f"{doc_id}_batch_{len(self.chunk_ids)}"
             ids = [f"{base_id}_{i}" for i in range(len(texts))]
 
-            self.text_collection.add(
-                documents=texts,
-                metadatas=metadatas,
-                ids=ids,
-            )
+            if self.embedding_function is not None:
+                embeddings = self.embedding_function(texts)
+                self.text_collection.add(
+                    documents=texts,
+                    metadatas=metadatas,
+                    ids=ids,
+                    embeddings=embeddings,
+                )
+            else:
+                self.text_collection.add(
+                    documents=texts,
+                    metadatas=metadatas,
+                    ids=ids,
+                )
 
             for i, text in enumerate(texts):
                 tokens = self.preprocess_text(text)
@@ -901,11 +907,20 @@ class RAGService:
 
             chunk_id = f"single_{len(self.chunk_ids)}_{hash(content) % 1000000}"
 
-            self.text_collection.add(
-                documents=[content],
-                metadatas=[metadata],
-                ids=[chunk_id],
-            )
+            if self.embedding_function is not None:
+                embeddings = self.embedding_function([content])
+                self.text_collection.add(
+                    documents=[content],
+                    metadatas=[metadata],
+                    ids=[chunk_id],
+                    embeddings=embeddings,
+                )
+            else:
+                self.text_collection.add(
+                    documents=[content],
+                    metadatas=[metadata],
+                    ids=[chunk_id],
+                )
 
             tokens = self.preprocess_text(content)
             self.bm25_corpus.append(tokens)
