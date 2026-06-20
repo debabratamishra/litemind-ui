@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncIterator
 
-from app.services.rag_service import CrewAIRAGOrchestrator, multi_agent_rag_available
+from app.services.rag_multi_agent import CrewAIRAGOrchestrator, multi_agent_rag_available
 
 logger = logging.getLogger(__name__)
 
