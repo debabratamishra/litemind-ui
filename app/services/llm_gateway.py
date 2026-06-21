@@ -13,6 +13,9 @@ import os
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Iterable, Optional
 
+import litellm
+from config import Config
+
 
 class _LiteLLMOptionalProviderWarningFilter(logging.Filter):
     """Suppress import-time warnings for optional AWS providers we do not use."""
@@ -39,19 +42,11 @@ def _install_litellm_log_filter() -> None:
 
 _install_litellm_log_filter()
 
-import litellm
-
-from config import Config
-
 logger = logging.getLogger(__name__)
 
 
 litellm.drop_params = True
 litellm.suppress_debug_info = True
-# Disable streaming usage logging to prevent stream_chunk_builder failures with
-# Ollama models (e.g. gemma4:31b-cloud) that return non-standard streaming chunks
-# where the first chunk lacks a `delta.role` field. This prevents LiteLLM's
-# _assemble_complete_response_from_streaming_chunks from raising AttributeError.
 litellm.disable_streaming_logging = True
 
 _MAX_RETRIES = 3
@@ -135,6 +130,58 @@ def resolve_embedding_config(
     )
 
 
+async def _stream_ollama_native(
+    messages: list[dict[str, Any]],
+    *,
+    model: str,
+    api_base: str,
+    temperature: float,
+    max_tokens: int,
+    top_p: float,
+    frequency_penalty: float,
+    repetition_penalty: float,
+) -> AsyncGenerator[str, None]:
+    """Stream chat completions directly via the ollama Python client.
+
+    This bypasses LiteLLM entirely for the Ollama backend, avoiding a
+    ``KeyError('litellm.utils')`` that occurs in LiteLLM's internal stream
+    assembler when Ollama returns non-standard streaming chunks (e.g. chunks
+    whose first message lacks a ``delta.role`` field).  The ``ollama`` package
+    is already a project dependency and handles Ollama's streaming protocol
+    natively, so this path is both more reliable and lower overhead.
+    """
+    import ollama as _ollama
+
+    # Strip the LiteLLM prefix that resolve_backend_config adds (ollama_chat/)
+    bare_model = _strip_known_prefix(model, ("ollama_chat/", "ollama/"))
+
+    options: dict[str, Any] = {
+        "temperature": temperature,
+        "top_p": top_p,
+        "num_predict": max_tokens,
+    }
+    # Ollama uses repeat_penalty, not frequency_penalty
+    if frequency_penalty:
+        options["frequency_penalty"] = frequency_penalty
+    if repetition_penalty > 1.0:
+        options["repeat_penalty"] = repetition_penalty
+
+    client = _ollama.AsyncClient(host=api_base)
+    try:
+        stream = await client.chat(
+            model=bare_model,
+            messages=messages,  # type: ignore[arg-type]
+            stream=True,
+            options=options,
+        )
+        async for chunk in stream:
+            content = chunk.message.content if chunk.message else None
+            if content:
+                yield content
+    finally:
+        await client._client.aclose()
+
+
 async def stream_completion(
     messages: Iterable[dict[str, Any]],
     *,
@@ -148,7 +195,12 @@ async def stream_completion(
     frequency_penalty: float = 0.0,
     repetition_penalty: float = 1.0,
 ) -> AsyncGenerator[str, None]:
-    """Stream completion text via LiteLLM for the requested backend."""
+    """Stream completion text via LiteLLM for the requested backend.
+
+    For the Ollama backend the native ``ollama`` Python client is used instead
+    of LiteLLM to avoid a ``KeyError('litellm.utils')`` bug in LiteLLM's
+    streaming assembler that surfaces in Docker environments.
+    """
     try:
         config = resolve_backend_config(
             backend=backend,
@@ -159,6 +211,40 @@ async def stream_completion(
     except LLMGatewayConfigurationError:
         logger.warning("LLM configuration error while preparing stream completion", exc_info=True)
         yield "*Unable to process request with current model configuration.*"
+        return
+
+    if config.backend == "ollama":
+        message_list = list(messages)
+        for attempt in range(1, _MAX_RETRIES + 1):
+            yielded_any_content = False
+            try:
+                async for text in _stream_ollama_native(
+                    message_list,
+                    model=config.model,
+                    api_base=config.api_base or "http://localhost:11434",
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    repetition_penalty=repetition_penalty,
+                ):
+                    yielded_any_content = True
+                    yield text
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Ollama native streaming failed for model=%s attempt=%s/%s: %s",
+                    config.model,
+                    attempt,
+                    _MAX_RETRIES,
+                    exc,
+                )
+                if not yielded_any_content and attempt < _MAX_RETRIES:
+                    await asyncio.sleep(_RETRY_BACKOFF * attempt)
+                    continue
+
+                yield _build_error_message(config, interrupted=yielded_any_content)
+                return
         return
 
     kwargs: dict[str, Any] = {

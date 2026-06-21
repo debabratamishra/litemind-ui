@@ -24,8 +24,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_CONTEXT_TOKENS = 24000  # Leave ~8K for response in 32K context
 DEFAULT_SUMMARIZE_THRESHOLD = 0.75  # Summarize when at 75% of max tokens
 DEFAULT_SUMMARY_MAX_TOKENS = 2000  # Maximum tokens for summary
-
-# Approximate tokens per character (conservative estimate)
 CHARS_PER_TOKEN = 4
 
 

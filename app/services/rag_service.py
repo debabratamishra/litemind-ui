@@ -205,9 +205,6 @@ def _tokenize_text(text: str) -> List[str]:
     return re.findall(r"\b\w+\b", text)
 
 
-# CrewAI types and multi-agent RAG moved to rag_multi_agent.py
-
-
 def _flatten_metadata(meta, prefix=""):
     """Flatten a (possibly nested) metadata mapping into a single-level dict.
     Nested keys are joined with underscores. Iterables are JSON-encoded when possible.
@@ -234,7 +231,6 @@ def _flatten_metadata(meta, prefix=""):
 class RAGService:
     """Retrieval-augmented generation service with enhanced document processing capabilities."""
 
-    # Class-level ChromaDB client management to avoid conflicts
     _shared_client = None
     _shared_client_path = None
 
@@ -267,12 +263,6 @@ class RAGService:
         #   3. ChromaDB's get_or_create_collection handles creation/updating correctly
         self.client = self._get_or_create_client(self.chroma_db_path)
 
-        # Embedding function must be supplied exclusively via the inference provider
-        # factory (app.backend.core.embeddings.create_embedding_function). The RAG
-        # service intentionally ships with no embedded default (e.g. no
-        # SentenceTransformer / DefaultEmbedding fallback) so all embeddings flow
-        # through the configured provider (ollama / huggingface / openrouter /
-        # nvidia_nim). main.py wires the active provider immediately after init.
         self.embedding_function: Optional[Any] = None
 
         self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
@@ -283,10 +273,6 @@ class RAGService:
             self.text_collection = existing
             logger.info("Reused existing collection '%s'", collection_name)
         except Exception:
-            # Collection doesn't exist — create it without an embedding function
-            # so ChromaDB does not embed at all until a provider is wired in by
-            # the caller. Indexing/search will fail-fast if the caller forgot to
-            # register an inference-provider-backed embedding_function.
             self.text_collection = self.client.get_or_create_collection(
                 name=collection_name
             )
@@ -361,7 +347,7 @@ class RAGService:
             return url
         except ImportError:
             logger.warning("Host service manager not available, using fallback config")
-            url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+            url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
             logger.debug(f"Using fallback Ollama URL: {url}")
             return url
 
@@ -1277,7 +1263,14 @@ class RAGService:
     def vector_search_text(self, query: str, n_results: int = 3) -> List[Tuple[str, str, float]]:
         """Run semantic search over text chunks and return (chunk_id, text, similarity)."""
         try:
-            results = self.text_collection.query(query_texts=[query], n_results=n_results)
+            if self.embedding_function is not None:
+                query_embedding = self.embedding_function([query])[0]
+                results = self.text_collection.query(
+                    query_embeddings=[query_embedding], n_results=n_results
+                )
+            else:
+                results = self.text_collection.query(query_texts=[query], n_results=n_results)
+
             if not results["documents"] or not results["documents"][0]:
                 return []
 
@@ -1294,11 +1287,23 @@ class RAGService:
     def vector_search_records(self, query: str, n_results: int = 3) -> List[Dict[str, Any]]:
         """Run semantic search over text chunks and preserve metadata for citation formatting."""
         try:
-            results = self.text_collection.query(
-                query_texts=[query],
-                n_results=n_results,
-                include=["documents", "metadatas", "distances"],
-            )
+            # Use our own embedding function to embed the query so ChromaDB never
+            # falls back to its built-in Ollama client (which always points at
+            # localhost:11434 and breaks in Docker).
+            if self.embedding_function is not None:
+                query_embedding = self.embedding_function([query])[0]
+                results = self.text_collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=n_results,
+                    include=["documents", "metadatas", "distances"],
+                )
+            else:
+                results = self.text_collection.query(
+                    query_texts=[query],
+                    n_results=n_results,
+                    include=["documents", "metadatas", "distances"],
+                )
+
             ids = results.get("ids") or [[]]
             documents = results.get("documents") or [[]]
             metadatas = results.get("metadatas") or [[]]
