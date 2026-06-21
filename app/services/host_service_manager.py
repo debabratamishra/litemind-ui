@@ -84,8 +84,6 @@ class HostServiceManager:
         hf_cache, ollama_cache = self._get_os_specific_cache_paths()
         
         if self.is_containerized:
-            # In container: use mounted paths that map to host directories
-            # Check for environment variables that might override default paths
             hf_cache_container = os.getenv("HF_HOME", "/root/.cache/huggingface")
             ollama_cache_container = os.getenv("OLLAMA_MODELS", "/root/.ollama")
             

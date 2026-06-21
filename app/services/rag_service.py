@@ -1,7 +1,4 @@
-"""RAG service and CrewAI orchestration utilities.
-Provides ingestion, indexing, hybrid retrieval, and answer composition using ChromaDB,
-BM25, and a configurable LiteLLM-backed LLM.
-"""
+"""RAG service - ingestion, indexing, hybrid retrieval, and answer composition using ChromaDB, BM25, and LiteLLM."""
 
 import asyncio
 import base64
@@ -22,18 +19,94 @@ import chromadb
 import httpx
 import numpy as np
 from chromadb.config import Settings
-from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
+
+from pydantic import BaseModel, Field
 
 from app.core.rag_formats import SUPPORTED_EXTENSIONS
 from app.ingestion.enhanced_extractors import process_images_enhanced
 from app.ingestion.file_ingest import get_ingestion_capabilities, ingest_file
 
 from .llm_gateway import resolve_backend_config, stream_completion
+from app.services.rag_multi_agent import CrewAIRAGOrchestrator, multi_agent_rag_available
 
 # Configuration flags
 ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"
 MAX_IMAGES_PER_DOC = int(os.getenv("MAX_IMAGES_PER_DOC", "10"))
+
+
+def _patch_litellm_ollama_pt() -> None:
+    """Apply runtime patch to LiteLLM's ollama_pt to fix IndexError in tool_calls handling.
+
+    Bug: In litellm.litellm_core_utils.prompt_templates.factory.ollama_pt (v1.75.5),
+    after processing an assistant message, the code accesses messages[msg_i].get("tool_calls")
+    where msg_i has already been incremented past the last valid index.
+    Additionally, it checks the WRONG message for tool_calls (next message instead of
+    the assistant message just processed).
+
+    The fix:
+      1. Read tool_calls from messages[msg_i - 1] (the assistant message just processed)
+         instead of messages[msg_i] (which would be the next message, often out of bounds).
+      2. This correctly finds tool_calls on the assistant message itself (OpenAI format).
+    """
+    try:
+        import os
+        import inspect
+        from litellm.litellm_core_utils.prompt_templates import factory as litellm_factory
+
+        # Get the source file path
+        src_file = inspect.getsourcefile(litellm_factory)
+        if not src_file or not os.path.exists(src_file):
+            logger.warning("Could not find litellm factory source file for patching")
+            return
+
+        # Read current source
+        with open(src_file, "r") as f:
+            src = f.read()
+
+        # Check if already patched (correct fix uses msg_i - 1 for tool_calls)
+        if "messages[msg_i - 1].get(\"tool_calls\")" in src:
+            logger.debug("ollama_pt already correctly patched, skipping")
+            return
+
+        # Find and replace the vulnerable + incorrect line
+        old_line = '            tool_calls = messages[msg_i].get("tool_calls")'
+        new_line = '            tool_calls = messages[msg_i - 1].get("tool_calls")'
+
+        if old_line not in src:
+            logger.warning("Could not find ollama_pt vulnerability pattern in source file")
+            return
+
+        fixed_src = src.replace(old_line, new_line, 1)
+
+        # Write the patched source back
+        with open(src_file, "w") as f:
+            f.write(fixed_src)
+
+        # Clear the litellm module cache so the fix takes effect on next import
+        import sys
+
+        for key in list(sys.modules.keys()):
+            if key.startswith("litellm"):
+                try:
+                    del sys.modules[key]
+                except Exception:
+                    pass
+
+        logger.info(
+            "Patched litellm.ollama_pt (tool_calls now read from assistant message). "
+            "Module cache cleared. Restart not required for new requests."
+        )
+    except Exception as e:
+        logger.warning("Could not patch litellm.ollama_pt: %s", e)
+
+
+# Apply the LiteLLM ollama_pt patch once at module load time
+try:
+    _patch_litellm_ollama_pt()
+except Exception:
+    pass
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -132,29 +205,6 @@ def _tokenize_text(text: str) -> List[str]:
     return re.findall(r"\b\w+\b", text)
 
 
-def _load_crewai_types() -> tuple[Any, Any]:
-    """Load CrewAI lazily so standard RAG remains available without it."""
-    try:
-        crewai = importlib.import_module("crewai")
-    except Exception as exc:
-        version = f"{sys.version_info.major}.{sys.version_info.minor}"
-        raise RuntimeError(
-            "Multi-agent RAG requires a CrewAI build compatible with the current "
-            f"Python runtime. CrewAI is unavailable under Python {version} in this environment."
-        ) from exc
-
-    return crewai.Agent, crewai.LLM
-
-
-def multi_agent_rag_available() -> tuple[bool, str | None]:
-    """Return whether the CrewAI-backed RAG path is available in this runtime."""
-    try:
-        _load_crewai_types()
-        return True, None
-    except RuntimeError as exc:
-        return False, str(exc)
-
-
 def _flatten_metadata(meta, prefix=""):
     """Flatten a (possibly nested) metadata mapping into a single-level dict.
     Nested keys are joined with underscores. Iterables are JSON-encoded when possible.
@@ -181,7 +231,6 @@ def _flatten_metadata(meta, prefix=""):
 class RAGService:
     """Retrieval-augmented generation service with enhanced document processing capabilities."""
 
-    # Class-level ChromaDB client management to avoid conflicts
     _shared_client = None
     _shared_client_path = None
 
@@ -207,44 +256,29 @@ class RAGService:
         # Get the appropriate ChromaDB path based on environment
         self.chroma_db_path = self._get_chroma_db_path()
 
-        # In containerized environments, we can't remove mounted volumes
-        # Instead, clean the contents if the directory exists
-        if os.path.exists(self.chroma_db_path):
-            try:
-                shutil.rmtree(self.chroma_db_path)
-            except OSError as e:
-                # If we can't remove the directory (e.g., mounted volume),
-                # try to clean its contents instead
-                logger.warning(f"Could not remove ChromaDB directory {self.chroma_db_path}: {e}")
-                try:
-                    for item in os.listdir(self.chroma_db_path):
-                        item_path = os.path.join(self.chroma_db_path, item)
-                        if os.path.isdir(item_path):
-                            shutil.rmtree(item_path)
-                        else:
-                            os.remove(item_path)
-                    logger.info(f"Cleaned contents of ChromaDB directory: {self.chroma_db_path}")
-                except Exception as clean_error:
-                    logger.warning(f"Could not clean ChromaDB directory contents: {clean_error}")
-
+        # Initialize the ChromaDB client (uses shared class-level client if path matches)
+        # NOTE: We no longer delete the database directory at startup because:
+        #   1. It destroys data unnecessarily
+        #   2. Background async agents (crewAI) may hold stale references to deleted collections
+        #   3. ChromaDB's get_or_create_collection handles creation/updating correctly
         self.client = self._get_or_create_client(self.chroma_db_path)
 
-        try:
-            self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="all-MiniLM-L6-v2"
-            )
-        except Exception as e:
-            logger.warning(f"SentenceTransformerEmbeddingFunction not available ({e}), using ChromaDB default")
-            try:
-                self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
-            except Exception:
-                self.embedding_function = None
+        self.embedding_function: Optional[Any] = None
 
         self.default_chunk_size = int(os.getenv("DEFAULT_CHUNK_SIZE", "900"))
 
-        self.text_collection = self.client.get_or_create_collection(
-            name="documents_text", embedding_function=self.embedding_function
-        )
+        collection_name = "documents_text"
+        try:
+            existing = self.client.get_collection(name=collection_name)
+            self.text_collection = existing
+            logger.info("Reused existing collection '%s'", collection_name)
+        except Exception:
+            self.text_collection = self.client.get_or_create_collection(
+                name=collection_name
+            )
+            logger.info("Created new collection '%s' without an embedding function; a "
+                "provider-backed embedding function must be assigned before indexing.",
+                collection_name)
 
         self.file_paths = []
         self.bm25_corpus = []
@@ -313,7 +347,7 @@ class RAGService:
             return url
         except ImportError:
             logger.warning("Host service manager not available, using fallback config")
-            url = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+            url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
             logger.debug(f"Using fallback Ollama URL: {url}")
             return url
 
@@ -815,11 +849,20 @@ class RAGService:
             base_id = f"{doc_id}_batch_{len(self.chunk_ids)}"
             ids = [f"{base_id}_{i}" for i in range(len(texts))]
 
-            self.text_collection.add(
-                documents=texts,
-                metadatas=metadatas,
-                ids=ids,
-            )
+            if self.embedding_function is not None:
+                embeddings = self.embedding_function(texts)
+                self.text_collection.add(
+                    documents=texts,
+                    metadatas=metadatas,
+                    ids=ids,
+                    embeddings=embeddings,
+                )
+            else:
+                self.text_collection.add(
+                    documents=texts,
+                    metadatas=metadatas,
+                    ids=ids,
+                )
 
             for i, text in enumerate(texts):
                 tokens = self.preprocess_text(text)
@@ -850,11 +893,20 @@ class RAGService:
 
             chunk_id = f"single_{len(self.chunk_ids)}_{hash(content) % 1000000}"
 
-            self.text_collection.add(
-                documents=[content],
-                metadatas=[metadata],
-                ids=[chunk_id],
-            )
+            if self.embedding_function is not None:
+                embeddings = self.embedding_function([content])
+                self.text_collection.add(
+                    documents=[content],
+                    metadatas=[metadata],
+                    ids=[chunk_id],
+                    embeddings=embeddings,
+                )
+            else:
+                self.text_collection.add(
+                    documents=[content],
+                    metadatas=[metadata],
+                    ids=[chunk_id],
+                )
 
             tokens = self.preprocess_text(content)
             self.bm25_corpus.append(tokens)
@@ -1211,7 +1263,14 @@ class RAGService:
     def vector_search_text(self, query: str, n_results: int = 3) -> List[Tuple[str, str, float]]:
         """Run semantic search over text chunks and return (chunk_id, text, similarity)."""
         try:
-            results = self.text_collection.query(query_texts=[query], n_results=n_results)
+            if self.embedding_function is not None:
+                query_embedding = self.embedding_function([query])[0]
+                results = self.text_collection.query(
+                    query_embeddings=[query_embedding], n_results=n_results
+                )
+            else:
+                results = self.text_collection.query(query_texts=[query], n_results=n_results)
+
             if not results["documents"] or not results["documents"][0]:
                 return []
 
@@ -1228,11 +1287,23 @@ class RAGService:
     def vector_search_records(self, query: str, n_results: int = 3) -> List[Dict[str, Any]]:
         """Run semantic search over text chunks and preserve metadata for citation formatting."""
         try:
-            results = self.text_collection.query(
-                query_texts=[query],
-                n_results=n_results,
-                include=["documents", "metadatas", "distances"],
-            )
+            # Use our own embedding function to embed the query so ChromaDB never
+            # falls back to its built-in Ollama client (which always points at
+            # localhost:11434 and breaks in Docker).
+            if self.embedding_function is not None:
+                query_embedding = self.embedding_function([query])[0]
+                results = self.text_collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=n_results,
+                    include=["documents", "metadatas", "distances"],
+                )
+            else:
+                results = self.text_collection.query(
+                    query_texts=[query],
+                    n_results=n_results,
+                    include=["documents", "metadatas", "distances"],
+                )
+
             ids = results.get("ids") or [[]]
             documents = results.get("documents") or [[]]
             metadatas = results.get("metadatas") or [[]]
@@ -1412,18 +1483,18 @@ class RAGService:
     def build_grounded_user_prompt(
         self, query_text: str, source_records: List[Dict[str, Any]], voice_mode: bool = False
     ) -> str:
-        """Create a grounded prompt without exposing citation markers in the answer."""
+        """Create a grounded prompt that instructs the model to cite sources inline using [1], [2], etc."""
         if voice_mode:
             instruction_block = (
                 "Answer only from the provided context passages. "
-                "Do not mention source numbers, filenames, citations, or a sources section unless the user explicitly asks. "
-                "If the context is insufficient, say so briefly."
+                "When using information from a specific passage, include its citation number [1], [2], etc. inline in your answer. "
+                "Do not mention filenames or raw source text. If the context is insufficient, say so briefly."
             )
         else:
             instruction_block = (
                 "Answer only from the provided context passages. "
-                "Write a clean, direct answer and do not mention source numbers, filenames, citations, or a sources section unless the user explicitly asks. "
-                "If the context is insufficient, say so clearly."
+                "When using information from a specific passage, cite it inline using [1], [2], etc. right after the claim. "
+                "Do not invent information not in the context. Do not mention filenames or raw sources in the answer."
             )
 
         if not source_records:
@@ -1433,15 +1504,17 @@ class RAGService:
                 f"User question: {query_text}"
             )
 
-        context_blocks = [
-            self._truncate_source_content(record.get("content", ""))
-            for record in source_records
-            if record.get("content", "").strip()
-        ]
+        context_blocks = []
+        for idx, record in enumerate(source_records, start=1):
+            content = record.get("content", "").strip()
+            if content:
+                truncated = self._truncate_source_content(content)
+                context_blocks.append(f"[{idx}] {truncated}")
 
+        separator = "\n\n---\n"
         return (
             f"{instruction_block}\n\n"
-            f"Context passages:\n\n---\n{('\n\n---\n').join(context_blocks)}\n\n"
+            f"Context passages:\n\n---\n{separator.join(context_blocks)}\n\n"
             f"User question: {query_text}"
         )
 
@@ -1456,295 +1529,135 @@ class RAGService:
         return ""
 
     async def query(
-        self,
-        query_text,
-        system_prompt="You are a helpful assistant.",
-        messages=None,
-        n_results=3,
-        use_hybrid_search=False,
-        model: Optional[str] = None,
-        conversation_summary: Optional[str] = None,
-        backend: Optional[str] = "ollama",
-        api_base: Optional[str] = None,
-        api_key: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        top_p: float = 0.9,
-        frequency_penalty: float = 0.0,
-        repetition_penalty: float = 1.0,
-        is_voice_mode: bool = False,
-    ):
-        """Answer a query using semantic or hybrid retrieval and stream model tokens.
+            self,
+            query_text,
+            system_prompt="You are a helpful assistant.",
+            messages=None,
+            n_results=3,
+            use_hybrid_search=False,
+            model: Optional[str] = None,
+            conversation_summary: Optional[str] = None,
+            backend: Optional[str] = "ollama",
+            api_base: Optional[str] = None,
+            api_key: Optional[str] = None,
+            temperature: float = 0.7,
+            max_tokens: int = 2048,
+            top_p: float = 0.9,
+            frequency_penalty: float = 0.0,
+            repetition_penalty: float = 1.0,
+            is_voice_mode: bool = False,
+        ):
+            """Answer a query using semantic or hybrid retrieval and stream model tokens.
 
-        Args:
-            query_text: The user's query
-            system_prompt: System prompt for the LLM
-            messages: Conversation history
-            n_results: Number of documents to retrieve
-            use_hybrid_search: Whether to use hybrid BM25 + semantic search
-            model: Model name to use
-            conversation_summary: Summary of earlier conversation for context
-            backend: Inference backend name (for example: ollama, openrouter)
-            api_base: Optional provider base URL override
-            api_key: Optional provider API key override
-            temperature: Temperature for LLM response generation (0.0 to 1.0)
-            max_tokens: Maximum number of tokens to generate
-            top_p: Nucleus sampling parameter (0.0 to 1.0)
-            frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
-            repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
-            is_voice_mode: Whether this is voice mode (uses shorter, conversational responses)
-        """
-        messages = messages or []
-        full_query = self.build_retrieval_query(query_text, messages)
-        source_records = self.get_retrieval_records(full_query, n_results, use_hybrid_search)
+            Args:
+                query_text: The user's query
+                system_prompt: System prompt for the LLM
+                messages: Conversation history
+                n_results: Number of documents to retrieve
+                use_hybrid_search: Whether to use hybrid BM25 + semantic search
+                model: Model name to use
+                conversation_summary: Summary of earlier conversation for context
+                backend: Inference backend name (for example: ollama, openrouter)
+                api_base: Optional provider base URL override
+                api_key: Optional provider API key override
+                temperature: Temperature for LLM response generation (0.0 to 1.0)
+                max_tokens: Maximum number of tokens to generate
+                top_p: Nucleus sampling parameter (0.0 to 1.0)
+                frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
+                repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
+                is_voice_mode: Whether this is voice mode (uses shorter, conversational responses)
+            """
+            messages = messages or []
+            full_query = self.build_retrieval_query(query_text, messages)
+            source_records = self.get_retrieval_records(full_query, n_results, use_hybrid_search)
 
-        # Build messages with conversation memory support
-        llm_messages = []
+            # Build citations metadata - map index to source record for frontend
+            citations_metadata = {}
+            for idx, record in enumerate(source_records, start=1):
+                citations_metadata[idx] = {
+                    "id": record.get("id", ""),
+                    "content": record.get("content", ""),
+                    "score": record.get("score", 0.0),
+                    "retrieval_method": record.get("retrieval_method", ""),
+                    "metadata": record.get("metadata", {}),
+                }
 
-        # Add conversation summary if available
-        if conversation_summary:
+            # Normalize scores using min-max scaling across this batch
+            scores = [r.get("score", 0.0) for r in source_records]
+            min_score = min(scores) if scores else 0.0
+            max_score = max(scores) if scores else 1.0
+            score_range = max_score - min_score
+
+            for idx in citations_metadata:
+                raw_score = citations_metadata[idx]["score"]
+                if score_range > 0:
+                    # Min-max normalization: maps lowest to 0, highest to 1
+                    normalized_score = (raw_score - min_score) / score_range
+                else:
+                    normalized_score = 1.0 if raw_score > 0 else 0.0
+                citations_metadata[idx]["score"] = normalized_score
+
+            # Build messages with conversation memory support
+            llm_messages = []
+
+            # Add conversation summary if available
+            if conversation_summary:
+                llm_messages.append(
+                    {"role": "system", "content": f"Summary of previous conversation:\n{conversation_summary}"}
+                )
+
+            # Add conversation history
+            llm_messages.extend(messages)
+
+            # Use voice-optimized system prompt if in voice mode
+            if is_voice_mode and system_prompt == "You are a helpful assistant.":
+                from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+
+                system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+
+            # Adjust max_tokens for voice mode
+            if is_voice_mode:
+                max_tokens = min(max_tokens, 300)
+
+            # Add system prompt and current query with context
+            llm_messages.append({"role": "system", "content": system_prompt})
             llm_messages.append(
-                {"role": "system", "content": f"Summary of previous conversation:\n{conversation_summary}"}
+                {
+                    "role": "system",
+                    "content": (
+                        "Answer the question using the provided context passages. "
+                        "When you use information from a specific passage, cite it with a bracketed number "
+                        "like [1], [2], etc. at the appropriate point in your answer. "
+                        "If multiple passages support the same point, use all relevant citation numbers like [1][3]. "
+                        "Do not invent citation numbers - only cite passages that were actually used. "
+                        "Do not include a separate Sources section unless the user asks for it."
+                    ),
+                }
+            )
+            llm_messages.append(
+                {
+                    "role": "user",
+                    "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
+                }
             )
 
-        # Add conversation history
-        llm_messages.extend(messages)
+            # Yield citations metadata first as a special JSON line
+            import json
+            citations_json = json.dumps({'citations': citations_metadata})
+            yield "data: " + citations_json + "\n\n"
 
-        # Use voice-optimized system prompt if in voice mode
-        if is_voice_mode and system_prompt == "You are a helpful assistant.":
-            from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
-
-            system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
-
-        # Adjust max_tokens for voice mode
-        if is_voice_mode:
-            max_tokens = min(max_tokens, 300)
-
-        # Add system prompt and current query with context
-        llm_messages.append({"role": "system", "content": system_prompt})
-        llm_messages.append(
-            {
-                "role": "system",
-                "content": "Do not include citations, source numbers, filenames, bracketed references, or a Sources section unless the user explicitly asks for sources.",
-            }
-        )
-        llm_messages.append(
-            {
-                "role": "user",
-                "content": self.build_grounded_user_prompt(query_text, source_records, voice_mode=is_voice_mode),
-            }
-        )
-
-        async for chunk in stream_completion(
-            llm_messages,
-            backend=backend,
-            model=model,
-            api_base=api_base,
-            api_key=api_key,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            frequency_penalty=frequency_penalty,
-            repetition_penalty=repetition_penalty,
-        ):
-            yield chunk
+            async for chunk in stream_completion(
+                llm_messages,
+                backend=backend,
+                model=model,
+                api_base=api_base,
+                api_key=api_key,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                repetition_penalty=repetition_penalty,
+            ):
+                yield chunk
 
 
-class CrewAIRAGOrchestrator:
-    """Coordinates refined querying and answer composition using the selected backend."""
-
-    def __init__(
-        self,
-        rag_service: RAGService,
-        model_name: str = "gemma3:1b",
-        backend: str = "ollama",
-        api_base: Optional[str] = None,
-        api_key: Optional[str] = None,
-    ):
-        """Configure the CrewAI LLM, agent roles, and default context parameters."""
-        Agent, LLM = _load_crewai_types()
-        self.rag_service = rag_service
-        self.llm_config = resolve_backend_config(
-            backend=backend,
-            model=model_name,
-            api_base=api_base,
-            api_key=api_key,
-        )
-        self.backend = self.llm_config.backend
-        self.model_name = self.llm_config.model
-
-        agent_model = self.model_name
-        if self.backend == "ollama" and agent_model.startswith("ollama_chat/"):
-            agent_model = f"ollama/{agent_model[len('ollama_chat/') :]}"
-
-        agent_llm_kwargs = {
-            "model": agent_model,
-            "base_url": self.llm_config.api_base,
-            "api_key": self.llm_config.api_key,
-            "temperature": 0.0,
-        }
-
-        self.agent_llm = LLM(**agent_llm_kwargs)
-        self.context_length = 4096
-
-        self.refiner = Agent(
-            role="Query Refiner",
-            goal="Clarify user questions for retrieval.",
-            backstory="Understands intent of the prompt and rewrites prompts with more details.",
-            llm=self.agent_llm,
-        )
-        self.composer = Agent(
-            role="Answer Composer",
-            goal="Craft final answers with citations.",
-            backstory="Synthesises context into helpful replies.",
-            llm=self.agent_llm,
-        )
-
-    async def _get_context_length(self, model_name: str) -> int:
-        """Query Ollama for context length when available; otherwise use a safe default."""
-        if self.backend != "ollama":
-            return 4096
-
-        model = model_name.replace("ollama_chat/", "").replace("ollama/", "")
-
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(f"{self.llm_config.api_base}/api/show", json={"name": model})
-                resp.raise_for_status()
-                data = resp.json()
-                params = data.get("model_info", "")
-
-                # Security: Use JSON parsing instead of ast.literal_eval
-                if isinstance(params, str):
-                    import json
-
-                    try:
-                        params = json.loads(params)
-                    except json.JSONDecodeError:
-                        # If JSON parsing fails, try ast.literal_eval as fallback
-                        # ast.literal_eval is safe for literal structures only
-                        import ast
-
-                        try:
-                            params = ast.literal_eval(params)
-                        except (ValueError, SyntaxError) as e:
-                            logger.warning(f"Failed to parse model_info: {e}")
-                            return 4096
-
-                if not isinstance(params, dict):
-                    return 4096
-
-                for key, value in params.items():
-                    if key.endswith("context_length"):
-                        try:
-                            return int(value)
-                        except (ValueError, TypeError):
-                            logger.warning(f"Invalid context_length value: {value}")
-                            return 4096
-
-                return 4096
-        except Exception as e:
-            logger.warning(f"Error getting context length: {e}")
-            return 4096
-
-    async def _generate_summary(self, text: str, system_prompt: str) -> str:
-        """Generate a short summary for a text segment using the configured backend."""
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}]
-
-        response = ""
-        async for chunk in stream_completion(
-            messages,
-            backend=self.backend,
-            model=self.model_name,
-            api_base=self.llm_config.api_base,
-            api_key=self.llm_config.api_key,
-            temperature=0.0,
-        ):
-            response += chunk
-
-        return response
-
-    def chunk_text(self, text: str, chunk_size: int):
-        """Simple character-based chunking without overlap (used for specific cases)."""
-        if not text or not text.strip():
-            return []
-
-        text = text.strip()
-        chunks = []
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i : i + chunk_size].strip()
-            if chunk:
-                chunks.append(chunk)
-        return chunks
-
-    async def summarize_context(self, text: str, target_length: int) -> str:
-        """Recursively summarize text until it fits within a target character budget."""
-        if len(text) <= target_length:
-            return text
-
-        chunk_size = target_length // 2
-        chunks = self.chunk_text(text, chunk_size)
-        summaries = []
-
-        for chunk in chunks:
-            sum_prompt = "Provide a concise summary of the following text:"
-            summ = await self._generate_summary(chunk, sum_prompt)
-            summaries.append(summ)
-
-        combined = " ".join(summaries)
-        return await self.summarize_context(combined, target_length)
-
-    async def query(
-        self,
-        user_query: str,
-        system_prompt: str,
-        messages=[],
-        n_results: int = 3,
-        use_hybrid_search: bool = False,
-        model: Optional[str] = None,
-        conversation_summary: Optional[str] = None,
-    ):
-        """Refine the user query, retrieve/summarize context, and compose a final streamed answer."""
-        if self.backend == "ollama" and self.context_length == 4096:
-            self.context_length = await self._get_context_length(self.model_name)
-
-        history_parts = []
-        if conversation_summary:
-            history_parts.append(f"Summary of previous conversation:\n{conversation_summary}")
-        history_parts.extend(f"{msg['role']}: {msg['content']}" for msg in messages if msg["role"] != "system")
-        history_context = "\n".join(history_parts)
-        refine_prompt = (
-            f"Previous conversation:\n{history_context}\n\n"
-            "Refine the following user query so it is precise, self-contained and uses full nouns:\n\n"
-            f"{user_query}"
-        )
-
-        refined = await self.refiner.kickoff_async(refine_prompt)
-        refined_query = refined.raw.strip()
-        logger.info(f"Refined query: {refined_query}")
-
-        if use_hybrid_search and self.rag_service.bm25_model:
-            documents = self.rag_service.hybrid_search(refined_query, n_results)
-            context = " ".join(documents)
-        else:
-            res = self.rag_service.text_collection.query(query_texts=[refined_query], n_results=n_results)
-            context = " ".join(res["documents"][0]) if res["documents"] else ""
-
-        approx_tokens = len(context) // 4 + 1
-        target_tokens = self.context_length * 0.6
-
-        if approx_tokens > target_tokens:
-            target_chars = int(target_tokens * 4)
-            context = await self.summarize_context(context, target_chars)
-
-        compose_prompt = (
-            f"Previous conversation:\n{history_context}\n\n"
-            f"Context:\n{context}\n\nOriginal question:\n{user_query}\n\n"
-            f"Follow these instructions when you answer:\n{system_prompt}"
-        )
-
-        final = await self.composer.kickoff_async(compose_prompt)
-        answer = final.raw
-
-        for i in range(0, len(answer), 400):
-            yield answer[i : i + 400]

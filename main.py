@@ -169,9 +169,16 @@ async def lifespan(app: FastAPI):
         rag_service = None
 
     # Restore configuration
-    try:
+    if rag_service is None:
+        logger.warning("RAG service unavailable, skipping config restore")
+    else:
+        # The embedding function is ALWAYS built through the inference-provider
+        # factory. There is no in-process default (no SentenceTransformer /
+        # DefaultEmbedding fallback) — only the providers registered in
+        # app.backend.core.embeddings.create_embedding_function
+        # (ollama / huggingface / openrouter / nvidia_nim) can be used.
         cfg = load_rag_config()
-        configured_provider = str(cfg.get("provider", "huggingface"))
+        configured_provider = str(cfg.get("provider", DEFAULT_RAG_CONFIG["provider"]))
         embedding_backend = cfg.get("embedding_backend")
         provider = resolve_embedding_provider(configured_provider, embedding_backend)
         model_name = str(cfg.get("embedding_model", DEFAULT_RAG_CONFIG["embedding_model"]))
@@ -181,7 +188,9 @@ async def lifespan(app: FastAPI):
             provider,
             model_name,
             config_info["ollama_url"],
+            embedding_backend=embedding_backend,
             api_base=cfg.get("embedding_api_base"),
+            api_key=cfg.get("embedding_api_key"),
         )
 
         rag_service.default_chunk_size = chunk_size
@@ -191,8 +200,6 @@ async def lifespan(app: FastAPI):
             embedding_backend,
             model_name,
         )
-    except Exception as e:
-        logger.warning(f"Failed to restore RAG config: {e}")
 
     # Performance tuning
     try:

@@ -339,6 +339,10 @@ class RAGPage:
                 with st.chat_message(message["role"]):
                     render_llm_text(message["content"])
 
+                    # Render citations if present (RAG assistant messages)
+                    if message["role"] == "assistant" and message.get("citations"):
+                        self._render_citations(message["citations"], idx)
+
                     # Add TTS play button for assistant messages
                     if message["role"] == "assistant":
                         audio_key = f"rag_tts_audio_{idx}"
@@ -391,6 +395,89 @@ class RAGPage:
             except Exception as e:
                 logger.error(f"TTS error: {e}")
                 st.error(f"TTS error: {e}")
+
+    def _render_citations(self, citations: dict, msg_idx: int):
+        """Render clickable citations that expand to show source text.
+
+        Args:
+            citations: Dict mapping citation number to citation data
+            msg_idx: Message index for unique key generation
+        """
+        if not citations:
+            return
+
+        # Collect used citation numbers from the response text
+        # The model outputs [1], [2], etc. - we render these as clickable
+        citation_numbers = sorted(citations.keys())
+
+        if not citation_numbers:
+            return
+
+        # Render a compact citations section
+        st.markdown("---")
+        st.markdown("**📚 Sources:**")
+
+        # Use a clean card-based layout for citations
+        for cite_num in citation_numbers:
+            cite_data = citations[cite_num]
+            if not cite_data:
+                continue
+
+            content = cite_data.get("content", "")
+            metadata = cite_data.get("metadata", {}) or {}
+            score = cite_data.get("score", 0.0)
+            retrieval_method = cite_data.get("retrieval_method", "")
+
+            # Build source label from metadata
+            filename = metadata.get("filename") or metadata.get("doc_id") or "Unknown source"
+            page_num = metadata.get("page_number")
+            section_title = metadata.get("section_title")
+
+            source_label = f"**[{cite_num}]** {filename}"
+            if page_num:
+                source_label += f", page {page_num}"
+            if section_title:
+                source_label += f" — {section_title[:50]}"
+
+            # Create an expander for each citation
+            with st.expander(source_label, expanded=False):
+                # Display the source text with highlighting
+                st.markdown(
+                    f"""
+                    <div style="
+                        background: linear-gradient(135deg, rgba(76, 175, 80, 0.08), rgba(129, 199, 132, 0.05));
+                        border-left: 4px solid #4caf50;
+                        padding: 1rem;
+                        border-radius: 0.5rem;
+                        margin: 0.5rem 0;
+                        font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, sans-serif;
+                    ">
+                        <p style="margin: 0; line-height: 1.6;">{self._escape_html(content)}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                # Show metadata footer
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    # Display normalized score as percentage (0-100%)
+                    st.caption(f"📊 Relevance: {score * 100:.0f}%")
+                with col2:
+                    st.caption(f"🔍 Method: {retrieval_method}")
+                with col3:
+                    if page_num:
+                        st.caption(f"📄 Page {page_num}")
+
+    @staticmethod
+    def _escape_html(text: str) -> str:
+        """Escape HTML characters to prevent XSS and preserve formatting."""
+        import html
+        # First escape HTML, then preserve newlines
+        escaped = html.escape(text)
+        # Convert newlines to <br> for display
+        escaped = escaped.replace("\n", "<br>")
+        return escaped
 
     def _process_rag_query(self, query: str):
         """Process RAG query and generate response with conversation memory."""
@@ -455,7 +542,14 @@ class RAGPage:
                 )
 
         if response_text:
-            st.session_state.rag_messages.append({"role": "assistant", "content": response_text})
+            # Capture citations from the streaming response
+            citations = st.session_state.pop("rag_citations", None)
+
+            # Store message with optional citations
+            assistant_message = {"role": "assistant", "content": response_text}
+            if citations:
+                assistant_message["citations"] = citations
+            st.session_state.rag_messages.append(assistant_message)
 
             # Save assistant message to conversation history if enabled
             if st.session_state.get("rag_history_enabled", True):

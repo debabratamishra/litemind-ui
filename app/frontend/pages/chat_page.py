@@ -129,7 +129,7 @@ class ChatPage:
         realtime_active = st.session_state.get("realtime_voice_mode_chat", False)
 
         if not realtime_active:
-            st.title("LLM Chat Interface")
+            st.title("Chat Interface")
 
             # Display memory indicator if memory is enabled
             if st.session_state.get("chat_memory_enabled", True):
