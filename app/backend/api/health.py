@@ -41,7 +41,8 @@ async def readiness_check():
             else:
                 status_data["checks"]["rag_service"] = {"status": "ready"}
         except Exception as e:
-            status_data["checks"]["rag_service"] = {"status": "error", "error": str(e)}
+            logger.exception("RAG service readiness check failed")
+            status_data["checks"]["rag_service"] = {"status": "error", "error": "Internal error"}
             status_data["status"] = "not_ready"
         
         # Check critical directories
@@ -59,8 +60,8 @@ async def readiness_check():
             return JSONResponse(status_code=503, content=status_data)
             
     except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
+        logger.exception("Readiness check failed")
         return JSONResponse(
             status_code=503, 
-            content={"status": "error", "error": str(e), "timestamp": time.time()}
+            content={"status": "error", "error": "Internal error", "timestamp": time.time()}
         )
