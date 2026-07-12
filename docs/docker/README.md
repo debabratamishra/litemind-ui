@@ -10,7 +10,6 @@ LiteMindUI supports Docker in four practical ways: source builds, development mo
 | Development | `make dev` | Iterating with the development compose file |
 | Production-style | `make prod` | Validating the production compose setup locally |
 | Docker Hub images | `make hub-up` | Pulling prebuilt images instead of building locally |
-| macOS workaround | `./scripts/fix_macos.sh` | Switching to the macOS compose file if Docker Desktop networking needs it |
 
 `make setup` runs `scripts/docker-setup.sh`, which creates the runtime directories and `.streamlit` config expected by the compose files.
 
@@ -43,7 +42,6 @@ After startup:
 | `docker-compose.dev.yml` | development-oriented stack |
 | `docker-compose.prod.yml` | production-style stack |
 | `docker-compose.hub.yml` | prebuilt Docker Hub images |
-| `docker-compose.macos.yml` | macOS-specific networking fallback |
 
 ## Day-to-day operations
 
@@ -80,7 +78,7 @@ The Docker setup uses repository-local runtime directories so data survives cont
 
 ## Troubleshooting
 
-1. If containers start but the UI cannot reach Ollama on macOS, try `./scripts/fix_macos.sh`.
+1. If containers start but the UI cannot reach Ollama on macOS, give Docker Desktop a few minutes to bind ports, then re-run `make up`.
 2. If health checks fail, inspect logs with `make logs` or `docker compose logs -f backend frontend`.
 3. If you need a clean rebuild, run `make clean` and then `make up`.
 
