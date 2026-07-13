@@ -19,13 +19,15 @@ Architecture:
 from __future__ import annotations
 
 import io
+import json
 import logging
+import os
 import queue
 import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import requests
@@ -72,6 +74,7 @@ class _PipecatConfig:
     vad_start_secs: float = 0.2
     vad_stop_secs: float = 1.5  # Increased from 0.8 to allow natural pauses
     vad_confidence: float = 0.65  # Slightly lower for more natural detection
+    vad_min_volume: float = 0.05  # Standard sensitive volume threshold (default 0.6 is too high)
 
 
 # Sentence-ending punctuation for streaming TTS
@@ -87,6 +90,154 @@ REALTIME_GREETING_RAG = "Good day! Ask me anything about your documents."
 _greeting_audio_cache = {}
 _greeting_cache_lock = threading.Lock()
 GREETING_CACHE_KEY = "realtime_greeting_audio_cached"
+
+
+# ============================================================================
+# WebRTC ICE / NAT configuration
+# ============================================================================
+#
+# streamlit-webrtc runs TWO SEPARATE WebRTC peers that BOTH have to gather ICE
+# candidates and reach a STUN/TURN server:
+#   1. the BROWSER peer   -> configured by `frontend_rtc_configuration`
+#   2. the SERVER peer (aiortc, running inside THIS process/container)
+#                         -> configured by `server_rtc_configuration`
+#
+# The critical subtlety that makes Docker fail: the two peers live in different
+# network namespaces and therefore reach the SAME TURN server via DIFFERENT
+# addresses.
+#   * The browser runs on the user's host, so it reaches coturn at the host's
+#     LAN IP (e.g. turn:192.168.1.20:3478).
+#   * The server peer runs inside the container, so the host's LAN IP may not
+#     resolve the way you expect and 127.0.0.1 points at the container itself.
+#     It must reach coturn via `host.docker.internal` (Docker Desktop, and Linux
+#     with an added host-gateway entry).
+#
+# If you give the SERVER peer a TURN/STUN URL it cannot reach (e.g. 127.0.0.1,
+# which was the previous bug), aioice keeps retransmitting STUN binding requests
+# to a dead address; when the failed connection is torn down the pending retry
+# timer fires on a closed transport and raises:
+#     AttributeError: 'NoneType' object has no attribute 'sendto'
+#     ... 'NoneType' object has no attribute 'call_exception_handler'
+# i.e. the traceback is a SYMPTOM of the server peer never reaching its ICE
+# server. The fix is to give each peer a reachable server, and to give the
+# server peer TURN-only config in Docker (a public STUN srflx candidate is
+# useless behind the bridge NAT and just adds more dead retransmits).
+#
+# Everything is env-driven so Docker and standalone tune without code changes:
+#   Browser peer:
+#     WEBRTC_STUN_URL        STUN url (default stun:stun.l.google.com:19302)
+#     WEBRTC_TURN_URL        TURN url the BROWSER can reach (host LAN IP)
+#     WEBRTC_ICE_SERVERS     full JSON override for the browser peer
+#   Server peer (in-container):
+#     WEBRTC_SERVER_TURN_URL TURN url the CONTAINER can reach
+#                            (default turn:host.docker.internal:3478 when any
+#                             TURN credentials/URL are configured)
+#     WEBRTC_SERVER_ICE_SERVERS full JSON override for the server peer
+#   Shared TURN credentials:
+#     WEBRTC_TURN_USERNAME / WEBRTC_TURN_CREDENTIAL
+#
+# Standalone (uv run) needs none of this: both peers share the host network, so
+# the default Google STUN entry is enough for each.
+
+_DEFAULT_STUN_URL = "stun:stun.l.google.com:19302"
+_DEFAULT_SERVER_TURN_URL = "turn:host.docker.internal:3478"
+
+
+def _turn_credentials() -> Tuple[str, str]:
+    """Return (username, credential) for the TURN server from the environment."""
+    return (
+        os.getenv("WEBRTC_TURN_USERNAME", "").strip(),
+        os.getenv("WEBRTC_TURN_CREDENTIAL", "").strip(),
+    )
+
+
+def _make_turn_server(turn_url: str) -> Dict[str, Any]:
+    """Build a single TURN ICE-server dict, attaching credentials when present."""
+    turn_server: Dict[str, Any] = {"urls": [turn_url]}
+    turn_user, turn_cred = _turn_credentials()
+    if turn_user:
+        turn_server["username"] = turn_user
+    if turn_cred:
+        turn_server["credential"] = turn_cred
+    return turn_server
+
+
+def _parse_ice_override(env_var: str) -> Optional[List[Dict[str, Any]]]:
+    """Parse a full JSON ICE-server override from ``env_var`` if set and valid."""
+    raw = os.getenv(env_var, "").strip()
+    if not raw:
+        return None
+    try:
+        servers = json.loads(raw)
+        if isinstance(servers, list) and servers:
+            return servers
+        logger.warning("%s is not a non-empty JSON list; ignoring", env_var)
+    except json.JSONDecodeError as e:
+        logger.warning("Failed to parse %s as JSON: %s", env_var, e)
+    return None
+
+
+def _is_in_docker() -> bool:
+    """Return True if running inside a Docker container."""
+    if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", "rt") as f:
+            if "docker" in f.read() or "kubepods" in f.read():
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _build_frontend_ice_servers() -> List[Dict[str, Any]]:
+    """ICE servers for the BROWSER peer (STUN + optional host-reachable TURN)."""
+    override = _parse_ice_override("WEBRTC_ICE_SERVERS")
+    if override is not None:
+        return override
+
+    stun_url = os.getenv("WEBRTC_STUN_URL", _DEFAULT_STUN_URL).strip() or _DEFAULT_STUN_URL
+    servers: List[Dict[str, Any]] = [{"urls": [stun_url]}]
+
+    # Only include TURN server if running inside Docker
+    if _is_in_docker():
+        turn_url = os.getenv("WEBRTC_TURN_URL", "").strip()
+        if turn_url:
+            servers.append(_make_turn_server(turn_url))
+
+    return servers
+
+
+def _build_server_ice_servers() -> List[Dict[str, Any]]:
+    """ICE servers for the in-container SERVER peer.
+
+    When running in Docker, the server peer is given TURN ONLY to avoid
+    failing STUN binding requests that crash aioice.
+    When running standalone, it falls back to STUN.
+    """
+    override = _parse_ice_override("WEBRTC_SERVER_ICE_SERVERS")
+    if override is not None:
+        return override
+
+    if _is_in_docker():
+        server_turn_url = os.getenv("WEBRTC_SERVER_TURN_URL", "").strip()
+        if not server_turn_url:
+            server_turn_url = _DEFAULT_SERVER_TURN_URL
+        return [_make_turn_server(server_turn_url)]
+
+    # Standalone mode: just use STUN
+    stun_url = os.getenv("WEBRTC_STUN_URL", _DEFAULT_STUN_URL).strip() or _DEFAULT_STUN_URL
+    return [{"urls": [stun_url]}]
+
+
+def _build_frontend_rtc_configuration() -> Dict[str, Any]:
+    """RTCConfiguration dict for the browser peer."""
+    return {"iceServers": _build_frontend_ice_servers()}
+
+
+def _build_server_rtc_configuration() -> Dict[str, Any]:
+    """RTCConfiguration dict for the in-container aiortc peer."""
+    return {"iceServers": _build_server_ice_servers()}
 
 
 # ============================================================================
@@ -790,6 +941,14 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             self._silence_frames = 0
             self._interim_counter = 0  # Counter for interim updates
 
+            # Dedicated event loop for running async VAD calls from sync recv()
+            import asyncio
+            self._vad_loop = asyncio.new_event_loop()
+            self._vad_loop_thread = threading.Thread(
+                target=self._vad_loop.run_forever, daemon=True, name="vad-loop"
+            )
+            self._vad_loop_thread.start()
+
             # Initialize VAD
             self._init_vad()
 
@@ -803,6 +962,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                         confidence=pipecat_cfg.vad_confidence,
                         start_secs=pipecat_cfg.vad_start_secs,
                         stop_secs=pipecat_cfg.vad_stop_secs,
+                        min_volume=pipecat_cfg.vad_min_volume,
                     )
                 )
                 self._vad.set_sample_rate(pipecat_cfg.segment_sample_rate)
@@ -862,7 +1022,13 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             return self._resampler
 
         def _process_vad(self, pcm16_bytes: bytes) -> None:
-            """Process audio through VAD (called from main thread, synchronous)."""
+            """Process audio through VAD (called from sync recv() callback).
+
+            Pipecat 1.4.0 made analyze_audio an async coroutine. We submit it
+            to the dedicated VAD event loop and block for the result so that
+            the synchronous recv() callback still works correctly.
+            """
+            import asyncio
             if self._vad is None or VADState is None:
                 return
 
@@ -873,7 +1039,14 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     del self._pre_roll[: len(self._pre_roll) - pre_roll_max]
 
                 try:
-                    vad_state = self._vad.analyze_audio(pcm16_bytes)
+                    # analyze_audio is a coroutine in Pipecat >= 1.4; run it on
+                    # our dedicated loop and wait for the result (timeout=0.1s).
+                    coro = self._vad.analyze_audio(pcm16_bytes)
+                    if asyncio.iscoroutine(coro):
+                        future = asyncio.run_coroutine_threadsafe(coro, self._vad_loop)
+                        vad_state = future.result(timeout=0.1)
+                    else:
+                        vad_state = coro  # synchronous fallback (older Pipecat)
                 except Exception as e:
                     logger.debug(f"VAD analysis error: {e}")
                     return
@@ -953,7 +1126,10 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     for resampled_frame in resampler.resample(frame):
                         pcm = resampled_frame.to_ndarray()
                         if pcm.ndim == 2:
-                            pcm = pcm[0]
+                            if pcm.shape[0] in (1, 2):
+                                pcm = pcm[0]
+                            else:
+                                pcm = pcm[:, 0]
                         if pcm.dtype != np.int16:
                             pcm = np.clip(pcm, -32768, 32767).astype(np.int16)
                         self._process_vad(pcm.tobytes())
@@ -987,6 +1163,10 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
 
         def __del__(self) -> None:
             self._stop.set()
+            try:
+                self._vad_loop.call_soon_threadsafe(self._vad_loop.stop)
+            except Exception:
+                pass
 
     # ========================================================================
     # Audio Processor: webrtcvad fallback
@@ -1093,6 +1273,13 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             st.info("🎤 Initializing voice chat... Please wait a moment.")
 
         try:
+            frontend_rtc_config = _build_frontend_rtc_configuration()
+            server_rtc_config = _build_server_rtc_configuration()
+            logger.info(
+                "WebRTC ICE servers -> browser: %s | server(in-container): %s",
+                [s.get("urls") for s in frontend_rtc_config.get("iceServers", [])],
+                [s.get("urls") for s in server_rtc_config.get("iceServers", [])],
+            )
             webrtc_ctx = webrtc_streamer(
                 key=f"realtime_voice_webrtc_{page_key}",
                 mode=webrtc_mode,
@@ -1107,7 +1294,13 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
                     "video": False,
                 },
                 async_processing=False,
-                rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+                # Browser peer ICE config (reaches TURN via the host LAN IP).
+                frontend_rtc_configuration=frontend_rtc_config,
+                # In-container aiortc peer ICE config. MUST point at a TURN/STUN
+                # server reachable from INSIDE the container (host.docker.internal
+                # in Docker). Passing an unreachable server here is what makes
+                # aioice crash on teardown ("NoneType has no attribute sendto").
+                server_rtc_configuration=server_rtc_config,
             )
         except Exception as e:
             logger.error(f"WebRTC initialization error: {e}")
