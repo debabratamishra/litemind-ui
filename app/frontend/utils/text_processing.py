@@ -282,19 +282,124 @@ def _fix_concatenated_text_after_urls(text: str) -> str:
     return text
 
 
+def _is_header_line(line: str) -> bool:
+    """Check if a line is a markdown header (starts with ``#``)."""
+    return bool(line) and line.lstrip().startswith('#')
+
+
+def _is_numbered_list_marker(text: str, pos: int) -> bool:
+    """Return True if *text* at *pos* starts a numbered list marker (``N. ``)."""
+    if pos >= len(text) or not text[pos].isdigit():
+        return False
+    j = pos + 1
+    while j < len(text) and text[j].isdigit():
+        j += 1
+    return (j < len(text) and text[j] == '.'
+            and j + 1 < len(text) and text[j + 1] == ' ')
+
+
+def _ensure_header_space(line: str) -> str:
+    """Ensure a space follows the ``#`` markers (``#Header`` → ``# Header``)."""
+    if not line.startswith('#'):
+        return line
+    i = 0
+    while i < len(line) and line[i] == '#':
+        i += 1
+    if i < len(line) and line[i] != ' ':
+        return line[:i] + ' ' + line[i:]
+    return line
+
+
+def _split_inline_numbered_items(line: str) -> list[str]:
+    """Split a line with multiple numbered items into separate lines.
+
+    ``1. abc 2. def 3. xyz`` → ``["1. abc", "2. def", "3. xyz"]``
+    """
+    # Find all "N. " marker positions — O(n), single scan, no backtracking.
+    markers: list[int] = []
+    i = 0
+    while i < len(line):
+        if not line[i].isdigit():
+            i += 1
+            continue
+        # Scan forward to see if this digit run is a list marker "N. "
+        j = i + 1
+        while j < len(line) and line[j].isdigit():
+            j += 1
+        if j < len(line) and line[j] == '.' and j + 1 < len(line) and line[j + 1] == ' ':
+            markers.append(i)
+            i = j + 2  # jump past ". "
+        else:
+            # Not a marker — skip the entire digit run so we don't re-check
+            # each digit (avoids O(n²) on long digit-only strings).
+            i = j
+
+    if len(markers) <= 1:
+        return [line]
+
+    parts: list[str] = []
+    for idx, pos in enumerate(markers):
+        start = 0 if idx == 0 else pos
+        end = markers[idx + 1] if idx + 1 < len(markers) else len(line)
+        parts.append(line[start:end].rstrip())
+    return parts
+
+
 def clean_markdown_text(text: str) -> str:
-    """Clean markdown text for better rendering."""
+    """Clean markdown text for better rendering (no regex, O(n))."""
     if not text.strip():
         return text
 
-    text = re.sub(r'^(#{1,6})\s*([^#\n]+)', r'\1 \2', text, flags=re.MULTILINE)
-    text = re.sub(r'([^\n])\n(#{1,6}\s)', r'\1\n\n\2', text)
-    text = re.sub(r'(#{1,6}[^\n]+)\n([^\n#])', r'\1\n\n\2', text)
-    text = re.sub(r'^(\s*[-*+]\s)', r'\1', text, flags=re.MULTILINE)
-    text = re.sub(r'^(\s*\d+\.\s)', r'\1', text, flags=re.MULTILINE)
-    text = re.sub(r'([^\n])\n(\d+\.\s)', r'\1\n\n\2', text)
-    text = re.sub(r'(\d+\.\s[^\n]+)\s+(\d+\.\s)', r'\1\n\n\2', text)
-    text = re.sub(r'\n{4,}', '\n\n\n', text)
+    lines = text.split('\n')
+
+    # --- Step 1: ensure space after header markers (#Header -> # Header) ---
+    for i, line in enumerate(lines):
+        if line.startswith('#'):
+            lines[i] = _ensure_header_space(line)
+
+    # --- Step 2: ensure blank lines around headers ---
+    result: list[str] = []
+    for i, line in enumerate(lines):
+        is_header = _is_header_line(line)
+        # Blank line before header (unless previous line is blank)
+        if is_header and i > 0 and lines[i - 1].strip():
+            result.append('')
+        result.append(line)
+        # Blank line after header (unless next line is blank)
+        if is_header and i + 1 < len(lines) and lines[i + 1].strip():
+            result.append('')
+    lines = result
+
+    # --- Step 3: ensure blank line before numbered lists ---
+    result = []
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        is_numbered = bool(stripped) and _is_numbered_list_marker(stripped, 0)
+        if is_numbered and i > 0 and lines[i - 1].strip():
+            result.append('')
+        result.append(line)
+    lines = result
+
+    # --- Step 4: split inline numbered items (e.g. "1. abc 2. def") ---
+    result = []
+    for line in lines:
+        parts = _split_inline_numbered_items(line)
+        result.extend(parts)
+    lines = result
+
+    # --- Step 5: collapse 4+ consecutive newlines to exactly 3 ---
+    text = '\n'.join(lines)
+    collapsed: list[str] = []
+    newline_count = 0
+    for ch in text:
+        if ch == '\n':
+            newline_count += 1
+            if newline_count <= 3:
+                collapsed.append(ch)
+        else:
+            newline_count = 0
+            collapsed.append(ch)
+    text = ''.join(collapsed)
 
     return text.strip()
 
