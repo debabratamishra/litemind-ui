@@ -198,8 +198,8 @@ class TTSService:
         text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
         text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
 
-        # Remove HTML tags
-        text = re.sub(r'<[^>]+>', '', text)
+        # Remove HTML tags (no regex — avoids ReDoS on malformed input)
+        text = self._strip_html_tags(text)
 
         # Remove emojis and special unicode characters
         text = self._remove_emojis(text)
@@ -222,6 +222,20 @@ class TTSService:
         text = '\n'.join(line for line in lines if line)
 
         return text.strip()
+
+    @staticmethod
+    def _strip_html_tags(text: str) -> str:
+        """Remove HTML tags from text without regex (O(n), no ReDoS)."""
+        out = []
+        in_tag = False
+        for ch in text:
+            if ch == '<':
+                in_tag = True
+            elif ch == '>':
+                in_tag = False
+            elif not in_tag:
+                out.append(ch)
+        return ''.join(out)
 
     def _remove_emojis(self, text: str) -> str:
         """Remove emojis and other non-speech characters from text."""
