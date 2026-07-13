@@ -1201,10 +1201,52 @@ _COMPONENT_REGISTRY: Dict[str, Callable] = {
 # Auto-enhancement: detect markdown patterns → UI blocks
 # ===================================================================
 
-# Matches a bold-label: value line  e.g.  "**Users:** 1,234" or "**Users**: 1,234"
-_BOLD_KV_LINE_RE = re.compile(
-    r'^\s*[-*]?\s*\*\*(.+?)\*\*\s*[:\-–]?\s*(.+?)\s*$',
-)
+def _match_bold_kv_line(line: str) -> tuple[str, str] | None:
+    """Extract (label, value) from a bold key-value line without regex.
+
+    Handles::
+
+        **Users:** 1,234
+        **Users**: 1,234
+        **Users** - 1,234
+        - **Users:** 1,234
+        * **Users:** 1,234
+    """
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    # Skip optional markdown bullet prefix ("- " or "* ")
+    text = stripped
+    if len(text) >= 2 and text[0] in '-*' and text[1] == ' ':
+        text = text[2:]
+
+    # Must start with **
+    if not text.startswith('**'):
+        return None
+
+    # Find the closing **
+    close = text.find('**', 2)
+    if close == -1:
+        return None
+
+    label = text[2:close]
+    rest = text[close + 2:]  # everything after the closing **
+
+    # Strip trailing separators and whitespace from the label
+    label = label.rstrip(':- –')
+
+    # Strip leading whitespace from the value side
+    rest = rest.lstrip()
+
+    # Strip optional separator (colon, dash, en-dash) and more whitespace
+    if rest and rest[0] in ':-–':
+        rest = rest[1:].lstrip()
+
+    if not rest:
+        return None
+
+    return (label, rest)
 
 
 def _split_md_row(line: str) -> list[str]:
@@ -1327,11 +1369,11 @@ def _auto_convert_metrics(text: str) -> str:
         group_start = -1
 
     for i, line in enumerate(lines):
-        m = _BOLD_KV_LINE_RE.match(line)
+        m = _match_bold_kv_line(line)
         if m:
             if not group:
                 group_start = i
-            group.append({"label": m.group(1).rstrip(":- –").strip(), "value": m.group(2).strip()})
+            group.append({"label": m[0].rstrip(":- –").strip(), "value": m[1].strip()})
         else:
             if group:
                 _flush()

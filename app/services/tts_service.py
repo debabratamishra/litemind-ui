@@ -18,13 +18,30 @@ import hashlib
 import io
 import logging
 import os
-import re
 import tempfile
 import unicodedata
 import warnings
 from typing import AsyncGenerator, Generator, Optional, Tuple
 
 from ..core.text_markup import remove_tagged_sections, replace_fenced_code_blocks
+
+# Import text processing helpers
+from .tts_text_processing import (
+    _compress_repeated_chars,
+    _is_emoji_codepoint,
+    _normalize_whitespace,
+    _remove_brace_blocks,
+    _remove_file_paths,
+    _remove_inline_code,
+    _remove_list_markers,
+    _remove_markdown_formatting,
+    _remove_markdown_headers,
+    _remove_markdown_links,
+    _remove_special_chars,
+    _remove_urls,
+    _split_on_sentence_endings,
+    _strip_html_tags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +72,14 @@ TTS_CONFIG = {
 CACHE_DIR = os.path.join(tempfile.gettempdir(), "litemind_tts_cache")
 
 # Sentence-ending punctuation for streaming chunking
-SENTENCE_ENDINGS = re.compile(r'[.!?;:]\s*')
-
 # Minimum characters before attempting to synthesize a chunk
 # Lower values = faster first audio, but more synthesis calls
 MIN_CHUNK_SIZE = 20  # Reduced from 50 for faster streaming
 MAX_CHUNK_SIZE = 300  # Reduced from 500 for more frequent audio chunks
+
+# Kokoro pipeline split patterns (plain strings passed to the Kokoro library)
+_KOKORO_SPLIT_NEWLINES = '\n+'
+_KOKORO_SPLIT_SENTENCES = r'[.!?;:,]\s*'
 
 
 class TTSService:
@@ -69,7 +88,7 @@ class TTSService:
     def __init__(self, preload_models: bool = False):
         """
         Initialize TTS service.
-        
+
         Args:
             preload_models: If True, load Kokoro model immediately during init
         """
@@ -146,7 +165,7 @@ class TTSService:
     def _clean_text_for_tts(self, text: str) -> str:
         """
         Clean text for TTS by removing markdown, emojis, code, and special formatting.
-        
+
         This method handles:
         - Thinking/reasoning tags
         - Code blocks and inline code
@@ -156,6 +175,9 @@ class TTSService:
         - URLs
         - File paths
         - Technical artifacts (JSON, XML, etc.)
+
+        All operations are O(n) single-pass string operations — no regex,
+        no backtracking, immune to ReDoS.
         """
         if not text:
             return ""
@@ -167,55 +189,47 @@ class TTSService:
         text = replace_fenced_code_blocks(text, " [code block omitted] ")
 
         # Remove inline code
-        text = re.sub(r'`[^`]+`', '', text)
+        text = _remove_inline_code(text)
 
         # Remove URLs
-        text = re.sub(r'https?://[^\s<>"{}|\\^`\[\]]+', ' [link] ', text)
-        text = re.sub(r'www\.[^\s<>"{}|\\^`\[\]]+', ' [link] ', text)
+        text = _remove_urls(text)
 
         # Remove file paths (Unix and Windows style)
-        text = re.sub(r'(?:/[\w.-]+)+/?', '', text)
-        text = re.sub(r'(?:[A-Za-z]:\\[\w\\.-]+)+', '', text)
+        text = _remove_file_paths(text)
 
         # Remove JSON-like structures
-        text = re.sub(r'\{[^{}]*\}', '', text)
-        text = re.sub(r'\[[^\[\]]*\]', '', text)
+        text = _remove_brace_blocks(text, '{', '}')
+        text = _remove_brace_blocks(text, '[', ']')
 
-        # Remove markdown formatting
-        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)  # Bold
-        text = re.sub(r'\*([^*]+)\*', r'\1', text)  # Italic
-        text = re.sub(r'__([^_]+)__', r'\1', text)  # Bold
-        text = re.sub(r'_([^_]+)_', r'\1', text)  # Italic
-        text = re.sub(r'~~([^~]+)~~', r'\1', text)  # Strikethrough
+        # Remove markdown formatting (bold, italic, strikethrough)
+        text = _remove_markdown_formatting(text)
 
         # Remove markdown links but keep text
-        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        text = _remove_markdown_links(text)
 
         # Remove headers
-        text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+        text = _remove_markdown_headers(text)
 
         # Remove bullet points and list markers
-        text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
-        text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+        text = _remove_list_markers(text)
 
-        # Remove HTML tags
-        text = re.sub(r'<[^>]+>', '', text)
+        # Remove HTML tags (no regex — avoids ReDoS on malformed input)
+        text = _strip_html_tags(text)
 
         # Remove emojis and special unicode characters
         text = self._remove_emojis(text)
 
         # Remove special characters that don't sound good when read
-        text = re.sub(r'[#@$%^&*()+=\[\]{}|\\<>~]', ' ', text)
+        text = _remove_special_chars(text)
 
         # Clean up quotes - keep the content but remove excessive quoting
-        text = re.sub(r'["\']{2,}', '"', text)
+        text = _compress_repeated_chars(text, frozenset({'"', "'"}), '"')
 
         # Replace multiple dashes/underscores with space
-        text = re.sub(r'[-_]{2,}', ' ', text)
+        text = _compress_repeated_chars(text, frozenset({'-', '_'}), ' ')
 
         # Clean up extra whitespace
-        text = re.sub(r'\n\s*\n', '\n', text)
-        text = re.sub(r'\s+', ' ', text)
+        text = _normalize_whitespace(text)
 
         # Remove leading/trailing whitespace from each line
         lines = [line.strip() for line in text.split('\n')]
@@ -224,33 +238,21 @@ class TTSService:
         return text.strip()
 
     def _remove_emojis(self, text: str) -> str:
-        """Remove emojis and other non-speech characters from text."""
-        # Remove emoji characters
-        emoji_pattern = re.compile(
-            "["
-            "\U0001F600-\U0001F64F"  # emoticons
-            "\U0001F300-\U0001F5FF"  # symbols & pictographs
-            "\U0001F680-\U0001F6FF"  # transport & map symbols
-            "\U0001F1E0-\U0001F1FF"  # flags
-            "\U00002702-\U000027B0"  # dingbats
-            "\U000024C2-\U0001F251"  # enclosed characters
-            "\U0001F900-\U0001F9FF"  # supplemental symbols
-            "\U0001FA00-\U0001FA6F"  # chess symbols
-            "\U0001FA70-\U0001FAFF"  # symbols and pictographs extended-A
-            "\U00002600-\U000026FF"  # misc symbols
-            "\U00002700-\U000027BF"  # dingbats
-            "\U0001F000-\U0001F02F"  # mahjong tiles
-            "\U0001F0A0-\U0001F0FF"  # playing cards
-            "]+",
-            flags=re.UNICODE
-        )
-        text = emoji_pattern.sub('', text)
+        """Remove emojis and other non-speech characters from text.
 
-        # Remove other special unicode categories that aren't speech-friendly
+        Uses codepoint range checks (O(1) per character) instead of regex
+        for emoji detection, followed by unicodedata category filtering.
+        """
         cleaned = []
         for char in text:
+            cp = ord(char)
+
+            # Skip known emoji codepoints
+            if _is_emoji_codepoint(cp):
+                continue
+
             category = unicodedata.category(char)
-            # Keep letters, numbers, punctuation, and basic symbols
+            # Keep letters, numbers, punctuation, and basic whitespace
             if category.startswith(('L', 'N', 'P', 'Z')) or char in ' \n\t':
                 cleaned.append(char)
             elif category == 'So':  # Other symbols - skip most
@@ -266,7 +268,7 @@ class TTSService:
             return []
 
         # Split on sentence endings while keeping the punctuation
-        sentences = SENTENCE_ENDINGS.split(text)
+        sentences = _split_on_sentence_endings(text)
 
         # Filter out empty strings and very short fragments
         result = []
@@ -317,7 +319,7 @@ class TTSService:
 
     def _synthesize_kokoro(self, text: str, voice: str = None, speed: float = None) -> Optional[bytes]:
         """Synthesize speech using Kokoro TTS with expressive settings.
-        
+
         Args:
             text: Text to synthesize
             voice: Voice to use (defaults to expressive af_heart)
@@ -349,7 +351,7 @@ class TTSService:
                 text,
                 voice=voice,
                 speed=speed,
-                split_pattern=r'\n+'
+                split_pattern=_KOKORO_SPLIT_NEWLINES
             )
 
             all_audio = []
@@ -374,10 +376,10 @@ class TTSService:
     def _synthesize_kokoro_streaming(self, text: str, voice: str = None, speed: float = None) -> Generator[bytes, None, None]:
         """
         Synthesize speech using Kokoro TTS with streaming output.
-        
+
         Yields audio chunks as they are generated.
         Optimized for low latency with smaller split patterns.
-        
+
         Args:
             text: Text to synthesize
             voice: Voice to use (defaults to expressive af_heart)
@@ -409,7 +411,7 @@ class TTSService:
                 text,
                 voice=voice,
                 speed=speed,
-                split_pattern=r'[.!?;:,]\s*'  # Added comma for smaller chunks
+                split_pattern=_KOKORO_SPLIT_SENTENCES
             )
 
             for gs, ps, audio in generator:
@@ -461,12 +463,12 @@ class TTSService:
     ) -> Tuple[Optional[bytes], str]:
         """
         Synthesize speech from text.
-        
+
         Args:
             text: Text to convert to speech
             voice: Voice ID to use (optional, uses Kokoro default if not specified)
             use_cache: Whether to use caching (currently not used with Kokoro)
-            
+
         Returns:
             Tuple of (audio_bytes, content_type)
         """
@@ -522,15 +524,15 @@ class TTSService:
     ) -> AsyncGenerator[bytes, None]:
         """
         Synthesize speech from streaming text input.
-        
+
         This method accepts an async generator of text chunks and yields
         audio chunks as they become available, significantly reducing
         time-to-first-audio.
-        
+
         Args:
             text_generator: Async generator yielding text chunks
             voice: Voice ID to use
-            
+
         Yields:
             Audio bytes chunks (WAV format for Kokoro)
         """
@@ -588,14 +590,14 @@ class TTSService:
     def synthesize_text_chunk(self, text: str, voice: Optional[str] = None) -> Optional[bytes]:
         """
         Synchronously synthesize a single text chunk.
-        
+
         Useful for streaming scenarios where you want to synthesize
         sentence by sentence.
-        
+
         Args:
             text: Text chunk to synthesize
             voice: Voice ID to use (Kokoro voice name)
-            
+
         Returns:
             Audio bytes or None
         """
@@ -673,7 +675,7 @@ _tts_service: Optional[TTSService] = None
 def get_tts_service(preload: bool = False) -> TTSService:
     """
     Get or create the global TTS service instance.
-    
+
     Args:
         preload: If True and creating new instance, preload models
     """

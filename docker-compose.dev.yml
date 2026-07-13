@@ -82,6 +82,18 @@ services:
       - STREAMLIT_SERVER_RUNONCAVE=true
       - ENVIRONMENT=development
       - STREAMLIT_LOGGER_LEVEL=DEBUG
+      # Realtime voice (WebRTC) NAT traversal. With host networking (Linux) the
+      # in-container peer shares the host network, so STUN is enough. Set the
+      # TURN vars (and run a TURN server) if UDP is blocked or on Docker Desktop.
+      # WEBRTC_SERVER_TURN_URL is the TURN url the in-container peer uses; leave
+      # empty with host networking so it falls back to STUN on the shared network.
+      - WEBRTC_STUN_URL=${WEBRTC_STUN_URL:-stun:stun.l.google.com:19302}
+      - WEBRTC_TURN_URL=${WEBRTC_TURN_URL:-}
+      - WEBRTC_SERVER_TURN_URL=${WEBRTC_SERVER_TURN_URL:-}
+      - WEBRTC_TURN_USERNAME=${WEBRTC_TURN_USERNAME:-}
+      - WEBRTC_TURN_CREDENTIAL=${WEBRTC_TURN_CREDENTIAL:-}
+      - WEBRTC_ICE_SERVERS=${WEBRTC_ICE_SERVERS:-}
+      - WEBRTC_SERVER_ICE_SERVERS=${WEBRTC_SERVER_ICE_SERVERS:-}
     restart: unless-stopped
     # Development logging - verbose for debugging
     logging:
