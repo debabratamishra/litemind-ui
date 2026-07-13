@@ -95,49 +95,6 @@ GREETING_CACHE_KEY = "realtime_greeting_audio_cached"
 # ============================================================================
 # WebRTC ICE / NAT configuration
 # ============================================================================
-#
-# streamlit-webrtc runs TWO SEPARATE WebRTC peers that BOTH have to gather ICE
-# candidates and reach a STUN/TURN server:
-#   1. the BROWSER peer   -> configured by `frontend_rtc_configuration`
-#   2. the SERVER peer (aiortc, running inside THIS process/container)
-#                         -> configured by `server_rtc_configuration`
-#
-# The critical subtlety that makes Docker fail: the two peers live in different
-# network namespaces and therefore reach the SAME TURN server via DIFFERENT
-# addresses.
-#   * The browser runs on the user's host, so it reaches coturn at the host's
-#     LAN IP (e.g. turn:192.168.1.20:3478).
-#   * The server peer runs inside the container, so the host's LAN IP may not
-#     resolve the way you expect and 127.0.0.1 points at the container itself.
-#     It must reach coturn via `host.docker.internal` (Docker Desktop, and Linux
-#     with an added host-gateway entry).
-#
-# If you give the SERVER peer a TURN/STUN URL it cannot reach (e.g. 127.0.0.1,
-# which was the previous bug), aioice keeps retransmitting STUN binding requests
-# to a dead address; when the failed connection is torn down the pending retry
-# timer fires on a closed transport and raises:
-#     AttributeError: 'NoneType' object has no attribute 'sendto'
-#     ... 'NoneType' object has no attribute 'call_exception_handler'
-# i.e. the traceback is a SYMPTOM of the server peer never reaching its ICE
-# server. The fix is to give each peer a reachable server, and to give the
-# server peer TURN-only config in Docker (a public STUN srflx candidate is
-# useless behind the bridge NAT and just adds more dead retransmits).
-#
-# Everything is env-driven so Docker and standalone tune without code changes:
-#   Browser peer:
-#     WEBRTC_STUN_URL        STUN url (default stun:stun.l.google.com:19302)
-#     WEBRTC_TURN_URL        TURN url the BROWSER can reach (host LAN IP)
-#     WEBRTC_ICE_SERVERS     full JSON override for the browser peer
-#   Server peer (in-container):
-#     WEBRTC_SERVER_TURN_URL TURN url the CONTAINER can reach
-#                            (default turn:host.docker.internal:3478 when any
-#                             TURN credentials/URL are configured)
-#     WEBRTC_SERVER_ICE_SERVERS full JSON override for the server peer
-#   Shared TURN credentials:
-#     WEBRTC_TURN_USERNAME / WEBRTC_TURN_CREDENTIAL
-#
-# Standalone (uv run) needs none of this: both peers share the host network, so
-# the default Google STUN entry is enough for each.
 
 _DEFAULT_STUN_URL = "stun:stun.l.google.com:19302"
 _DEFAULT_SERVER_TURN_URL = "turn:host.docker.internal:3478"
