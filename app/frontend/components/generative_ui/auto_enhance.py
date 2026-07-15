@@ -4,8 +4,8 @@ import json
 from typing import Optional
 
 from .parsing import (
-    _find_html_code_fence,
     _extract_primary_html_document,
+    _find_html_code_fence,
     _find_primary_html_document_span,
 )
 from .webapp import _component_type_for_html
@@ -91,7 +91,7 @@ def _is_md_table_separator_row(line: str) -> bool:
 
 def _parse_md_table(table_text: str) -> Optional[dict]:
     """Parse a markdown table string into ``data_table`` props."""
-    lines = [l.strip() for l in table_text.strip().splitlines() if l.strip()]
+    lines = [line.strip() for line in table_text.strip().splitlines() if line.strip()]
     if len(lines) < 3:
         return None
 
