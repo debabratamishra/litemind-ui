@@ -68,7 +68,10 @@ def render_ui_component(
 
 def render_mixed_content(text: str, msg_index: int = 0) -> None:
     """Render text that may interleave markdown, code blocks, and UI blocks."""
-    from ..utils.text_processing import (
+    # Three dots: dispatch.py lives one package level deeper than the old flat
+    # generative_ui.py module did, so reaching app.frontend.utils requires
+    # climbing past app.frontend.components.generative_ui -> components -> frontend.
+    from ...utils.text_processing import (
         clean_markdown_text,
         sanitize_links,
         unescape_text,
