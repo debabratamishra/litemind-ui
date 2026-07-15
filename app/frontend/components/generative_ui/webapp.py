@@ -3,25 +3,25 @@
 import base64
 import json
 import re
-import streamlit as st
 from typing import Any
 
+import streamlit as st
+
 from .constants import (
-    _RAW_HTML_COMPONENT_TYPES,
+    _HTML_BODY_CLOSE_RE,
+    _HTML_HEAD_CLOSE_RE,
+    _IFRAME_APP_BOOTSTRAP_SCRIPT,
+    _IFRAME_APP_SHELL_CSS,
+    _INTERACTIVE_HTML_RE,
     _WEBAPP_CSS,
     _WEBAPP_HEIGHT_RE,
-    _IFRAME_APP_SHELL_CSS,
-    _IFRAME_APP_BOOTSTRAP_SCRIPT,
-    _INTERACTIVE_HTML_RE,
-    _HTML_HEAD_CLOSE_RE,
-    _HTML_BODY_CLOSE_RE,
 )
-from .security import _sanitize_html
 from .parsing import (
     _extract_fenced_body,
-    _try_parse_json_object,
     _extract_primary_html_document,
+    _try_parse_json_object,
 )
+from .security import _sanitize_html
 
 
 def _inject_webapp_css() -> None:
