@@ -13,9 +13,6 @@ concurrency:
   group: pr-checks-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 jobs:
   syntax:
     name: Python syntax
