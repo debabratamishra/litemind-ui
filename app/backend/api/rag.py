@@ -269,7 +269,7 @@ async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
 
     async def event_generator():
         logger.info("Routing RAG query through skill '%s'", skill.name)
-        async for chunk in await skill.stream(request, rag_service):
+        async for chunk in skill.stream(request, rag_service):
             yield chunk + "\n"
 
     return StreamingResponse(event_generator(), media_type="text/plain")

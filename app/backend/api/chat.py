@@ -403,7 +403,7 @@ async def _handle_web_search_chat(request: ChatRequestEnhanced):
 
     async def event_generator():
         try:
-            async for chunk in await skill.stream(request):
+            async for chunk in skill.stream(request):
                 yield chunk + "\n"
 
         except Exception:
@@ -434,7 +434,7 @@ async def _stream_web_search_chat(request: ChatRequestEnhanced):
                 yield chunk
             return
 
-        async for chunk in await skill.stream(request):
+        async for chunk in skill.stream(request):
             yield chunk
 
     except Exception:
