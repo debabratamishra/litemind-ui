@@ -29,7 +29,7 @@ class StreamingChatSkill(Protocol):
     def validate(self, request: ChatRequestEnhanced) -> SkillValidationResult:
         """Validate request prerequisites before streaming begins."""
 
-    async def stream(self, request: ChatRequestEnhanced) -> AsyncIterator[str]:
+    def stream(self, request: ChatRequestEnhanced) -> AsyncIterator[str]:
         """Yield streamed response chunks for the request."""
 
 
@@ -42,5 +42,5 @@ class StreamingRAGSkill(Protocol):
     def supports(self, request: Any) -> bool:
         """Return True when this skill should handle the request."""
 
-    async def stream(self, request: Any, rag_service: Any) -> AsyncIterator[str]:
+    def stream(self, request: Any, rag_service: Any) -> AsyncIterator[str]:
         """Yield streamed response chunks for the request."""
