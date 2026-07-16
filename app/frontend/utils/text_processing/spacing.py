@@ -1,4 +1,5 @@
-from .common import _collapse_newlines, _collapse_horizontal_spaces, _is_word_char
+from .common import _collapse_horizontal_spaces, _collapse_newlines, _is_word_char
+
 
 def fix_streaming_token_spacing(accumulated: str, new_chunk: str) -> str:
     """Intelligently join streaming tokens to avoid spacing issues."""
@@ -50,11 +51,11 @@ def normalize_plain_text_spacing(text: str) -> str:
         return "" if text is None else str(text)
 
     normalized = text.replace('\r', '')
-    
+
     # Trim horizontal spaces surrounding newlines
     lines = normalized.split('\n')
     normalized = '\n'.join(line.strip(' \t') for line in lines)
-    
+
     normalized = _collapse_newlines(normalized, 2)
     normalized = _collapse_horizontal_spaces(normalized)
 
@@ -137,7 +138,7 @@ def normalize_plain_text_spacing(text: str) -> str:
             fwd_idx = i + 1
             while fwd_idx < n and normalized[fwd_idx].isspace():
                 fwd_idx += 1
-            
+
             if back_idx >= 0 and _is_word_char(result[back_idx]) and fwd_idx < n and _is_word_char(normalized[fwd_idx]):
                 result = result[:back_idx + 1]
                 result.append('-')

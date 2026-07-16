@@ -1,6 +1,7 @@
 from typing import List
-from .common import _collapse_newlines, _collapse_horizontal_spaces
-from .url import looks_like_url, clean_url, _normalize_bare_urls, _normalize_markdown_links, _consume_url_candidate
+
+from .common import _collapse_horizontal_spaces, _collapse_newlines
+
 
 def _is_header_line(line: str) -> bool:
     """Check if a line is a markdown header (starts with ``#``)."""
@@ -194,7 +195,7 @@ def _fix_url_word_concatenation(text: str) -> str:
             while i < n and not text[i].isspace():
                 i += 1
             url_candidate = text[start:i]
-            
+
             # Find split point
             split_idx = -1
             search_start = 8 if url_candidate.startswith("https://") else 7
@@ -203,7 +204,7 @@ def _fix_url_word_concatenation(text: str) -> str:
                     if url_candidate[idx - 1].isalnum():
                         split_idx = idx
                         break
-            
+
             if split_idx != -1:
                 result.append(url_candidate[:split_idx])
                 result.append(' ')
@@ -228,7 +229,7 @@ def _fix_numbered_lists(text: str) -> str:
             j = i + 1
             while j < n and text[j].isspace():
                 j += 1
-            
+
             is_marker = False
             if j < n:
                 if text[j] == '•':
@@ -249,13 +250,13 @@ def _fix_numbered_lists(text: str) -> str:
                                 k += 1
                             if k < n and text[k].isupper():
                                 is_marker = True
-            
+
             if is_marker:
                 result.append(c)
                 result.append('\n\n')
                 i = j
                 continue
-        
+
         result.append(c)
         i += 1
     text = "".join(result)
@@ -290,14 +291,14 @@ def _fix_concatenated_text_after_urls(text: str) -> str:
         ("andyourethere.", " and you're there."),
         ("andyourethere", " and you're there."),
     ]
-    
+
     for target, replacement in targets:
         start_idx = 0
         while True:
             pos = text.lower().find(target, start_idx)
             if pos == -1:
                 break
-            
+
             is_after_url = False
             url_start = pos - 1
             while url_start >= 0 and not text[url_start].isspace():
@@ -305,7 +306,7 @@ def _fix_concatenated_text_after_urls(text: str) -> str:
                     is_after_url = True
                     break
                 url_start -= 1
-            
+
             if is_after_url:
                 text = text[:pos] + replacement + text[pos + len(target):]
                 start_idx = pos + len(replacement)
@@ -320,7 +321,7 @@ def clean_text_formatting(text: str) -> str:
     text = _fix_numbered_lists(text)
 
     text = _collapse_horizontal_spaces(text)
-    
+
     # Fix: header spacing above
     lines = text.split('\n')
     lines = _fix_header_spacing_above(lines)

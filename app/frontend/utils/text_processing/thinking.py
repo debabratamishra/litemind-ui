@@ -1,6 +1,9 @@
 from typing import Tuple
+
 from app.core.text_markup import extract_tagged_sections
+
 from .common import _collapse_newlines
+
 
 def extract_thinking_content(text: str) -> Tuple[str, str]:
     """Extract thinking/reasoning content from text."""

@@ -13,6 +13,8 @@ Features:
 - Text preprocessing: Clean text for natural speech output
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import io
@@ -21,7 +23,7 @@ import os
 import tempfile
 import unicodedata
 import warnings
-from typing import AsyncGenerator, Generator, Optional, Tuple
+from typing import Any, AsyncGenerator, Generator, Optional, Tuple
 
 from ..core.text_markup import remove_tagged_sections, replace_fenced_code_blocks
 
@@ -46,7 +48,7 @@ from .tts_text_processing import (
 logger = logging.getLogger(__name__)
 
 # TTS Configuration
-TTS_CONFIG = {
+TTS_CONFIG: dict[str, Any] = {
     "kokoro_voice": "af_heart",           # Default Kokoro voice (warm, expressive)
     "kokoro_repo_id": "hexgrad/Kokoro-82M",  # Explicit repo_id to suppress warning
     # Available voice options - expressive voices first
@@ -115,8 +117,8 @@ class TTSService:
         """Check which TTS backends are available."""
         # Check for Kokoro
         try:
-            import soundfile as sf
-            from kokoro import KPipeline
+            import soundfile  # noqa: F401
+            from kokoro import KPipeline  # noqa: F401
             self._kokoro_available = True
             logger.info("Kokoro TTS backend available")
         except ImportError:
@@ -124,7 +126,7 @@ class TTSService:
 
         # Check for pyttsx3 fallback
         try:
-            import pyttsx3
+            import pyttsx3  # noqa: F401
             self._pyttsx3_available = True
             logger.info("pyttsx3 fallback available")
         except ImportError:
@@ -317,7 +319,7 @@ class TTSService:
         except Exception as e:
             logger.warning(f"Failed to cache audio: {e}")
 
-    def _synthesize_kokoro(self, text: str, voice: str = None, speed: float = None) -> Optional[bytes]:
+    def _synthesize_kokoro(self, text: str, voice: str | None = None, speed: float | None = None) -> Optional[bytes]:
         """Synthesize speech using Kokoro TTS with expressive settings.
 
         Args:
@@ -366,14 +368,14 @@ class TTSService:
 
             # Convert to WAV bytes
             buf = io.BytesIO()
-            sf.write(buf, final_audio, 24000, format='WAV')
+            sf.write(buf, final_audio.cpu().numpy(), 24000, format='WAV')
             return buf.getvalue()
 
         except Exception as e:
             logger.error(f"Kokoro synthesis failed: {e}")
             return None
 
-    def _synthesize_kokoro_streaming(self, text: str, voice: str = None, speed: float = None) -> Generator[bytes, None, None]:
+    def _synthesize_kokoro_streaming(self, text: str, voice: str | None = None, speed: float | None = None) -> Generator[bytes, None, None]:
         """
         Synthesize speech using Kokoro TTS with streaming output.
 
@@ -448,7 +450,7 @@ class TTSService:
                 # Clean up temp file
                 try:
                     os.unlink(tmp_path)
-                except:
+                except Exception:
                     pass
 
         except Exception as e:

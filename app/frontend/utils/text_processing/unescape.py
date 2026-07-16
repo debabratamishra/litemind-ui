@@ -1,5 +1,6 @@
 import json
 
+
 def unescape_text(s: str) -> str:
     """Convert visible escape sequences into their actual characters."""
     if not isinstance(s, str):

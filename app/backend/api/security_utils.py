@@ -1,6 +1,7 @@
 """Shared security helpers for file uploads."""
 import os
 import re
+
 from fastapi import HTTPException, UploadFile
 
 from app.core.rag_formats import ALLOWED_UPLOAD_EXTENSIONS
@@ -10,7 +11,7 @@ ALLOWED_EXTENSIONS = ALLOWED_UPLOAD_EXTENSIONS
 _CHUNK_SIZE = 1024 * 1024  # 1MB
 
 
-def sanitize_filename(filename: str) -> str:
+def sanitize_filename(filename: str | None) -> str:
     """Sanitize filenames to prevent path traversal and reject disallowed extensions."""
     if not filename:
         raise ValueError("Filename cannot be empty")
@@ -49,21 +50,18 @@ def _raise_too_large() -> None:
 
 async def validate_file_size(file: UploadFile) -> None:
     """Ensure file size is within limit without loading full content into memory."""
-    try:
-        size = await file.seek(0, os.SEEK_END)
-    except Exception:
-        size = 0
-        await file.seek(0)
-        while True:
-            chunk = await file.read(_CHUNK_SIZE)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > MAX_FILE_SIZE:
-                await file.seek(0)
-                _raise_too_large()
-    finally:
-        await file.seek(0)
+    size = 0
+    await file.seek(0)
+    while True:
+        chunk = await file.read(_CHUNK_SIZE)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_FILE_SIZE:
+            await file.seek(0)
+            _raise_too_large()
+
+    await file.seek(0)
 
     if size > MAX_FILE_SIZE:
         _raise_too_large()

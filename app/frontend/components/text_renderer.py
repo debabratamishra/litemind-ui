@@ -3,24 +3,25 @@ Text rendering components for LLM responses with reasoning support.
 """
 import html
 import re
+from typing import Any, Optional
+
 import streamlit as st
-from typing import Optional, Any
 
 from ..utils.text_processing import (
-    unescape_text,
-    clean_text_formatting,
     clean_markdown_text,
-    sanitize_links,
+    clean_text_formatting,
     extract_thinking_content,
-    normalize_plain_text_spacing,
-    format_web_search_response,
     fix_streaming_token_spacing,
+    format_web_search_response,
+    normalize_plain_text_spacing,
+    sanitize_links,
+    unescape_text,
 )
 
 
 class ThinkingRenderer:
     """Renders model reasoning/thinking sections"""
-    
+
     def __init__(self):
         self.reasoning_hidden = st.session_state.get("hide_reasoning", False)
         self.reasoning_expanded_default = st.session_state.get("show_reasoning_expanded", False)
@@ -29,14 +30,14 @@ class ThinkingRenderer:
         """Render the thinking/reasoning section in a collapsible expander."""
         if not thinking_content.strip() or self.reasoning_hidden:
             return
-        
+
         with st.expander("🧠 Model Reasoning Process", expanded=self.reasoning_expanded_default):
             st.markdown("*This section shows the model's internal reasoning and thought process:*")
             st.markdown("---")
-            
+
             cleaned_thinking = clean_text_formatting(thinking_content)
             cleaned_thinking = clean_markdown_text(cleaned_thinking)
-            
+
             st.markdown(
                 f"""
                 <div style="
@@ -52,23 +53,23 @@ class ThinkingRenderer:
                 """,
                 unsafe_allow_html=True
             )
-            
+
             st.caption("💡 This reasoning helps understand how the model arrived at its answer.")
 
 
 class TextRenderer:
     """Renders mixed Markdown and fenced code blocks with reasoning support."""
-    
+
     def __init__(self):
         self.thinking_renderer = ThinkingRenderer()
-        
+
     def render_llm_text(self, text: str, msg_index: int = 0) -> None:
         """Render mixed Markdown and fenced code blocks in Streamlit with reasoning support."""
         text = unescape_text(text).strip()
-        
+
         # Extract thinking/reasoning content first
         thinking_content, clean_text = extract_thinking_content(text)
-        
+
         # Skip whole-text clean_text_formatting when UI blocks are present
         # to preserve JSON inside ```ui:... blocks; render_mixed_content
         # applies cleaning per-segment instead.
@@ -77,18 +78,18 @@ class TextRenderer:
         from .generative_ui import has_ui_blocks
         if not has_ui_blocks(clean_text) and not st.session_state.get("enable_generative_ui", False):
             clean_text = clean_text_formatting(clean_text)
-        
+
         # Render the thinking section if present and not hidden
         if thinking_content:
             self.thinking_renderer.render_thinking_section(thinking_content)
             st.markdown("---")  # Separator between thinking and answer
-        
+
         # Render the main answer content
         self._render_main_content(clean_text, msg_index=msg_index)
 
     def _render_main_content(self, text: str, msg_index: int = 0) -> None:
         """Render the main content with code blocks and UI components."""
-        from .generative_ui import has_ui_blocks, render_mixed_content, auto_enhance_content
+        from .generative_ui import auto_enhance_content, has_ui_blocks, render_mixed_content
 
         # When generative UI is on but the model didn't emit ui:* blocks,
         # auto-detect markdown tables / metrics and convert them.
@@ -131,7 +132,7 @@ class StreamingRenderer:
     Handles live streaming text with reasoning segregation.
     Separates <think>...</think> content during streaming.
     """
-    
+
     _OPEN_TAG_RE = re.compile(r"<\s*(think|thinking|reasoning|thought)\s*>", re.IGNORECASE)
     _CLOSE_TAG_RE = re.compile(r"<\s*/\s*(think|thinking|reasoning|thought)\s*>", re.IGNORECASE)
     _ANY_TAG_RE = re.compile(r"(?is)<\s*/?\s*(think|thinking|reasoning|thought)\s*>")
@@ -163,13 +164,13 @@ class StreamingRenderer:
         """Create the reasoning UI components."""
         if self.reasoning_hidden or self._expander_created or self._thinking_outer is None:
             return
-            
+
         with self._thinking_outer:
             with st.expander("🧠 Model Reasoning Process", expanded=self.reasoning_expanded_default):
                 st.markdown("*This section shows the model's internal reasoning and thought process:*")
                 st.markdown("---")
                 self._reasoning_box = st.empty()
-                
+
         if self._separator is not None:
             self._separator.markdown("---")
         self._expander_created = True
@@ -178,11 +179,11 @@ class StreamingRenderer:
         """Render the reasoning content."""
         if self.reasoning_hidden or self._reasoning_box is None:
             return
-            
+
         cleaned = clean_text_formatting(self.thinking_text)
         cleaned = clean_markdown_text(cleaned)
         cleaned = sanitize_links(unescape_text(cleaned))
-        
+
         self._reasoning_box.markdown(
             f"""
             <div style="
@@ -223,7 +224,7 @@ class StreamingRenderer:
         """Append text to the appropriate section."""
         if not text:
             return
-            
+
         if self.in_think:
             self._ensure_reasoning_ui()
             self.thinking_text += text
@@ -303,43 +304,43 @@ class PlainTextRenderer:
 
 class WebSearchRenderer:
     """Render web search responses with proper formatting for sources and citations."""
-    
+
     def __init__(self):
         self._accumulated_text = ""
-    
+
     def render(self, text: str, placeholder: Optional[Any] = None) -> None:
         """Render web search response with markdown formatting."""
         target = placeholder if placeholder is not None else st
-        
+
         # Process the text for web search formatting
         processed = unescape_text(text)
         processed = format_web_search_response(processed)
-        
+
         # Render as markdown to support links
         target.markdown(processed)
-    
+
     def render_streaming(self, chunk: str, placeholder: Optional[Any] = None) -> str:
         """Handle streaming rendering with proper token accumulation.
-        
+
         Returns the accumulated text for storage.
         """
         # Use intelligent token joining
         self._accumulated_text = fix_streaming_token_spacing(
-            self._accumulated_text, 
+            self._accumulated_text,
             chunk
         )
-        
+
         # Format and render
         if placeholder is not None:
             display_text = format_web_search_response(self._accumulated_text)
             placeholder.markdown(display_text)
-        
+
         return self._accumulated_text
-    
+
     def reset(self):
         """Reset the accumulated text for a new response."""
         self._accumulated_text = ""
-    
+
     def get_final_text(self) -> str:
         """Get the final formatted text."""
         return format_web_search_response(self._accumulated_text)

@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 def multi_agent_rag_available() -> tuple[bool, str]:
     """Return (True, "ok") if CrewAI and crewai.run types are loadable."""
     try:
-        from crewai import Agent, Crew, Process, Task
-        from crewai.tools.base_tool import Tool
+        from crewai import Agent, Crew, Process, Task  # noqa: F401
+        from crewai.tools.base_tool import Tool  # noqa: F401
         return True, "ok"
     except ImportError as e:
         return False, str(e)
@@ -26,7 +26,7 @@ _last_retrieval_records: List[dict] = []
 
 def _load_crewai_types():
     """Deferred crewai import to avoid hard dependency."""
-    from crewai import Agent, Crew, LLM, Process, Task
+    from crewai import LLM, Agent, Crew, Process, Task
     from crewai.tools.base_tool import Tool, tool
     return Agent, LLM, Task, Crew, Process, Tool, tool
 
@@ -126,7 +126,7 @@ class CrewAIRAGOrchestrator:
         api_key: Optional[str] = None,
     ):
         """Configure the CrewAI LLM, agents, retrieval tool, and Crew."""
-        Agent, LLM, Task, Crew, Process, Tool, tool = _load_crewai_types()
+        Agent, LLM, Task, Crew, Process, Tool, tool = _load_crewai_types()  # noqa: N806
         self.Crew = Crew
         self.Task = Task
         self.rag_service = rag_service

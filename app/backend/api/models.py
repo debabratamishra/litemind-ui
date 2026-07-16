@@ -1,14 +1,18 @@
 """Model and speech API endpoints."""
 import logging
-from fastapi import APIRouter, HTTPException
-import httpx
 
-from app.backend.models.api_models import (
-    ModelListResponse, STTRequest, TranscriptionResponse,
-    EnhancedModelListResponse, OllamaModelInfo,
-)
+import httpx
+from fastapi import APIRouter, HTTPException
+
 from app.backend.core.config import backend_config
 from app.backend.core.ollama_models import build_enhanced_model_payload
+from app.backend.models.api_models import (
+    EnhancedModelListResponse,
+    ModelListResponse,
+    OllamaModelInfo,
+    STTRequest,
+    TranscriptionResponse,
+)
 from app.services.speech_service import get_speech_service
 
 logger = logging.getLogger(__name__)
@@ -21,15 +25,15 @@ async def get_available_models():
     """Get available Ollama models"""
     try:
         ollama_url = backend_config.get_ollama_url()
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{ollama_url}/api/tags")
             response.raise_for_status()
             data = response.json()
-            
+
             models = [model["name"] for model in data.get("models", [])]
             return ModelListResponse(models=models)
-            
+
     except Exception as e:
         logger.error(f"Failed to fetch models: {e}")
         raise HTTPException(status_code=500, detail=f"Could not fetch models: {str(e)}")
@@ -55,17 +59,17 @@ async def transcribe_audio(request: STTRequest):
     """Transcribe audio data"""
     try:
         import base64
-        
+
         audio_bytes = base64.b64decode(request.audio_data)
         speech_service = get_speech_service()
-        transcription = speech_service.transcribe_audio(audio_bytes, request.sample_rate)
-        
+        transcription = speech_service.transcribe_audio(audio_bytes, request.sample_rate or 16000)
+
         return TranscriptionResponse(
             status="success" if transcription else "error",
             transcription=transcription or "",
             length=len(transcription) if transcription else 0
         )
-        
+
     except Exception as e:
         logger.error(f"STT error: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")

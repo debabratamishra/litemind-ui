@@ -12,69 +12,82 @@ import subprocess
 import tempfile
 import tomllib
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
-from PIL import Image
 from bs4 import BeautifulSoup
+from PIL import Image
 
-from app.core.rag_formats import ALLOWED_UPLOAD_EXTENSIONS, IMAGE_EXTENSIONS, LEGACY_OFFICE_EXTENSIONS, SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, TEXTISH_EXTENSIONS
+from app.core.rag_formats import (
+    ALLOWED_UPLOAD_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    SUPPORTED_EXTENSIONS,
+    TEXT_EXTENSIONS,
+    TEXTISH_EXTENSIONS,
+)
 from app.ingestion.enhanced_document_processor import extract_docx_enhanced, extract_epub_enhanced, extract_pdf_enhanced
 from app.ingestion.enhanced_extractors import extract_csv_enhanced
 
 logger = logging.getLogger(__name__)
 
+pd: Any = None
+PANDAS_AVAILABLE = False
 try:
     import pandas as pd
     PANDAS_AVAILABLE = True
 except ImportError:
-    pd = None
-    PANDAS_AVAILABLE = False
+    pass
 
+Presentation: Any = None
+PPTX_AVAILABLE = False
 try:
     from pptx import Presentation
     PPTX_AVAILABLE = True
 except ImportError:
-    Presentation = None
-    PPTX_AVAILABLE = False
+    pass
 
+trafilatura: Any = None
+TRAFILATURA_AVAILABLE = False
 try:
     import trafilatura
     TRAFILATURA_AVAILABLE = True
 except ImportError:
-    trafilatura = None
-    TRAFILATURA_AVAILABLE = False
+    pass
 
+rtf_to_text: Any = None
+STRIPRTF_AVAILABLE = False
 try:
     from striprtf.striprtf import rtf_to_text
     STRIPRTF_AVAILABLE = True
 except ImportError:
-    rtf_to_text = None
-    STRIPRTF_AVAILABLE = False
+    pass
 
+teletype: Any = None
+load_odf_document: Any = None
+ODFPY_AVAILABLE = False
 try:
     from odf import teletype
     from odf.opendocument import load as load_odf_document
     ODFPY_AVAILABLE = True
 except ImportError:
-    teletype = None
-    load_odf_document = None
-    ODFPY_AVAILABLE = False
+    pass
 
+yaml: Any = None
+YAML_AVAILABLE = False
 try:
     import yaml
     YAML_AVAILABLE = True
 except ImportError:
-    yaml = None
-    YAML_AVAILABLE = False
+    pass
 
+partition: Any = None
+Table: Any = None
+UNSTRUCTURED_AVAILABLE = False
 try:
-    from unstructured.partition.auto import partition
-    from unstructured.documents.elements import Table
+    from unstructured.documents.elements import Table  # ty: ignore[unresolved-import]
+    from unstructured.partition.auto import partition  # ty: ignore[unresolved-import]
     UNSTRUCTURED_AVAILABLE = True
 except ImportError:
-    partition = None
-    Table = None
-    UNSTRUCTURED_AVAILABLE = False
+    pass
 
 DOT_ALLOWED_EXTENSIONS = ALLOWED_UPLOAD_EXTENSIONS
 DOT_IMAGE_EXTENSIONS = {f".{ext}" for ext in IMAGE_EXTENSIONS}
@@ -374,7 +387,10 @@ def _extract_workbook_document(path: Path) -> List[dict]:
         workbook = pd.ExcelFile(path)
         for sheet_name in workbook.sheet_names:
             try:
-                dataframe = workbook.parse(sheet_name, dtype=str).fillna("")
+                parsed_sheet = workbook.parse(sheet_name, dtype=str)
+                if not isinstance(parsed_sheet, pd.DataFrame):
+                    continue
+                dataframe = parsed_sheet.fillna("")
             except Exception as exc:
                 logger.warning("Failed to parse sheet %s in %s: %s", sheet_name, path.name, exc)
                 continue
@@ -512,7 +528,7 @@ def _extract_presentation_document(path: Path) -> Tuple[List[dict], List[dict], 
 
 
 def _extract_with_unstructured_fallback(path: Path) -> List[dict]:
-    if not UNSTRUCTURED_AVAILABLE:
+    if not UNSTRUCTURED_AVAILABLE or partition is None:
         return []
 
     try:

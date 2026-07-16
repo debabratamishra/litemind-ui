@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Iterable, Optional
 
 import litellm
+
 from config import Config
 
 
@@ -46,7 +47,10 @@ logger = logging.getLogger(__name__)
 
 
 litellm.drop_params = True
-litellm.suppress_debug_info = True
+# suppress_debug_info is declared by litellm as a Literal[False]; setattr avoids
+# the static-type error while keeping the runtime assignment (the declaration
+# lives in the installed package and would be reverted on `uv sync`).
+setattr(litellm, "suppress_debug_info", True)
 litellm.disable_streaming_logging = True
 
 _MAX_RETRIES = 3

@@ -4,16 +4,16 @@ Conversation Database Service using SQLite.
 Provides persistent storage for conversation history with unique identifiers.
 Uses SQLite for lightweight, file-based storage that's perfect for local deployments.
 """
+import atexit
 import json
 import logging
 import sqlite3
 import uuid
-import atexit
-from datetime import datetime
-from typing import List, Dict, Optional, Any, Tuple
-from dataclasses import dataclass, field
-from pathlib import Path
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class ConversationMessage:
     content: str
     created_at: str
     metadata: Optional[Dict[str, Any]] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -58,7 +58,7 @@ class ConversationMessage:
             "created_at": self.created_at,
             "metadata": self.metadata
         }
-    
+
     @classmethod
     def from_row(cls, row: Tuple) -> "ConversationMessage":
         return cls(
@@ -82,7 +82,7 @@ class Conversation:
     summary: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     messages: List[ConversationMessage] = field(default_factory=list)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -94,7 +94,7 @@ class Conversation:
             "metadata": self.metadata,
             "messages": [m.to_dict() for m in self.messages]
         }
-    
+
     @classmethod
     def from_row(cls, row: Tuple, messages: Optional[List[ConversationMessage]] = None) -> "Conversation":
         return cls(
@@ -122,28 +122,28 @@ def generate_message_id() -> str:
 class ConversationDatabase:
     """
     SQLite-based conversation storage.
-    
+
     Provides CRUD operations for conversations and messages
     with automatic schema management.
     """
-    
+
     def __init__(self, db_path: Optional[Path] = None):
         """
         Initialize the conversation database.
-        
+
         Args:
             db_path: Path to the SQLite database file
         """
         self.db_path = db_path or DEFAULT_DB_PATH
-        
+
         # Ensure directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize database schema
         self._init_schema()
-        
+
         logger.info(f"ConversationDatabase initialized at {self.db_path}")
-    
+
     @contextmanager
     def _get_connection(self):
         """Get a database connection with automatic cleanup."""
@@ -157,12 +157,12 @@ class ConversationDatabase:
             raise e
         finally:
             conn.close()
-    
+
     def _init_schema(self):
         """Initialize database schema."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Conversations table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS conversations (
@@ -175,7 +175,7 @@ class ConversationDatabase:
                     metadata TEXT
                 )
             """)
-            
+
             # Messages table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
@@ -188,25 +188,25 @@ class ConversationDatabase:
                     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
                 )
             """)
-            
+
             # Create indexes for faster queries
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_messages_conversation_id 
+                CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
                 ON messages(conversation_id)
             """)
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_conversations_type 
+                CREATE INDEX IF NOT EXISTS idx_conversations_type
                 ON conversations(conversation_type)
             """)
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_conversations_updated 
+                CREATE INDEX IF NOT EXISTS idx_conversations_updated
                 ON conversations(updated_at DESC)
             """)
-            
+
             logger.info("Database schema initialized")
-    
+
     # ==================== Conversation Operations ====================
-    
+
     def create_conversation(
         self,
         title: str,
@@ -215,12 +215,12 @@ class ConversationDatabase:
     ) -> Conversation:
         """
         Create a new conversation.
-        
+
         Args:
             title: Conversation title
             conversation_type: Type of conversation ("chat" or "rag")
             metadata: Optional metadata
-            
+
         Returns:
             The created Conversation object
         """
@@ -229,15 +229,15 @@ class ConversationDatabase:
             raise ValueError("Title must be a non-empty string")
         if len(title) > 500:
             raise ValueError("Title cannot exceed 500 characters")
-        
+
         # Validate conversation_type
         valid_types = {"chat", "rag"}
         if conversation_type not in valid_types:
             raise ValueError(f"conversation_type must be one of {valid_types}")
-        
+
         conversation_id = generate_conversation_id()
         now = datetime.now().isoformat()
-        
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -254,7 +254,7 @@ class ConversationDatabase:
                     json.dumps(metadata) if metadata else None
                 )
             )
-        
+
         conversation = Conversation(
             id=conversation_id,
             title=title,
@@ -263,39 +263,39 @@ class ConversationDatabase:
             updated_at=now,
             metadata=metadata
         )
-        
+
         logger.info(f"Created conversation: {conversation_id} - {title}")
         return conversation
-    
+
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> Optional[Conversation]:
         """
         Get a conversation by ID.
-        
+
         Args:
             conversation_id: The conversation ID
             include_messages: Whether to include messages
-            
+
         Returns:
             Conversation object or None if not found
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             cursor.execute(
                 "SELECT * FROM conversations WHERE id = ?",
                 (conversation_id,)
             )
             row = cursor.fetchone()
-            
+
             if not row:
                 return None
-            
+
             messages = []
             if include_messages:
                 messages = self.get_messages(conversation_id)
-            
+
             return Conversation.from_row(tuple(row), messages)
-    
+
     def list_conversations(
         self,
         conversation_type: Optional[str] = None,
@@ -304,22 +304,22 @@ class ConversationDatabase:
     ) -> List[Conversation]:
         """
         List conversations, optionally filtered by type.
-        
+
         Args:
             conversation_type: Filter by type ("chat" or "rag")
             limit: Maximum number of conversations to return
             offset: Number of conversations to skip
-            
+
         Returns:
             List of Conversation objects (without messages)
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             if conversation_type:
                 cursor.execute(
                     """
-                    SELECT * FROM conversations 
+                    SELECT * FROM conversations
                     WHERE conversation_type = ?
                     ORDER BY updated_at DESC
                     LIMIT ? OFFSET ?
@@ -329,16 +329,16 @@ class ConversationDatabase:
             else:
                 cursor.execute(
                     """
-                    SELECT * FROM conversations 
+                    SELECT * FROM conversations
                     ORDER BY updated_at DESC
                     LIMIT ? OFFSET ?
                     """,
                     (limit, offset)
                 )
-            
+
             rows = cursor.fetchall()
             return [Conversation.from_row(tuple(row)) for row in rows]
-    
+
     def update_conversation(
         self,
         conversation_id: str,
@@ -348,38 +348,38 @@ class ConversationDatabase:
     ) -> bool:
         """
         Update a conversation's metadata.
-        
+
         Args:
             conversation_id: The conversation ID
             title: New title (optional)
             summary: New summary (optional)
             metadata: New metadata (optional)
-            
+
         Returns:
             True if updated, False if not found
         """
         updates = []
         params = []
-        
+
         if title is not None:
             updates.append("title = ?")
             params.append(title)
-        
+
         if summary is not None:
             updates.append("summary = ?")
             params.append(summary)
-        
+
         if metadata is not None:
             updates.append("metadata = ?")
             params.append(json.dumps(metadata))
-        
+
         if not updates:
             return True
-        
+
         updates.append("updated_at = ?")
         params.append(datetime.now().isoformat())
         params.append(conversation_id)
-        
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -387,41 +387,41 @@ class ConversationDatabase:
                 params
             )
             return cursor.rowcount > 0
-    
+
     def delete_conversation(self, conversation_id: str) -> bool:
         """
         Delete a conversation and all its messages.
-        
+
         Args:
             conversation_id: The conversation ID
-            
+
         Returns:
             True if deleted, False if not found
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Delete messages first (foreign key)
             cursor.execute(
                 "DELETE FROM messages WHERE conversation_id = ?",
                 (conversation_id,)
             )
-            
+
             # Delete conversation
             cursor.execute(
                 "DELETE FROM conversations WHERE id = ?",
                 (conversation_id,)
             )
-            
+
             deleted = cursor.rowcount > 0
-            
+
             if deleted:
                 logger.info(f"Deleted conversation: {conversation_id}")
-            
+
             return deleted
-    
+
     # ==================== Message Operations ====================
-    
+
     def add_message(
         self,
         conversation_id: str,
@@ -431,37 +431,37 @@ class ConversationDatabase:
     ) -> ConversationMessage:
         """
         Add a message to a conversation.
-        
+
         Args:
             conversation_id: The conversation ID
             role: Message role ("user", "assistant", "system")
             content: Message content
             metadata: Optional message metadata
-            
+
         Returns:
             The created ConversationMessage object
         """
         # Input validation
         if not conversation_id or not isinstance(conversation_id, str):
             raise ValueError("conversation_id must be a non-empty string")
-        
+
         # Validate role
         valid_roles = {"user", "assistant", "system"}
         if role not in valid_roles:
             raise ValueError(f"role must be one of {valid_roles}")
-        
+
         # Validate content
         if not isinstance(content, str):
             raise ValueError("content must be a string")
         if len(content) > 1000000:  # 1MB limit
             raise ValueError("content cannot exceed 1MB")
-        
+
         message_id = generate_message_id()
         now = datetime.now().isoformat()
-        
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Insert message
             cursor.execute(
                 """
@@ -477,13 +477,13 @@ class ConversationDatabase:
                     json.dumps(metadata) if metadata else None
                 )
             )
-            
+
             # Update conversation's updated_at timestamp
             cursor.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
                 (now, conversation_id)
             )
-        
+
         return ConversationMessage(
             id=message_id,
             conversation_id=conversation_id,
@@ -492,7 +492,7 @@ class ConversationDatabase:
             created_at=now,
             metadata=metadata
         )
-    
+
     def get_messages(
         self,
         conversation_id: str,
@@ -500,21 +500,21 @@ class ConversationDatabase:
     ) -> List[ConversationMessage]:
         """
         Get all messages for a conversation.
-        
+
         Args:
             conversation_id: The conversation ID
             limit: Maximum number of messages (None for all)
-            
+
         Returns:
             List of ConversationMessage objects
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             if limit:
                 cursor.execute(
                     """
-                    SELECT * FROM messages 
+                    SELECT * FROM messages
                     WHERE conversation_id = ?
                     ORDER BY created_at ASC
                     LIMIT ?
@@ -524,23 +524,23 @@ class ConversationDatabase:
             else:
                 cursor.execute(
                     """
-                    SELECT * FROM messages 
+                    SELECT * FROM messages
                     WHERE conversation_id = ?
                     ORDER BY created_at ASC
                     """,
                     (conversation_id,)
                 )
-            
+
             rows = cursor.fetchall()
             return [ConversationMessage.from_row(tuple(row)) for row in rows]
-    
+
     def delete_message(self, message_id: str) -> bool:
         """
         Delete a specific message.
-        
+
         Args:
             message_id: The message ID
-            
+
         Returns:
             True if deleted, False if not found
         """
@@ -551,14 +551,14 @@ class ConversationDatabase:
                 (message_id,)
             )
             return cursor.rowcount > 0
-    
+
     # ==================== Utility Operations ====================
-    
+
     def get_conversation_count(self, conversation_type: Optional[str] = None) -> int:
         """Get the total number of conversations."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             if conversation_type:
                 cursor.execute(
                     "SELECT COUNT(*) FROM conversations WHERE conversation_type = ?",
@@ -566,9 +566,9 @@ class ConversationDatabase:
                 )
             else:
                 cursor.execute("SELECT COUNT(*) FROM conversations")
-            
+
             return cursor.fetchone()[0]
-    
+
     def search_conversations(
         self,
         query: str,
@@ -577,18 +577,18 @@ class ConversationDatabase:
     ) -> List[Conversation]:
         """
         Search conversations by title or message content.
-        
+
         Args:
             query: Search query
             conversation_type: Filter by type
             limit: Maximum results
-            
+
         Returns:
             List of matching Conversation objects
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             def _escape_like(raw: str) -> str:
                 """Escape SQLite LIKE wildcards in user input."""
                 return (
@@ -600,7 +600,7 @@ class ConversationDatabase:
 
             escaped_query = _escape_like(query)
             search_pattern = f"%{escaped_query}%"
-            
+
             if conversation_type:
                 cursor.execute(
                     """
@@ -624,36 +624,36 @@ class ConversationDatabase:
                     """,
                     (search_pattern, search_pattern, limit)
                 )
-            
+
             rows = cursor.fetchall()
             return [Conversation.from_row(tuple(row)) for row in rows]
-    
+
     def generate_title_from_message(self, message: str, max_words: int = 3) -> str:
         """
         Generate a brief conversation title from the first message.
-        
+
         Args:
             message: The first message content
             max_words: Maximum number of words in title (default 3)
-            
+
         Returns:
             Generated title string (brief, max 3 words)
         """
         # Clean the message
         title = message.strip()
-        
+
         # Remove newlines and extra spaces
         title = ' '.join(title.replace('\n', ' ').replace('\r', '').split())
-        
+
         # Split into words and take first max_words
         words = title.split()
         if len(words) > max_words:
             title = ' '.join(words[:max_words]) + "..."
-        
+
         # Ensure reasonable length even if words are very long
         if len(title) > 40:
             title = title[:37] + "..."
-        
+
         return title if title else "New Chat"
 
 

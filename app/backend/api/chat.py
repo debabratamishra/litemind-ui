@@ -2,6 +2,7 @@
 Chat API endpoints with conversation memory support
 """
 
+import json
 import logging
 from typing import Dict, List
 
@@ -12,13 +13,16 @@ from fastapi.responses import StreamingResponse
 # Ensure environment variables are loaded before importing services
 load_dotenv()
 
-import json
-
-from app.backend.models.api_models import ChatRequestEnhanced, ChatResponse, MemoryStatsResponse, SerpTokenStatus
-from app.services.conversation_memory import get_memory_service
-from app.services.llm_gateway import complete_text, stream_completion
-from app.services.web_search_service import WebSearchService
-from app.skills import chat_skill_registry
+from app.backend.models.api_models import (  # noqa: E402
+    ChatRequestEnhanced,
+    ChatResponse,
+    MemoryStatsResponse,
+    SerpTokenStatus,
+)
+from app.services.conversation_memory import get_memory_service  # noqa: E402
+from app.services.llm_gateway import complete_text, stream_completion  # noqa: E402
+from app.services.web_search_service import WebSearchService  # noqa: E402
+from app.skills import chat_skill_registry  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +299,7 @@ async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
         repetition_penalty=request.repetition_penalty,
     )
 
-    return ChatResponse(response=response_text, model=request.model)
+    return ChatResponse(response=response_text, model=request.model if request.model is not None else "default")
 
 
 async def _stream_chat_response(request: ChatRequestEnhanced):
@@ -317,11 +321,11 @@ async def _stream_chat_response(request: ChatRequestEnhanced):
         model=request.model,
         api_base=request.api_base,
         api_key=request.api_key,
-        temperature=request.temperature,
-        max_tokens=max_tokens,
-        top_p=request.top_p,
-        frequency_penalty=request.frequency_penalty,
-        repetition_penalty=request.repetition_penalty,
+        temperature=request.temperature if request.temperature is not None else 0.7,
+        max_tokens=max_tokens if max_tokens is not None else 2048,
+        top_p=request.top_p if request.top_p is not None else 0.9,
+        frequency_penalty=request.frequency_penalty if request.frequency_penalty is not None else 0.0,
+        repetition_penalty=request.repetition_penalty if request.repetition_penalty is not None else 1.0,
     ):
         yield chunk
 
@@ -399,7 +403,7 @@ async def _handle_web_search_chat(request: ChatRequestEnhanced):
 
     async def event_generator():
         try:
-            async for chunk in skill.stream(request):
+            async for chunk in await skill.stream(request):
                 yield chunk + "\n"
 
         except Exception:
@@ -430,7 +434,7 @@ async def _stream_web_search_chat(request: ChatRequestEnhanced):
                 yield chunk
             return
 
-        async for chunk in skill.stream(request):
+        async for chunk in await skill.stream(request):
             yield chunk
 
     except Exception:

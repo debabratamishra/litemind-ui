@@ -1,4 +1,5 @@
-from .common import COMMON_WORDS, _collapse_newlines, _collapse_horizontal_spaces, _is_word_char
+from .common import COMMON_WORDS, _collapse_horizontal_spaces, _collapse_newlines, _is_word_char
+
 
 def _fix_newlines_between_letters(text: str) -> str:
     """Join characters/letters separated by newlines during streaming."""
@@ -35,7 +36,7 @@ def _join_spaced_letters(text: str) -> str:
         else:
             tokens.append((False, text[i]))
             i += 1
-    
+
     result_tokens = []
     t_idx = 0
     num_tokens = len(tokens)
@@ -55,7 +56,7 @@ def _join_spaced_letters(text: str) -> str:
                 break
             else:
                 break
-        
+
         if len(run) >= 4:
             merged_word = "".join(tokens[idx][1] for idx in run)
             if t_idx >= 2:
@@ -65,11 +66,11 @@ def _join_spaced_letters(text: str) -> str:
                     result_tokens.pop()  # pop space
                     prev_word = result_tokens.pop()[1]  # pop word
                     merged_word = prev_word + merged_word
-            
+
             result_tokens.append((True, merged_word))
             t_idx = run[-1] + 1
             continue
-        
+
         if t_idx + 2 < num_tokens:
             w1_ok, w1_val = tokens[t_idx]
             sp_ok, sp_val = tokens[t_idx + 1]
@@ -80,10 +81,10 @@ def _join_spaced_letters(text: str) -> str:
                         result_tokens.append((True, w1_val + w2_val))
                         t_idx += 3
                         continue
-        
+
         result_tokens.append(tokens[t_idx])
         t_idx += 1
-        
+
     return "".join(val for _, val in result_tokens)
 
 
@@ -104,7 +105,7 @@ def _clean_link_artifacts(s: str) -> str:
         result.append(s[i])
         i += 1
     s = "".join(result)
-    
+
     result = []
     i = 0
     n = len(s)
@@ -157,14 +158,14 @@ def _clean_link_artifacts(s: str) -> str:
         result.append(s[i])
         i += 1
     s = "".join(result)
-    
+
     if s.endswith('[Link]('):
         s = s[:-7]
     else:
         temp = s.rstrip()
         if temp.endswith('[Link]('):
             s = temp[:-7]
-            
+
     return s
 
 
@@ -593,7 +594,7 @@ def _format_sources_section(text: str) -> str:
             if j < len(line) and line[j] == ']':
                 formatted_lines.append(_format_single_source(line))
                 continue
-        
+
         formatted_lines.append(line)
 
     return before_sources + '\n'.join(formatted_lines)
@@ -701,7 +702,7 @@ def _format_single_source(source_line: str) -> str:
 
     if domain:
         title_part = rest[:domain_pos].strip()
-        
+
         clean_title_parts = []
         tp_idx = 0
         while tp_idx < len(title_part):
@@ -721,7 +722,7 @@ def _format_single_source(source_line: str) -> str:
             tp_idx = cl + 1
         title_part = "".join(clean_title_parts).strip()
         title_part = title_part.rstrip('—–- ').strip()
-        
+
         if title_part.startswith('**') and title_part.endswith('**'):
             title_part = title_part[2:-2]
 

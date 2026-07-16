@@ -1,5 +1,5 @@
-from typing import Tuple, Optional
-from .common import _is_word_char
+from typing import Optional, Tuple
+
 
 def looks_like_url(text: str) -> bool:
     """Return True if the text appears to be a URL."""

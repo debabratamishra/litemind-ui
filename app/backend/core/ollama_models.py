@@ -4,7 +4,6 @@ from typing import Any
 
 import httpx
 
-
 # Single source of truth for curated cloud models shown in the UI.
 OLLAMA_CLOUD_CATALOG: list[dict[str, str]] = [
     {

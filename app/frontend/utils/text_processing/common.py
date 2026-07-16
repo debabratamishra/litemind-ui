@@ -1,5 +1,6 @@
 from typing import Set
 
+
 def _load_common_words() -> Set[str]:
     manual = {
         'temperatures', 'information', 'conditions', 'performance', 'requirements',

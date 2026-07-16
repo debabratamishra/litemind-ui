@@ -9,10 +9,11 @@ from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
 from app.services.llm_gateway import resolve_embedding_config
 
+torch: Any = None
 try:
     import torch
 except ImportError:
-    torch = None
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def _extract_texts(input: Union[List[str], Dict, str]) -> List[str]:
 class LocalHFEmbeddingFunction:
     """Local HuggingFace embedding function with batching"""
 
-    def __init__(self, model_name: str, device: str = None, batch_size: int = 64):
+    def __init__(self, model_name: str, device: str | None = None, batch_size: int = 64):
         from sentence_transformers import SentenceTransformer
         if device is None:
             device = "cuda" if torch and torch.cuda.is_available() else "cpu"
@@ -137,7 +138,7 @@ def resolve_embedding_provider(provider: str, embedding_backend: str | None = No
 def create_embedding_function(
     provider: str,
     model_name: str,
-    ollama_url: str = None,
+    ollama_url: str | None = None,
     *,
     embedding_backend: str | None = None,
     api_base: str | None = None,

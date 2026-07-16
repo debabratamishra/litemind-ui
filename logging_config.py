@@ -3,31 +3,31 @@ Logging configuration for containerized LLMWebUI application.
 Provides environment-specific logging setups for development and production.
 """
 
-import os
-import sys
 import logging
 import logging.config
+import os
+import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 def _detect_container_environment() -> bool:
     """
     Detect if the application is running inside a container.
-    
+
     Uses multiple detection methods for reliability:
     1. Check for /.dockerenv file (Docker-specific)
     2. Check cgroup information
     3. Check environment variables
     4. Check for container-specific mount points
-    
+
     Returns:
         bool: True if running in a container, False otherwise
     """
     # Method 1: Check for Docker-specific file
     if Path("/.dockerenv").exists():
         return True
-    
+
     # Method 2: Check cgroup information
     try:
         with open("/proc/1/cgroup", "r") as f:
@@ -37,18 +37,18 @@ def _detect_container_environment() -> bool:
     except (FileNotFoundError, PermissionError):
         # /proc/1/cgroup might not exist on non-Linux systems
         pass
-    
+
     # Method 3: Check environment variables
     container_env_vars = [
         "DOCKER_CONTAINER",
         "KUBERNETES_SERVICE_HOST",
         "CONTAINER_NAME"
     ]
-    
+
     for env_var in container_env_vars:
         if os.getenv(env_var):
             return True
-    
+
     # Method 4: Check for container-specific mount points (Linux)
     import platform
     if platform.system() == "Linux":
@@ -59,16 +59,15 @@ def _detect_container_environment() -> bool:
                     return True
         except (FileNotFoundError, PermissionError):
             pass
-    
+
     return False
 
 
-from typing import Dict, Any
 
 
 class CleanFormatter(logging.Formatter):
     """Custom formatter that cleans up logger names for better readability."""
-    
+
     LOGGER_NAME_MAPPING = {
         'uvicorn.error': 'server',
         'uvicorn.access': 'access',
@@ -77,7 +76,7 @@ class CleanFormatter(logging.Formatter):
         'app.services.rag_service': 'rag_service',
         'logging_config': 'config',
     }
-    
+
     def format(self, record):
         # Create a clean name for display
         clean_name = self.LOGGER_NAME_MAPPING.get(record.name, record.name)
@@ -85,31 +84,31 @@ class CleanFormatter(logging.Formatter):
         return super().format(record)
 
 
-def get_logging_config(environment: str = None) -> Dict[str, Any]:
+def get_logging_config(environment: str | None = None) -> Dict[str, Any]:
     """
     Get logging configuration based on environment.
-    
+
     Args:
         environment: 'development', 'production', or None (auto-detect)
-    
+
     Returns:
         Dictionary containing logging configuration
     """
     if environment is None:
         environment = os.getenv('ENVIRONMENT', 'development')
-    
+
     # Detect execution environment
     is_containerized = _detect_container_environment()
-    
+
     # Set logs directory based on environment
     if is_containerized:
         logs_dir = Path('/app/logs')
     else:
         logs_dir = Path('./logs')
-    
+
     # Ensure logs directory exists
     logs_dir.mkdir(exist_ok=True)
-    
+
     # Base configuration
     config = {
         'version': 1,
@@ -200,7 +199,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
             }
         }
     }
-    
+
     if environment == 'development':
         # Development: More verbose logging, file output for debugging
         config['handlers'].update({
@@ -223,13 +222,13 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'encoding': 'utf-8'
             }
         })
-        
+
         # Update console handler for development
         config['handlers']['console'].update({
             'level': 'INFO',  # Changed from DEBUG to INFO to reduce console output
             'formatter': 'simple'  # Changed from detailed to simple for cleaner console output
         })
-        
+
         # Update loggers for development
         config['loggers']['']['level'] = 'INFO'  # Changed from DEBUG to INFO
         config['loggers']['']['handlers'] = ['console', 'file_debug', 'file_error']
@@ -237,21 +236,21 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
         config['loggers']['uvicorn']['handlers'] = ['console', 'file_debug']
         config['loggers']['uvicorn.access']['level'] = 'INFO'  # Changed from DEBUG to INFO
         config['loggers']['uvicorn.access']['handlers'] = ['console', 'file_debug']
-        
+
         # Add uvicorn.error logger configuration
         config['loggers']['uvicorn.error'] = {
             'level': 'INFO',
             'handlers': ['console', 'file_debug'],
             'propagate': False
         }
-        
+
         # Hide logging_config setup messages from console in development too
         config['loggers']['logging_config'] = {
             'level': 'WARNING',
             'handlers': ['console', 'file_debug'],
             'propagate': False
         }
-        
+
         # Add third-party library logger configurations for development
         config['loggers'].update({
             'httpcore': {
@@ -285,7 +284,7 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'propagate': False
             }
         })
-        
+
     elif environment == 'production':
         # Production: Structured JSON logging, error tracking
         config['handlers'].update({
@@ -317,17 +316,17 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'encoding': 'utf-8'
             }
         })
-        
+
         # Update console for production (JSON format)
         config['handlers']['console'].update({
             'formatter': 'json'
         })
-        
+
         # Update loggers for production
         config['loggers']['']['handlers'] = ['console', 'file_app', 'file_error']
         config['loggers']['uvicorn']['handlers'] = ['console', 'file_app']
         config['loggers']['uvicorn.access']['handlers'] = ['file_access']
-        
+
         # Add application-specific loggers
         config['loggers'].update({
             'app': {
@@ -346,20 +345,20 @@ def get_logging_config(environment: str = None) -> Dict[str, Any]:
                 'propagate': False
             }
         })
-    
+
     return config
 
 
-def setup_logging(environment: str = None) -> None:
+def setup_logging(environment: str | None = None) -> None:
     """
     Setup logging configuration for the application.
-    
+
     Args:
         environment: 'development', 'production', or None (auto-detect)
     """
     config = get_logging_config(environment)
     logging.config.dictConfig(config)
-    
+
     # Log the configuration setup (will be filtered out by console handler)
     logger = logging.getLogger(__name__)
     logger.debug(f"Logging configured for environment: {environment or os.getenv('ENVIRONMENT', 'development')}")
@@ -368,10 +367,10 @@ def setup_logging(environment: str = None) -> None:
 def get_logger(name: str) -> logging.Logger:
     """
     Get a logger instance with the specified name.
-    
+
     Args:
         name: Logger name (typically __name__)
-    
+
     Returns:
         Configured logger instance
     """
@@ -381,7 +380,7 @@ def get_logger(name: str) -> logging.Logger:
 # Container-specific logging utilities
 class ContainerLogFilter(logging.Filter):
     """Filter to add container-specific information to log records."""
-    
+
     def filter(self, record):
         # Add container information
         record.container_id = os.getenv('HOSTNAME', 'unknown')
@@ -393,7 +392,7 @@ class ContainerLogFilter(logging.Filter):
 def add_container_context():
     """Add container context to all loggers."""
     container_filter = ContainerLogFilter()
-    
+
     # Add filter to root logger
     root_logger = logging.getLogger()
     root_logger.addFilter(container_filter)
@@ -410,14 +409,14 @@ def setup_health_check_logging():
 if __name__ == "__main__":
     # Test logging configuration
     import sys
-    
+
     env = sys.argv[1] if len(sys.argv) > 1 else 'development'
     setup_logging(env)
-    
+
     logger = get_logger(__name__)
     logger.debug("Debug message")
     logger.info("Info message")
     logger.warning("Warning message")
     logger.error("Error message")
-    
+
     print(f"Logging test completed for environment: {env}")

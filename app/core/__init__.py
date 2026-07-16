@@ -4,9 +4,9 @@ Core application utilities package.
 from .environment import (
     EnvironmentDetector,
     environment,
+    get_platform,
     is_containerized,
     is_docker,
-    get_platform,
 )
 
 __all__ = [

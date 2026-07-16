@@ -1,10 +1,11 @@
 """
 Health check endpoints
 """
+import logging
 import os
 import time
-import logging
-from fastapi import APIRouter, HTTPException
+
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from app.backend.models.api_models import HealthResponse
@@ -25,13 +26,13 @@ async def readiness_check():
     """Container readiness check with detailed status"""
     try:
         from app.backend.core.config import backend_config
-        
+
         status_data = {
             "status": "ready",
             "timestamp": time.time(),
             "checks": {}
         }
-        
+
         # Check RAG service
         try:
             from main import rag_service
@@ -40,11 +41,11 @@ async def readiness_check():
                 status_data["status"] = "not_ready"
             else:
                 status_data["checks"]["rag_service"] = {"status": "ready"}
-        except Exception as e:
+        except Exception:
             logger.exception("RAG service readiness check failed")
             status_data["checks"]["rag_service"] = {"status": "error", "error": "Internal error"}
             status_data["status"] = "not_ready"
-        
+
         # Check critical directories
         critical_dirs = [backend_config.upload_folder, backend_config.storage_dir]
         for dir_path in critical_dirs:
@@ -53,15 +54,15 @@ async def readiness_check():
             else:
                 status_data["checks"][dir_path.name] = {"status": "failed", "path": str(dir_path)}
                 status_data["status"] = "not_ready"
-        
+
         if status_data["status"] == "ready":
             return status_data
         else:
             return JSONResponse(status_code=503, content=status_data)
-            
-    except Exception as e:
+
+    except Exception:
         logger.exception("Readiness check failed")
         return JSONResponse(
-            status_code=503, 
+            status_code=503,
             content={"status": "error", "error": "Internal error", "timestamp": time.time()}
         )

@@ -38,15 +38,15 @@ def setup_logging(verbose: bool = False):
 def generate_docker_env(output_file: str = ".env.docker"):
     """
     Generate Docker environment file with OS-independent cache paths.
-    
+
     Args:
         output_file: Path to the output environment file
     """
     logger = logging.getLogger(__name__)
-    
+
     # Get host cache paths
     host_paths = host_service_manager.get_host_cache_paths()
-    
+
     # Generate environment variables
     env_vars = {
         'HOST_HF_CACHE': host_paths['huggingface_cache'],
@@ -63,25 +63,25 @@ def generate_docker_env(output_file: str = ".env.docker"):
         'CONTAINER_STORAGE_DIR': '/app/storage',
         'CONTAINER_STREAMLIT_CONFIG_DIR': '/app/.streamlit'
     }
-    
+
     # Write environment file
     output_path = Path(output_file)
-    
+
     with open(output_path, 'w') as f:
         f.write("# Docker Environment Variables for Cache Directory Management\n")
         f.write("# Generated automatically - do not edit manually\n")
         f.write(f"# Generated for platform: {sys.platform}\n\n")
-        
+
         f.write("# Host system cache directories\n")
         for key, value in env_vars.items():
             if key.startswith('HOST_'):
                 f.write(f"{key}={value}\n")
-        
+
         f.write("\n# Container mount points\n")
         for key, value in env_vars.items():
             if key.startswith('CONTAINER_'):
                 f.write(f"{key}={value}\n")
-    
+
     logger.info(f"Generated Docker environment file: {output_path}")
     return env_vars
 
@@ -101,30 +101,30 @@ def main():
         action='store_true',
         help='Enable verbose logging'
     )
-    
+
     args = parser.parse_args()
     setup_logging(args.verbose)
-    
+
     logger = logging.getLogger(__name__)
-    
+
     try:
         print("Docker Environment Generator")
         print("=" * 50)
         print(f"Platform: {sys.platform}")
         print(f"Output file: {args.output}")
-        
+
         # Generate environment variables
         env_vars = generate_docker_env(args.output)
-        
+
         print("\nGenerated Environment Variables:")
         print("-" * 50)
         for key, value in env_vars.items():
             print(f"{key}={value}")
-        
+
         print(f"\n✓ Environment file created: {args.output}")
         print("\nTo use with Docker Compose:")
         print(f"  docker-compose --env-file {args.output} up")
-        
+
     except Exception as e:
         logger.error(f"Error generating Docker environment: {e}")
         if args.verbose:

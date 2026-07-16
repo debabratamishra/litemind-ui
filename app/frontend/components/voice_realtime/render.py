@@ -189,7 +189,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
     # ========================================================================
 
     use_pipecat = _PIPECAT_AVAILABLE
-    ProcessorClass = PipecatVADProcessor if use_pipecat else WebRTCVADProcessor
+    processor_class = PipecatVADProcessor if use_pipecat else WebRTCVADProcessor
     webrtc_mode = WebRtcMode.SENDRECV if use_pipecat else WebRtcMode.SENDONLY
 
     # Session state key to track if greeting has been played
@@ -216,7 +216,7 @@ def render_realtime_voice_chat(page_key: str = "chat") -> None:
             webrtc_ctx = webrtc_streamer(
                 key=f"realtime_voice_webrtc_{page_key}",
                 mode=webrtc_mode,
-                audio_processor_factory=ProcessorClass,
+                audio_processor_factory=processor_class,
                 media_stream_constraints={
                     "audio": {
                         "echoCancellation": True,
