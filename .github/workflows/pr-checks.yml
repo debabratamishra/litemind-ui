@@ -6,6 +6,9 @@ on:
       - main
       - develop
 
+permissions:
+  contents: read
+
 concurrency:
   group: pr-checks-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: true
