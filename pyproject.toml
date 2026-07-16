@@ -217,6 +217,7 @@ dev = [
     "black",
     "ruff",
     "mypy",
+    "ty>=0.0.60",
 ]
 
 # All dependencies for local development (both backend and frontend)
@@ -264,7 +265,8 @@ all = [
     "easyocr",
     "pandas",
     "nltk",
-    
+    "ollama",
+
     # Web Search
     "crewai",
     
@@ -325,3 +327,6 @@ python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+
+[tool.ty]
+environment = { python-version = "3.13" }

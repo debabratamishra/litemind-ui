@@ -2,7 +2,7 @@
 Audio recorder utilities with multi-backend support.
 """
 import logging
-from typing import Optional, Callable, Any
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ record_audio: Optional[Callable] = None
 def _init_audio_backend() -> None:
     """Initialize audio recording backend with fallback options."""
     global AUD_RECORDER_BACKEND, AUD_IMPORT_ERROR, record_audio
-    
+
     # Attempt 1: streamlit_audiorecorder ("streamlit-audiorecorder")
     try:
         import streamlit_audiorecorder as _sar  # type: ignore
@@ -27,7 +27,7 @@ def _init_audio_backend() -> None:
     except Exception as e:
         AUD_IMPORT_ERROR = e
         logger.debug(f"Failed to import streamlit_audiorecorder: {e}")
-    
+
     # Attempt 2: audio_recorder_streamlit ("audio-recorder-streamlit")
     try:
         from audio_recorder_streamlit import audio_recorder as _ars  # type: ignore
@@ -44,7 +44,7 @@ def _init_audio_backend() -> None:
     except Exception as e:
         AUD_IMPORT_ERROR = e
         logger.debug(f"Failed to import audio_recorder_streamlit: {e}")
-    
+
     # Attempt 3: audiorecorder ("streamlit-audiorecorder" older API)
     try:
         from audiorecorder import audiorecorder as _legacy  # type: ignore

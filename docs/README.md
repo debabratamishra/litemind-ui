@@ -7,6 +7,7 @@ LiteMindUI keeps the repository root focused on setup and navigation. Deeper ope
 - [`../README.md`](../README.md) - project overview and quick start
 - [`docker/README.md`](docker/README.md) - Docker workflows, compose files, health checks, and troubleshooting
 - [`docker/publishing.md`](docker/publishing.md) - Docker image publishing and release automation
+- [`api-contract.md`](api-contract.md) - HTTP API contract for frontend developers
 
 ## Runtime surfaces
 

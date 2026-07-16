@@ -1,7 +1,7 @@
 """Web search orchestrator using direct LLM prompting and SerpAPI results."""
 
 import logging
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 # Ensure environment variables are loaded
 load_dotenv()
 
-from app.services.llm_gateway import normalize_backend, resolve_backend_config, stream_completion
-from app.services.web_search_service import WebSearchService
+from app.services.llm_gateway import normalize_backend, resolve_backend_config, stream_completion  # noqa: E402
+from app.services.web_search_service import WebSearchService  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class WebSearchOrchestrator:
 
     def __init__(
         self,
-        backend: str = "ollama",
+        backend: Optional[str] = "ollama",
         model: Optional[str] = None,
         api_base: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -139,7 +139,7 @@ class WebSearchOrchestrator:
             logger.error(f"Query optimization failed: {e}", exc_info=True)
             return query  # Fallback to original query
 
-    async def _serper_agent_search(self, query: str) -> List[Dict[str, any]]:
+    async def _serper_agent_search(self, query: str) -> List[Dict[str, Any]]:
         """Execute search via WebSearchService and return formatted results.
 
         Args:
@@ -175,7 +175,7 @@ class WebSearchOrchestrator:
         self,
         query: str,
         optimized_query: str,
-        search_results: List[Dict[str, any]],
+        search_results: List[Dict[str, Any]],
         conversation_history: Optional[List[Dict[str, str]]] = None,
         stream: bool = True,
     ) -> AsyncGenerator[str, None]:
@@ -223,7 +223,7 @@ class WebSearchOrchestrator:
             logger.error(f"Synthesis failed: {e}", exc_info=True)
             raise
 
-    def _build_search_context(self, search_results: List[Dict[str, any]]) -> str:
+    def _build_search_context(self, search_results: List[Dict[str, Any]]) -> str:
         """Build a formatted context string from search results.
 
         Args:
@@ -247,7 +247,7 @@ class WebSearchOrchestrator:
 
         return "".join(context_parts)
 
-    def _build_citation_block(self, search_results: List[Dict[str, any]]) -> str:
+    def _build_citation_block(self, search_results: List[Dict[str, Any]]) -> str:
         """Create a clean, well-formatted citation block from search results.
 
         Format each source as:

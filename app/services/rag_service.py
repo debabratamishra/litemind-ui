@@ -9,26 +9,20 @@ import json
 import logging
 import os
 import re
-import shutil
 import string
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import chromadb
-import httpx
 import numpy as np
 from chromadb.config import Settings
 from rank_bm25 import BM25Okapi
-
-from pydantic import BaseModel, Field
 
 from app.core.rag_formats import SUPPORTED_EXTENSIONS
 from app.ingestion.enhanced_extractors import process_images_enhanced
 from app.ingestion.file_ingest import get_ingestion_capabilities, ingest_file
 
-from .llm_gateway import resolve_backend_config, stream_completion
-from app.services.rag_multi_agent import CrewAIRAGOrchestrator, multi_agent_rag_available
+from .llm_gateway import stream_completion
 
 # Configuration flags
 ENABLE_SIMPLE_IMAGE_INDEXING = os.getenv("ENABLE_SIMPLE_IMAGE_INDEXING", "true").lower() == "true"
@@ -50,8 +44,9 @@ def _patch_litellm_ollama_pt() -> None:
       2. This correctly finds tool_calls on the assistant message itself (OpenAI format).
     """
     try:
-        import os
         import inspect
+        import os
+
         from litellm.litellm_core_utils.prompt_templates import factory as litellm_factory
 
         # Get the source file path
@@ -242,7 +237,7 @@ class RAGService:
                 # Clean up previous client if path changed
                 try:
                     cls._shared_client.reset()
-                except:
+                except Exception:
                     pass
 
             cls._shared_client = chromadb.PersistentClient(
@@ -289,8 +284,8 @@ class RAGService:
         self.chunk_metadata_by_id = {}
 
         # Track processed files to prevent duplicates
-        self.processed_files = {}  # filename -> {hash, chunk_count, timestamp}
-        self.file_hashes = {}  # hash -> filename (for duplicate detection)
+        self.processed_files: Dict[str, Any] = {}  # filename -> {hash, chunk_count, timestamp}
+        self.file_hashes: Dict[str, Any] = {}  # hash -> filename (for duplicate detection)
 
         self.stop_words = _load_stop_words()
 
@@ -351,7 +346,7 @@ class RAGService:
             logger.debug(f"Using fallback Ollama URL: {url}")
             return url
 
-    def _calculate_file_hash(self, file_path: str) -> str:
+    def _calculate_file_hash(self, file_path: str) -> str | None:
         """Calculate SHA-256 hash of a file for duplicate detection."""
         import hashlib
 
@@ -1333,7 +1328,7 @@ class RAGService:
             logger.error(f"Vector text search error: {str(e)}")
             return []
 
-    def reciprocal_rank_fusion(self, bm25_results: List[Tuple], vector_results: List[Tuple], k: int = 60) -> List[str]:
+    def reciprocal_rank_fusion(self, bm25_results: List[Any], vector_results: List[Any], k: int = 60) -> List[str]:
         """Fuse BM25 and vector results using Reciprocal Rank Fusion and return sorted IDs."""
 
         def extract_id(result: Any) -> str:

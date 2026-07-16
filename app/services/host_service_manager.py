@@ -6,14 +6,15 @@ manage dynamic configuration based on execution environment, and validate connec
 to required host services (Ollama).
 """
 
+import asyncio
+import logging
 import os
 import platform
-import logging
-from pathlib import Path
-from typing import Dict, Optional, Tuple, Any
-import asyncio
-import httpx
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+import httpx
 
 # Import shared environment detection
 from app.core.environment import environment as env_detector
@@ -46,47 +47,47 @@ class EnvironmentConfig:
 class HostServiceManager:
     """
     Manages host service detection and configuration for Docker integration.
-    
+
     This class handles:
     - Detection of container vs native execution environment
     - Dynamic configuration based on execution environment
     - Validation of required host services (Ollama) connectivity
     - OS-independent cache directory management
     """
-    
+
     def __init__(self):
         # Use shared environment detection
         self.is_containerized = env_detector.is_containerized
         self.environment_config = self._build_environment_config()
         self._service_cache: Dict[str, ServiceStatus] = {}
-        
+
         logger.info(f"Host Service Manager initialized - Containerized: {self.is_containerized}")
         logger.info(f"Environment config: {self.environment_config}")
-    
+
     def _get_os_specific_cache_paths(self) -> Tuple[Path, Path]:
         """
         Get OS-specific cache directory paths for Huggingface and Ollama.
-        
+
         Returns:
             Tuple[Path, Path]: (huggingface_cache_path, ollama_cache_path)
         """
         # Use shared environment module for cache paths
         return env_detector.get_cache_paths()
-    
+
     def _build_environment_config(self) -> EnvironmentConfig:
         """
         Build configuration that adapts based on execution environment.
-        
+
         Returns:
             EnvironmentConfig: Configuration object with environment-specific settings
         """
         # Get OS-specific cache paths
         hf_cache, ollama_cache = self._get_os_specific_cache_paths()
-        
+
         if self.is_containerized:
             hf_cache_container = os.getenv("HF_HOME", "/root/.cache/huggingface")
             ollama_cache_container = os.getenv("OLLAMA_MODELS", "/root/.ollama")
-            
+
             config = EnvironmentConfig(
                 is_containerized=True,
                 ollama_url=os.getenv("OLLAMA_API_URL", "http://localhost:11434"),
@@ -107,32 +108,32 @@ class HostServiceManager:
                 chroma_db_dir=Path("./chroma_db"),
                 storage_dir=Path("./storage")
             )
-        
+
         return config
-    
+
     async def validate_service_connectivity(self, service_name: str, url: str, timeout: float = 5.0) -> ServiceStatus:
         """
         Validate connectivity to a host service.
-        
+
         Args:
             service_name: Name of the service (e.g., "Ollama")
             url: Service URL to test
             timeout: Request timeout in seconds
-            
+
         Returns:
             ServiceStatus: Status object with connectivity information
         """
         import time
         start_time = time.time()
-        
+
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 # For Ollama, test the /api/tags endpoint
                 test_url = f"{url}/api/tags" if "11434" in url else url
-                
+
                 response = await client.get(test_url)
                 response_time = (time.time() - start_time) * 1000
-                
+
                 if response.status_code == 200:
                     status = ServiceStatus(
                         name=service_name,
@@ -150,7 +151,7 @@ class HostServiceManager:
                         response_time_ms=response_time
                     )
                     logger.warning(f"{service_name} service returned HTTP {response.status_code} at {url}")
-                
+
         except httpx.TimeoutException:
             status = ServiceStatus(
                 name=service_name,
@@ -159,7 +160,7 @@ class HostServiceManager:
                 error_message="Connection timeout"
             )
             logger.warning(f"{service_name} service timeout at {url}")
-            
+
         except httpx.ConnectError:
             status = ServiceStatus(
                 name=service_name,
@@ -168,7 +169,7 @@ class HostServiceManager:
                 error_message="Connection refused"
             )
             logger.warning(f"{service_name} service connection refused at {url}")
-            
+
         except Exception as e:
             status = ServiceStatus(
                 name=service_name,
@@ -177,32 +178,32 @@ class HostServiceManager:
                 error_message=str(e)
             )
             logger.error(f"Error checking {service_name} service at {url}: {e}")
-        
+
         # Cache the result
         self._service_cache[service_name] = status
         return status
-    
-    async def validate_all_required_services(self) -> Dict[str, ServiceStatus]:
+
+    async def validate_all_required_services(self) -> Dict[str, ServiceStatus | BaseException]:
         """
         Validate connectivity to all required host services.
-        
+
         Returns:
             Dict[str, ServiceStatus]: Dictionary mapping service names to their status
         """
         services_to_check = [
             ("Ollama", self.environment_config.ollama_url),
         ]
-        
+
         results = {}
-        
+
         # Check services concurrently
         tasks = [
             self.validate_service_connectivity(name, url)
             for name, url in services_to_check
         ]
-        
+
         statuses = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         for (name, url), status in zip(services_to_check, statuses):
             if isinstance(status, Exception):
                 results[name] = ServiceStatus(
@@ -212,32 +213,33 @@ class HostServiceManager:
                     error_message=str(status)
                 )
             else:
+                assert isinstance(status, ServiceStatus)
                 results[name] = status
-        
+
         return results
-    
+
     def get_cached_service_status(self, service_name: str) -> Optional[ServiceStatus]:
         """
         Get cached service status without making a new request.
-        
+
         Args:
             service_name: Name of the service
-            
+
         Returns:
             Optional[ServiceStatus]: Cached status or None if not cached
         """
         return self._service_cache.get(service_name)
-    
+
     def get_host_cache_paths(self) -> Dict[str, str]:
         """
         Get host system cache paths for Docker volume mounting.
         These are the paths on the host system that should be mounted into containers.
-        
+
         Returns:
             Dict[str, str]: Dictionary mapping cache types to host paths
         """
         hf_cache, ollama_cache = self._get_os_specific_cache_paths()
-        
+
         return {
             "huggingface_cache": str(hf_cache),
             "ollama_cache": str(ollama_cache),
@@ -246,11 +248,11 @@ class HostServiceManager:
             "storage": str(Path("./storage").resolve()),
             "streamlit_config": str(Path("./.streamlit").resolve())
         }
-    
+
     def ensure_directories_exist(self) -> Dict[str, bool]:
         """
         Ensure all required directories exist with proper permissions.
-        
+
         Returns:
             Dict[str, bool]: Dictionary mapping directory names to creation success
         """
@@ -261,9 +263,9 @@ class HostServiceManager:
             "chroma_db": self.environment_config.chroma_db_dir,
             "storage": self.environment_config.storage_dir
         }
-        
+
         results = {}
-        
+
         for name, path in directories.items():
             try:
                 path.mkdir(parents=True, exist_ok=True)
@@ -279,21 +281,21 @@ class HostServiceManager:
             except Exception as e:
                 results[name] = False
                 logger.error(f"Failed to create directory {name} at {path}: {e}")
-        
+
         return results
-    
+
     def ensure_host_cache_directories_exist(self) -> Dict[str, bool]:
         """
         Ensure host cache directories exist before Docker mounting.
         This should be called before starting Docker containers to ensure
         the host directories exist and have proper permissions.
-        
+
         Returns:
             Dict[str, bool]: Dictionary mapping directory names to creation success
         """
         host_paths = self.get_host_cache_paths()
         results = {}
-        
+
         for name, path_str in host_paths.items():
             try:
                 path = Path(path_str)
@@ -310,13 +312,13 @@ class HostServiceManager:
             except Exception as e:
                 results[name] = False
                 logger.error(f"Failed to create host directory {name} at {path_str}: {e}")
-        
+
         return results
-    
+
     def get_dynamic_config(self) -> Dict[str, Any]:
         """
         Get dynamic configuration dictionary for use by other services.
-        
+
         Returns:
             Dict[str, Any]: Configuration dictionary
         """
@@ -330,20 +332,26 @@ class HostServiceManager:
             "storage_dir": str(self.environment_config.storage_dir),
             "cache_directories_created": self.ensure_directories_exist()
         }
-    
+
     async def get_system_status(self) -> Dict[str, Any]:
         """
         Get comprehensive system status including environment and service information.
-        
+
         Returns:
             Dict[str, Any]: System status dictionary
         """
         # Validate services
         service_statuses = await self.validate_all_required_services()
-        
+
         # Get directory status
         directory_status = self.ensure_directories_exist()
-        
+
+        clean_statuses: dict[str, ServiceStatus] = {
+            name: status
+            for name, status in service_statuses.items()
+            if isinstance(status, ServiceStatus)
+        }
+
         return {
             "environment": {
                 "is_containerized": self.environment_config.is_containerized,
@@ -358,7 +366,7 @@ class HostServiceManager:
                     "error": status.error_message,
                     "response_time_ms": status.response_time_ms
                 }
-                for name, status in service_statuses.items()
+                for name, status in clean_statuses.items()
             },
             "directories": directory_status
         }

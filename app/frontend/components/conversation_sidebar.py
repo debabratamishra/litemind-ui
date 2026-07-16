@@ -11,10 +11,7 @@ from typing import Optional
 
 import streamlit as st
 
-from ...services.conversation_db import (
-    get_conversation_db,
-    Conversation
-)
+from ...services.conversation_db import Conversation, get_conversation_db
 
 logger = logging.getLogger(__name__)
 
@@ -185,9 +182,9 @@ def format_time_ago(timestamp_str: str) -> str:
         timestamp = datetime.fromisoformat(timestamp_str)
         now = datetime.now()
         diff = now - timestamp
-        
+
         seconds = diff.total_seconds()
-        
+
         if seconds < 60:
             return "Just now"
         elif seconds < 3600:
@@ -208,7 +205,7 @@ def format_time_ago(timestamp_str: str) -> str:
 class ConversationHistorySidebar:
     """
     Sidebar component for managing conversation history.
-    
+
     Features:
     - Display list of past conversations
     - Create new conversations
@@ -216,93 +213,93 @@ class ConversationHistorySidebar:
     - Delete conversations
     - Search conversations
     """
-    
+
     def __init__(self, conversation_type: str = "chat"):
         """
         Initialize the conversation history sidebar.
-        
+
         Args:
             conversation_type: Type of conversations to display ("chat" or "rag")
         """
         self.conversation_type = conversation_type
         self.db = get_conversation_db()
         self._init_session_state()
-    
+
     def _init_session_state(self):
         """Initialize session state for conversation management."""
         # Current active conversation ID
         key_prefix = self.conversation_type
-        
+
         if f"{key_prefix}_active_conversation_id" not in st.session_state:
             st.session_state[f"{key_prefix}_active_conversation_id"] = None
-        
+
         if f"{key_prefix}_show_delete_confirm" not in st.session_state:
             st.session_state[f"{key_prefix}_show_delete_confirm"] = None
-    
+
     @property
     def active_conversation_id(self) -> Optional[str]:
         """Get the currently active conversation ID."""
         return st.session_state.get(f"{self.conversation_type}_active_conversation_id")
-    
+
     @active_conversation_id.setter
     def active_conversation_id(self, value: Optional[str]):
         """Set the currently active conversation ID."""
         st.session_state[f"{self.conversation_type}_active_conversation_id"] = value
-    
+
     def create_new_conversation(self, first_message: Optional[str] = None, clear_session: bool = True) -> Conversation:
         """
         Create a new conversation and set it as active.
-        
+
         Args:
             first_message: Optional first message to generate title from
             clear_session: Whether to clear session state (True for manual creation, False for auto-creation from message)
-            
+
         Returns:
             The newly created Conversation
         """
         title = "New Conversation"
         if first_message:
             title = self.db.generate_title_from_message(first_message)
-        
+
         conversation = self.db.create_conversation(
             title=title,
             conversation_type=self.conversation_type
         )
-        
+
         self.active_conversation_id = conversation.id
-        
+
         # Only clear session state if explicitly requested (manual "New Conversation" button)
         # Don't clear when auto-creating from first message save
         if clear_session:
             messages_key = "chat_messages" if self.conversation_type == "chat" else "rag_messages"
             st.session_state[messages_key] = []
-            
+
             # Clear summary
             summary_key = f"{self.conversation_type}_conversation_summary"
             st.session_state[summary_key] = None
-        
+
         logger.info(f"Created new {self.conversation_type} conversation: {conversation.id}")
         return conversation
-    
+
     def load_conversation(self, conversation_id: str) -> Optional[Conversation]:
         """
         Load a conversation and its messages into session state.
-        
+
         Args:
             conversation_id: The conversation ID to load
-            
+
         Returns:
             The loaded Conversation or None if not found
         """
         conversation = self.db.get_conversation(conversation_id, include_messages=True)
-        
+
         if not conversation:
             logger.warning(f"Conversation not found: {conversation_id}")
             return None
-        
+
         # Set as active
         self.active_conversation_id = conversation_id
-        
+
         # Load messages into session state
         messages_key = "chat_messages" if self.conversation_type == "chat" else "rag_messages"
         st.session_state[messages_key] = [
@@ -313,18 +310,18 @@ class ConversationHistorySidebar:
             }
             for msg in conversation.messages
         ]
-        
+
         # Load summary if available
         summary_key = f"{self.conversation_type}_conversation_summary"
         st.session_state[summary_key] = conversation.summary
-        
+
         logger.info(f"Loaded conversation: {conversation_id} with {len(conversation.messages)} messages")
         return conversation
-    
+
     def save_message(self, role: str, content: str, metadata: Optional[dict] = None):
         """
         Save a message to the current active conversation.
-        
+
         Args:
             role: Message role
             content: Message content
@@ -338,7 +335,7 @@ class ConversationHistorySidebar:
                 clear_session=False  # Don't clear session state since messages are already there
             )
             self.active_conversation_id = conversation.id
-        
+
         # Add message to database
         self.db.add_message(
             conversation_id=self.active_conversation_id,
@@ -346,13 +343,13 @@ class ConversationHistorySidebar:
             content=content,
             metadata=metadata
         )
-        
+
         # Update title if this is the first user message
         conversation = self.db.get_conversation(self.active_conversation_id, include_messages=False)
         if conversation and conversation.title == "New Conversation" and role == "user":
             new_title = self.db.generate_title_from_message(content)
             self.db.update_conversation(self.active_conversation_id, title=new_title)
-    
+
     def update_conversation_summary(self, summary: str):
         """Update the summary for the current conversation."""
         if self.active_conversation_id:
@@ -360,44 +357,44 @@ class ConversationHistorySidebar:
                 self.active_conversation_id,
                 summary=summary
             )
-    
+
     def delete_conversation(self, conversation_id: str) -> bool:
         """
         Delete a conversation.
-        
+
         Args:
             conversation_id: The conversation ID to delete
-            
+
         Returns:
             True if deleted successfully
         """
         success = self.db.delete_conversation(conversation_id)
-        
+
         if success and conversation_id == self.active_conversation_id:
             # Clear active conversation
             self.active_conversation_id = None
-            
+
             # Clear session state messages
             messages_key = "chat_messages" if self.conversation_type == "chat" else "rag_messages"
             st.session_state[messages_key] = []
-        
+
         return success
-    
+
     def render(self):
         """Render the conversation history sidebar."""
         # Inject custom CSS
         st.markdown(SIDEBAR_CSS, unsafe_allow_html=True)
-        
+
         # Get conversations
         conversations = self.db.list_conversations(
             conversation_type=self.conversation_type,
             limit=50
         )
-        
+
         # Check if there's an active conversation with messages
         messages_key = "chat_messages" if self.conversation_type == "chat" else "rag_messages"
         has_active_messages = len(st.session_state.get(messages_key, [])) > 0
-        
+
         # Header row with new conversation button
         st.sidebar.markdown("---")
         col_title, col_btn = st.sidebar.columns([4, 1])
@@ -409,16 +406,16 @@ class ConversationHistorySidebar:
                 if st.button("➕", key=f"new_{self.conversation_type}_conv", help="New conversation"):
                     self._start_new_conversation()
                     st.rerun()
-        
-        
+
+
         if not conversations:
             st.sidebar.caption("Start chatting to build conversation history")
             return
-        
+
         # Render conversation list
         for conv in conversations:
             self._render_conversation_item(conv)
-    
+
     def _start_new_conversation(self):
         """Start a fresh conversation without creating a DB entry yet."""
         # Just clear the current session - DB entry will be created on first message
@@ -428,12 +425,12 @@ class ConversationHistorySidebar:
         summary_key = f"{self.conversation_type}_conversation_summary"
         st.session_state[summary_key] = None
         logger.info(f"Started new {self.conversation_type} conversation session")
-    
+
     def _render_conversation_item(self, conversation: Conversation):
         """Render a single conversation item in the sidebar."""
         is_active = conversation.id == self.active_conversation_id
         show_delete = st.session_state.get(f"{self.conversation_type}_show_delete_confirm") == conversation.id
-        
+
         # Show delete confirmation if this conversation is selected for deletion
         if show_delete:
             st.sidebar.markdown(f"Delete **{conversation.title[:20]}{'...' if len(conversation.title) > 20 else ''}**?")
@@ -448,15 +445,15 @@ class ConversationHistorySidebar:
                     st.session_state[f"{self.conversation_type}_show_delete_confirm"] = None
                     st.rerun()
             return
-        
+
         # Simple clean button with just the title
         button_label = conversation.title
         if len(button_label) > 25:
             button_label = button_label[:22] + "..."
-        
+
         # Use columns for conversation button and delete
         col1, col2 = st.sidebar.columns([5, 1])
-        
+
         with col1:
             button_type = "primary" if is_active else "secondary"
             if st.button(
@@ -468,49 +465,49 @@ class ConversationHistorySidebar:
                 if not is_active:
                     self.load_conversation(conversation.id)
                     st.rerun()
-        
+
         with col2:
             if st.button("×", key=f"del_{conversation.id}", help="Delete"):
                 st.session_state[f"{self.conversation_type}_show_delete_confirm"] = conversation.id
                 st.rerun()
-    
+
     def render_compact(self):
         """Render a compact version of the conversation sidebar."""
         # Inject custom CSS
         st.markdown(SIDEBAR_CSS, unsafe_allow_html=True)
-        
+
         # Check if there's an active conversation with messages
         messages_key = "chat_messages" if self.conversation_type == "chat" else "rag_messages"
         has_active_messages = len(st.session_state.get(messages_key, [])) > 0
-        
+
         # Header row
         col1, col2 = st.sidebar.columns([3, 1])
-        
+
         with col1:
             st.sidebar.markdown(
                 f"**{'💬' if self.conversation_type == 'chat' else '📚'} History**"
             )
-        
+
         with col2:
             # Only show new button if there are active messages
             if has_active_messages:
                 if st.button("➕", key=f"new_{self.conversation_type}_compact", help="New conversation"):
                     self._start_new_conversation()
                     st.rerun()
-        
+
         # Get recent conversations
         conversations = self.db.list_conversations(
             conversation_type=self.conversation_type,
             limit=10
         )
-        
+
         if conversations:
             # Create a selectbox for conversation selection
             conv_options = {
                 conv.title[:25] + ('...' if len(conv.title) > 25 else ''): conv.id
                 for conv in conversations
             }
-            
+
             # Find current selection
             current_label = None
             if self.active_conversation_id:
@@ -518,12 +515,12 @@ class ConversationHistorySidebar:
                     if cid == self.active_conversation_id:
                         current_label = label
                         break
-            
+
             if current_label and current_label in conv_options:
                 current_index = list(conv_options.keys()).index(current_label)
             else:
                 current_index = 0
-            
+
             selected = st.sidebar.selectbox(
                 "Conversation:",
                 options=list(conv_options.keys()),
@@ -531,9 +528,9 @@ class ConversationHistorySidebar:
                 key=f"{self.conversation_type}_conv_select",
                 label_visibility="collapsed"
             )
-            
+
             selected_id = conv_options.get(selected)
-            
+
             if selected_id and selected_id != self.active_conversation_id:
                 self.load_conversation(selected_id)
                 st.rerun()

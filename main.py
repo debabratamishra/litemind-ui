@@ -14,7 +14,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 import uvicorn
@@ -36,10 +36,11 @@ from app.services.tts_service import get_tts_service, preload_tts_model
 from app.skills import rag_skill_registry
 from config import Config
 
+torch: Any = None
 try:
     import torch
 except ImportError:
-    torch = None
+    pass
 
 # Configure logging early so lifespan hooks can use logger
 try:
@@ -482,7 +483,7 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             await validate_file_size(up)
 
             # Sanitize filename to prevent path traversal
-            safe_filename = sanitize_filename(up.filename)
+            safe_filename = sanitize_filename(up.filename or "")
         except ValueError as e:
             results.append(
                 {
@@ -545,15 +546,17 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             async with sem:
                 path, filename = path_info
                 try:
-                    result = await rag_service.add_document(str(path), filename, chunk_size=chunk_size)
-                    results.append(
-                        {
-                            "filename": filename,
-                            **(
-                                result or {"status": "success", "message": f"Processed {filename}", "chunks_created": 0}
-                            ),
-                        }
-                    )
+                    if rag_service is not None:
+                        result = await rag_service.add_document(str(path), filename, chunk_size=chunk_size)
+                        results.append(
+                            {
+                                "filename": filename,
+                                **(
+                                    result
+                                    or {"status": "success", "message": f"Processed {filename}", "chunks_created": 0}
+                                ),
+                            }
+                        )
                 except Exception as e:
                     results.append({"filename": filename, "status": "error", "message": str(e), "chunks_created": 0})
 
@@ -592,7 +595,7 @@ async def check_file_duplicates(files: List[UploadFile] = File(...)):
         for up in files:
             try:
                 # Sanitize filename to prevent path traversal
-                safe_filename = sanitize_filename(up.filename)
+                safe_filename = sanitize_filename(up.filename or "")
             except ValueError as e:
                 results.append(
                     {"filename": up.filename, "is_duplicate": False, "reason": f"Invalid filename: {str(e)}"}
@@ -696,7 +699,7 @@ async def transcribe_audio(request: STTRequest):
 
         audio_bytes = base64.b64decode(request.audio_data)
         speech_service = get_speech_service()
-        transcription = speech_service.transcribe_audio(audio_bytes, request.sample_rate)
+        transcription = speech_service.transcribe_audio(audio_bytes, request.sample_rate or 16000)
 
         return {
             "status": "success" if transcription else "error",
@@ -724,7 +727,9 @@ async def synthesize_speech(request: TTSRequest):
 
         logger.info(f"TTS service status: {tts_service.get_status()}")
 
-        audio_data, content_type = await tts_service.synthesize(request.text, request.voice, request.use_cache)
+        audio_data, content_type = await tts_service.synthesize(
+            request.text, request.voice, request.use_cache if request.use_cache is not None else True
+        )
 
         if not audio_data:
             logger.error("TTS synthesis returned no audio data")

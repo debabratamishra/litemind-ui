@@ -16,7 +16,6 @@ The new unified TTSPlayer provides:
 - Better error handling and logging
 - Simplified API
 """
-import base64
 import logging
 import warnings
 from typing import Optional
@@ -38,20 +37,20 @@ warnings.warn(
 
 class TTSPlayback:
     """Text-to-Speech playback component."""
-    
+
     def __init__(self):
         self.base_url = FASTAPI_URL
         self._tts_available = None
-    
+
     def _check_tts_available(self) -> bool:
         """Check if TTS service is available."""
         # Use session state for caching to avoid stale results across sessions
         cache_key = "tts_service_available"
-        
+
         # Check session state first
         if cache_key in st.session_state:
             return st.session_state[cache_key]
-        
+
         try:
             response = requests.get(f"{self.base_url}/api/tts/status", timeout=5)
             if response.status_code == 200:
@@ -67,7 +66,7 @@ class TTSPlayback:
             logger.debug(f"TTS status check failed: {e}")
             # Don't cache failure - retry next time
             return False
-    
+
     def _get_audio(self, text: str, voice: Optional[str] = None) -> Optional[bytes]:
         """Get TTS audio from backend."""
         try:
@@ -81,9 +80,9 @@ class TTSPlayback:
                 },
                 timeout=60  # TTS can take a bit for longer texts
             )
-            
+
             logger.info(f"TTS response: status={response.status_code}, size={len(response.content)}, content_type={response.headers.get('content-type')}")
-            
+
             if response.status_code == 200:
                 content_type = response.headers.get('content-type', '')
                 if 'audio' in content_type and len(response.content) > 0:
@@ -93,14 +92,14 @@ class TTSPlayback:
                     try:
                         error_data = response.json()
                         logger.error(f"TTS returned non-audio response: {error_data}")
-                    except:
+                    except Exception:
                         logger.error(f"TTS returned unexpected content type: {content_type}")
                     return None
             else:
                 try:
                     error_data = response.json()
                     logger.error(f"TTS request failed: {response.status_code} - {error_data}")
-                except:
+                except Exception:
                     logger.error(f"TTS request failed: {response.status_code}")
                 return None
         except requests.exceptions.Timeout:
@@ -112,10 +111,10 @@ class TTSPlayback:
         except Exception as e:
             logger.error(f"TTS error: {type(e).__name__}: {e}")
             return None
-    
+
     def render_play_button(
-        self, 
-        text: str, 
+        self,
+        text: str,
         message_index: int,
         voice: Optional[str] = None,
         button_text: str = "🗣️",
@@ -123,7 +122,7 @@ class TTSPlayback:
     ) -> None:
         """
         Render a play button for TTS.
-        
+
         Args:
             text: The text to convert to speech
             message_index: Unique index for this message (for state management)
@@ -133,12 +132,12 @@ class TTSPlayback:
         """
         if not self._check_tts_available():
             return
-        
+
         # Create unique keys for this message
         audio_key = f"tts_audio_{message_index}"
         playing_key = f"tts_playing_{message_index}"
         loading_key = f"tts_loading_{message_index}"
-        
+
         # Initialize state
         if audio_key not in st.session_state:
             st.session_state[audio_key] = None
@@ -146,10 +145,10 @@ class TTSPlayback:
             st.session_state[playing_key] = False
         if loading_key not in st.session_state:
             st.session_state[loading_key] = False
-        
+
         # Create a small container for the button
         col1, col2 = st.columns([1, 20])
-        
+
         with col1:
             if st.session_state[loading_key]:
                 st.spinner("...")
@@ -162,21 +161,21 @@ class TTSPlayback:
                 ):
                     st.session_state[loading_key] = True
                     st.rerun()
-        
+
         # Handle audio generation and playback
         if st.session_state[loading_key]:
             with st.spinner("Generating audio..."):
                 audio_data = self._get_audio(text, voice)
-                
+
                 if audio_data:
                     st.session_state[audio_key] = audio_data
                     st.session_state[playing_key] = True
                 else:
                     st.toast("Failed to generate audio", icon="❌")
-                
+
                 st.session_state[loading_key] = False
                 st.rerun()
-        
+
         # Show audio player if we have audio
         if st.session_state[playing_key] and st.session_state[audio_key]:
             import io
@@ -185,7 +184,7 @@ class TTSPlayback:
                 st.audio(io.BytesIO(audio_bytes), format="audio/mp3", autoplay=True)
             else:
                 st.audio(audio_bytes, format="audio/mp3", autoplay=True)
-            
+
             # Add a close button to hide the player
             if st.button("✕", key=f"tts_close_{message_index}", help="Close audio player"):
                 st.session_state[playing_key] = False
@@ -194,10 +193,10 @@ class TTSPlayback:
 
 class InlinePlayButton:
     """Lightweight inline play button that shows audio on click."""
-    
+
     def __init__(self):
         self.base_url = FASTAPI_URL
-    
+
     def render(
         self,
         text: str,
@@ -206,7 +205,7 @@ class InlinePlayButton:
     ) -> None:
         """
         Render a minimal inline play button.
-        
+
         Args:
             text: Text to convert to speech
             message_id: Unique identifier for this message
@@ -214,13 +213,13 @@ class InlinePlayButton:
         """
         audio_key = f"inline_audio_{message_id}"
         show_key = f"inline_show_{message_id}"
-        
+
         # Initialize state
         if audio_key not in st.session_state:
             st.session_state[audio_key] = None
         if show_key not in st.session_state:
             st.session_state[show_key] = False
-        
+
         # If audio is already loaded, show player
         if st.session_state[show_key] and st.session_state[audio_key]:
             import io
@@ -270,10 +269,10 @@ def check_tts_available() -> bool:
     """Check if TTS service is available."""
     # Fresh check each time, don't rely on module-level instance cache
     cache_key = "tts_service_available"
-    
+
     if cache_key in st.session_state:
         return st.session_state[cache_key]
-    
+
     try:
         response = requests.get(f"{FASTAPI_URL}/api/tts/status", timeout=5)
         if response.status_code == 200:

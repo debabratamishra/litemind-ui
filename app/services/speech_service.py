@@ -12,23 +12,22 @@ Features:
 """
 
 import logging
-import os
 import tempfile
-import threading
 import warnings
-from typing import Optional, Generator, Tuple, Callable
+from typing import Any, Callable, Generator, Optional, Tuple
 
 import numpy as np
 
+librosa: Any = None
 try:
     import librosa
 except Exception:
-    librosa = None
+    pass
 
+torch: Any = None
 try:
     import torch
 except Exception as _torch_err:
-    torch = None
     # Log at import time so the root cause appears in startup logs
     logging.getLogger(__name__).warning(
         f"PyTorch (torch) failed to import — STT will be unavailable. "
@@ -38,7 +37,7 @@ except Exception as _torch_err:
 # Suppress the FutureWarning from transformers about 'inputs' deprecation
 # This is an internal transformers issue that will be fixed in a future version
 warnings.filterwarnings(
-    "ignore", 
+    "ignore",
     message=".*input name `inputs` is deprecated.*",
     category=FutureWarning,
     module="transformers.*"
@@ -68,7 +67,7 @@ class SpeechService:
         self.backend = "transformers"  # Only transformers backend supported now
         self.pipe = None
         self._model_loaded = False
-        
+
         if preload:
             self._load_model()
 
@@ -134,7 +133,7 @@ class SpeechService:
             Transcribed text or None if transcription fails
         """
         self._ensure_model_loaded()
-        
+
         try:
             import io
             try:
@@ -176,7 +175,7 @@ class SpeechService:
             Transcribed text or None if transcription fails
         """
         self._ensure_model_loaded()
-        
+
         try:
             # Load audio file
             audio_array, _sample_rate = librosa.load(file_path, sr=16000)
@@ -195,27 +194,27 @@ class SpeechService:
             return None
 
     def transcribe_audio_streaming(
-        self, 
-        audio_data: bytes, 
+        self,
+        audio_data: bytes,
         sample_rate: int = 16000,
         on_partial: Optional[Callable[[str], None]] = None
     ) -> Optional[str]:
         """
         Transcribe audio with streaming partial results.
-        
+
         This method provides intermediate transcription results as they become
         available, which is useful for showing live transcription in the UI.
-        
+
         Args:
             audio_data: Raw audio bytes
             sample_rate: Sample rate of the audio
             on_partial: Callback function called with partial transcription text
-            
+
         Returns:
             Final transcribed text or None if transcription fails
         """
         self._ensure_model_loaded()
-        
+
         try:
             import io
             try:
@@ -232,15 +231,15 @@ class SpeechService:
             # transformers pipeline - single result (no streaming support)
             if self.pipe is None:
                 raise RuntimeError("SpeechService pipeline not initialized")
-            
+
             # Show "Processing..." while transcribing
             if on_partial:
                 on_partial("Processing...")
-            
+
             # Use dict with 'raw' key to avoid deprecation warning
             result = self.pipe({"raw": audio_array, "sampling_rate": sample_rate})
             text = (result.get("text") or "").strip()
-            
+
             # Send final result
             if on_partial and text:
                 on_partial(text)
@@ -256,18 +255,18 @@ class SpeechService:
             return None
 
     def transcribe_chunk_generator(
-        self, 
-        audio_data: bytes, 
+        self,
+        audio_data: bytes,
         sample_rate: int = 16000
     ) -> Generator[Tuple[str, bool], None, None]:
         """
         Generator that yields transcription chunks.
-        
+
         Yields:
             Tuple of (text, is_final) where is_final indicates if this is the final result
         """
         self._ensure_model_loaded()
-        
+
         try:
             import io
             try:
@@ -284,7 +283,7 @@ class SpeechService:
             # transformers pipeline - single result
             if self.pipe is None:
                 raise RuntimeError("SpeechService pipeline not initialized")
-            
+
             yield ("Processing...", False)
             # Use dict with 'raw' key to avoid deprecation warning
             result = self.pipe({"raw": audio_array, "sampling_rate": sample_rate})
@@ -313,7 +312,7 @@ _speech_service: Optional[SpeechService] = None
 def get_speech_service(preload: bool = False) -> SpeechService:
     """
     Get or create the global speech service instance.
-    
+
     Args:
         preload: If True and creating new instance, preload the model
     """

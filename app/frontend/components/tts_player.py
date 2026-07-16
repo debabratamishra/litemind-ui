@@ -19,31 +19,31 @@ logger = logging.getLogger(__name__)
 class TTSPlayer:
     """
     Unified TTS player component.
-    
+
     Provides a consistent TTS experience across all pages with:
     - Audio synthesis via Edge TTS (backend)
     - Caching to avoid re-synthesizing same text
     - Error handling with user-friendly messages
     - Clean audio player UI with close button
     """
-    
+
     def __init__(self):
         self.base_url = FASTAPI_URL
         self._status_checked = False
-    
+
     @staticmethod
     def is_available() -> bool:
         """
         Check if TTS service is available.
-        
+
         Uses session state caching to avoid repeated API calls.
         Returns False on connection errors (doesn't cache failures).
         """
         cache_key = "tts_service_available"
-        
+
         if cache_key in st.session_state:
             return st.session_state[cache_key]
-        
+
         try:
             response = requests.get(f"{FASTAPI_URL}/api/tts/status", timeout=5)
             if response.status_code == 200:
@@ -55,21 +55,21 @@ class TTSPlayer:
         except Exception:
             # Don't cache failures - retry next time
             return False
-    
+
     @staticmethod
     def clear_cache():
         """Clear TTS availability cache to force re-check."""
         if "tts_service_available" in st.session_state:
             del st.session_state["tts_service_available"]
-    
+
     def _synthesize(self, text: str, voice: Optional[str] = None) -> Optional[bytes]:
         """
         Synthesize text to audio bytes.
-        
+
         Args:
             text: Text to convert to speech
             voice: Optional voice ID (e.g., 'en-US-AriaNeural')
-            
+
         Returns:
             Audio bytes (typically MP3 for edge-tts, WAV for pyttsx3) or None on error
         """
@@ -80,34 +80,34 @@ class TTSPlayer:
                 json={"text": text, "voice": voice, "use_cache": True},
                 timeout=60
             )
-            
+
             logger.info(
                 f"TTS response: status={response.status_code}, "
                 f"size={len(response.content)}, "
                 f"content_type={response.headers.get('content-type')}"
             )
-            
+
             if response.status_code == 200 and len(response.content) > 0:
                 content_type = response.headers.get('content-type', '')
                 if 'audio' in content_type:
                     return response.content
-                    
+
                 # Try to parse as error JSON
                 try:
                     error_data = response.json()
                     logger.error(f"TTS returned non-audio: {error_data}")
-                except:
+                except Exception:
                     # Not JSON, might still be audio
                     return response.content
             else:
                 try:
                     error_data = response.json()
                     logger.error(f"TTS failed: {response.status_code} - {error_data}")
-                except:
+                except Exception:
                     logger.error(f"TTS failed: {response.status_code}")
-                    
+
             return None
-            
+
         except requests.exceptions.Timeout:
             logger.error("TTS request timed out")
             return None
@@ -117,7 +117,7 @@ class TTSPlayer:
         except Exception as e:
             logger.error(f"TTS error: {type(e).__name__}: {e}")
             return None
-    
+
     def render(
         self,
         text: str,
@@ -129,7 +129,7 @@ class TTSPlayer:
     ) -> None:
         """
         Render TTS play button and audio player.
-        
+
         Args:
             text: Text to convert to speech
             key_prefix: Unique prefix for session state keys (e.g., 'chat', 'rag')
@@ -141,13 +141,13 @@ class TTSPlayer:
         # Generate unique keys for this message
         audio_key = f"{key_prefix}_tts_audio_{message_index}"
         show_key = f"{key_prefix}_tts_show_{message_index}"
-        
+
         # Initialize session state
         if audio_key not in st.session_state:
             st.session_state[audio_key] = None
         if show_key not in st.session_state:
             st.session_state[show_key] = False
-        
+
         # If audio is loaded, show the player
         if st.session_state[show_key] and st.session_state[audio_key]:
             self._render_audio_player(
@@ -166,7 +166,7 @@ class TTSPlayer:
                 show_key=show_key,
                 button_icon=button_icon
             )
-    
+
     def _render_audio_player(
         self,
         audio_bytes: bytes,
@@ -181,7 +181,7 @@ class TTSPlayer:
             audio_format = "audio/mpeg"
             if isinstance(audio_bytes, (bytes, bytearray)) and bytes(audio_bytes).startswith(b"RIFF"):
                 audio_format = "audio/wav"
-            
+
             if show_close:
                 col1, col2 = st.columns([15, 1])
                 with col1:
@@ -198,11 +198,11 @@ class TTSPlayer:
                     st.audio(io.BytesIO(audio_bytes), format=audio_format)
                 else:
                     st.audio(audio_bytes, format=audio_format)
-                    
+
         except Exception as e:
             logger.error(f"Audio player error: {type(e).__name__}: {e}")
             st.error(f"Audio playback error: {e}")
-    
+
     def _render_play_button(
         self,
         text: str,
@@ -216,7 +216,7 @@ class TTSPlayer:
         if st.button(button_icon, key=button_key, help="Read aloud"):
             with st.spinner("Generating audio..."):
                 audio_data = self._synthesize(text, voice)
-                
+
                 if audio_data:
                     st.session_state[audio_key] = audio_data
                     st.session_state[show_key] = True
@@ -246,7 +246,7 @@ def render_tts_button(
 ) -> None:
     """
     Convenience function to render a TTS button.
-    
+
     Args:
         text: Text to convert to speech
         key_prefix: Unique prefix for session state keys (e.g., 'chat', 'rag')
