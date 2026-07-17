@@ -4,7 +4,7 @@ RAG API endpoints
 
 import asyncio
 import logging
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -19,6 +19,7 @@ from app.backend.models.api_models import (
     ResetResponse,
     UploadResponse,
 )
+from app.services.web_search_service import DEFAULT_NUM_RESULTS, WebSearchService
 from app.skills import rag_skill_registry
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,55 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
     await asyncio.gather(*(process_single_file(path_info) for path_info in saved_paths))
 
 
+async def _fetch_web_search_section(
+    query: str, serp_api_key: Optional[str] = None
+) -> tuple[str | None, str | None]:
+    """Fetch web search results and format them as a delimited context section.
+
+    Returns a ``(notice, section)`` tuple. ``notice`` is a user-facing warning
+    string when web search was requested but could not be performed (e.g. no
+    SERP_API_KEY). ``section`` is the formatted "Web Search Results" block to be
+    merged into the RAG prompt, or ``None`` when no results were found.
+    """
+
+    service = WebSearchService(api_key=serp_api_key)
+    validation = service.validate_token(api_key=serp_api_key)
+    if not validation["valid"]:
+        logger.warning("Web search unavailable for RAG query: %s", validation["message"])
+        return (
+            f"⚠️ Web search unavailable ({validation['message']}). "
+            "Answering from your documents only.\n",
+            None,
+        )
+
+    try:
+        raw = await service.search(query, num_results=DEFAULT_NUM_RESULTS)
+        results = service.format_results(raw)
+    except Exception as exc:
+        logger.error("Web search fetch failed during RAG query: %s", exc)
+        return (
+            "⚠️ Web search failed during this query. Answering from your documents only.\n",
+            None,
+        )
+
+    if not results:
+        return (None, None)
+
+    lines = [
+        "The following web search results may also be relevant. Use them to "
+        "supplement the document context where helpful, and cite them as (web) when used:"
+    ]
+    for r in results:
+        lines.append(f"- {r['title']} ({r['link']}): {r['snippet']}")
+
+    section = (
+        "=== Web Search Results ===\n"
+        + "\n".join(lines)
+        + "\n=== End Web Search Results ==="
+    )
+    return (None, section)
+
+
 async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
     """Handle a RAG query through the registered RAG skill layer."""
     skill = rag_skill_registry.resolve(request)
@@ -269,7 +319,25 @@ async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
 
     async def event_generator():
         logger.info("Routing RAG query through skill '%s'", skill.name)
-        async for chunk in skill.stream(request, rag_service):
-            yield chunk + "\n"
+
+        # When web search is enabled, fetch results and merge them into the
+        # document context the skill passes to the LLM. We augment the system
+        # prompt (the first message the skill forwards to rag_service.query),
+        # which keeps this wiring free of deep skill changes.
+        if getattr(request, "use_web_search", False):
+            notice, web_section = await _fetch_web_search_section(
+                request.query, serp_api_key=getattr(request, "serp_api_key", None)
+            )
+            if notice:
+                yield notice
+            if web_section:
+                request.system_prompt = f"{request.system_prompt}\n\n{web_section}"
+
+        try:
+            async for chunk in skill.stream(request, rag_service):
+                yield chunk + "\n"
+        except Exception as exc:
+            logger.error("RAG stream error: %s", exc)
+            yield f"\n⚠️ Error: {exc}\n"
 
     return StreamingResponse(event_generator(), media_type="text/plain")

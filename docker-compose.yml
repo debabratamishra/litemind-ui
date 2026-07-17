@@ -57,44 +57,22 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.streamlit
+      dockerfile: Dockerfile.nextjs
     container_name: litemindui-frontend
     ports:
-      - "8501:8501"
-    volumes:
-      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}
-      - ${HOST_LOGS_DIR:-./logs}:/app/logs
+      - "3000:3000"
     environment:
-      - FASTAPI_URL=http://backend:8000
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
-      - DEFAULT_OPENROUTER_MODEL=${DEFAULT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
-      - ENVIRONMENT=${ENVIRONMENT:-development}
-      # Realtime voice (WebRTC) NAT traversal.
-      # STUN alone is not enough inside Docker's bridge network, so media is
-      # relayed through the bundled coturn TURN server. The BROWSER and the
-      # in-container aiortc peer reach coturn via DIFFERENT addresses, so they
-      # get DIFFERENT TURN URLs:
-      #   * WEBRTC_TURN_URL        -> used by the browser; must be the host LAN IP
-      #                               (set HOST_LAN_IP in .env for LAN access).
-      #   * WEBRTC_SERVER_TURN_URL -> used by the in-container peer; reaches the
-      #                               host via host.docker.internal.
-      - WEBRTC_STUN_URL=${WEBRTC_STUN_URL:-stun:stun.l.google.com:19302}
-      - WEBRTC_TURN_URL=${WEBRTC_TURN_URL:-turn:${HOST_LAN_IP:-127.0.0.1}:3478}
-      - WEBRTC_SERVER_TURN_URL=${WEBRTC_SERVER_TURN_URL:-turn:host.docker.internal:3478}
-      - WEBRTC_TURN_USERNAME=${WEBRTC_TURN_USERNAME:-litemind}
-      - WEBRTC_TURN_CREDENTIAL=${WEBRTC_TURN_CREDENTIAL:-litemindsecret}
-    # host.docker.internal resolves to the host from inside the container. It is
-    # built-in on Docker Desktop (macOS/Windows); on Linux this mapping adds it.
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NODE_ENV=production
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     depends_on:
       backend:
         condition: service_healthy

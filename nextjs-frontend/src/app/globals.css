@@ -1,0 +1,225 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens
+ * ─────────────
+ * Uses oklch() for perceptually uniform colour and consistent contrast.
+ * Slate/zinc base palette with a blue-indigo accent for interactive elements.
+ */
+
+@theme inline {
+  --color-background:              var(--background);
+  --color-foreground:              var(--foreground);
+  --color-card:                    var(--card);
+  --color-card-foreground:         var(--card-foreground);
+  --color-popover:                 var(--popover);
+  --color-popover-foreground:      var(--popover-foreground);
+  --color-primary:                 var(--primary);
+  --color-primary-foreground:      var(--primary-foreground);
+  --color-secondary:               var(--secondary);
+  --color-secondary-foreground:    var(--secondary-foreground);
+  --color-muted:                   var(--muted);
+  --color-muted-foreground:        var(--muted-foreground);
+  --color-accent:                  var(--accent);
+  --color-accent-foreground:       var(--accent-foreground);
+  --color-destructive:             var(--destructive);
+  --color-destructive-foreground:  var(--destructive-foreground);
+  --color-border:                  var(--border);
+  --color-input:                   var(--input);
+  --color-ring:                    var(--ring);
+
+  /* Charts */
+  --color-chart-1:                 var(--chart-1);
+  --color-chart-2:                 var(--chart-2);
+  --color-chart-3:                 var(--chart-3);
+  --color-chart-4:                 var(--chart-4);
+  --color-chart-5:                 var(--chart-5);
+
+  /* Sidebar */
+  --color-sidebar:                        var(--sidebar);
+  --color-sidebar-foreground:             var(--sidebar-foreground);
+  --color-sidebar-primary:                var(--sidebar-primary);
+  --color-sidebar-primary-foreground:     var(--sidebar-primary-foreground);
+  --color-sidebar-accent:                 var(--sidebar-accent);
+  --color-sidebar-accent-foreground:      var(--sidebar-accent-foreground);
+  --color-sidebar-border:                 var(--sidebar-border);
+  --color-sidebar-ring:                   var(--sidebar-ring);
+
+  /* Fonts */
+  --font-sans:  var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono:  ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Radii */
+  --radius-sm:  calc(var(--radius) * 0.6);
+  --radius-md:  calc(var(--radius) * 0.8);
+  --radius-lg:  var(--radius);
+  --radius-xl:  calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+/* ─── Light theme ─────────────────────────────────────────────────────────── */
+
+:root {
+  --radius: 0.5rem;
+
+  /* Surface colours (slate-50 / white base) */
+  --background:           oklch(0.984 0.002 247.858);   /* slate-50 */
+  --foreground:           oklch(0.129 0.042 264.695);   /* slate-900 */
+
+  --card:                 oklch(1 0 0);                  /* white */
+  --card-foreground:      oklch(0.129 0.042 264.695);
+
+  --popover:              oklch(1 0 0);
+  --popover-foreground:   oklch(0.129 0.042 264.695);
+
+  /* Brand: indigo-600 */
+  --primary:              oklch(0.511 0.262 276.966);
+  --primary-foreground:   oklch(0.984 0.002 247.858);
+
+  /* Neutral secondary (slate-100) */
+  --secondary:            oklch(0.961 0.006 264.531);
+  --secondary-foreground: oklch(0.208 0.042 265.755);
+
+  /* Muted (slate-100 / slate-500) */
+  --muted:                oklch(0.961 0.006 264.531);
+  --muted-foreground:     oklch(0.554 0.023 264.364);
+
+  /* Accent (slate-100 / slate-900) */
+  --accent:               oklch(0.961 0.006 264.531);
+  --accent-foreground:    oklch(0.208 0.042 265.755);
+
+  /* Destructive: red-600 */
+  --destructive:          oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.984 0.002 247.858);
+
+  /* Borders / inputs (slate-200) */
+  --border:               oklch(0.929 0.013 255.508);
+  --input:                oklch(0.929 0.013 255.508);
+  --ring:                 oklch(0.511 0.262 276.966);  /* matches primary */
+
+  /* Charts: indigo → violet → sky → emerald → amber */
+  --chart-1:              oklch(0.511 0.262 276.966);
+  --chart-2:              oklch(0.558 0.288 302.321);
+  --chart-3:              oklch(0.623 0.214 259.815);
+  --chart-4:              oklch(0.696 0.17 162.48);
+  --chart-5:              oklch(0.769 0.188 70.08);
+
+  /* Sidebar (slate-100 background, slightly distinct from page bg) */
+  --sidebar:                    oklch(0.961 0.006 264.531);
+  --sidebar-foreground:         oklch(0.129 0.042 264.695);
+  --sidebar-primary:            oklch(0.511 0.262 276.966);
+  --sidebar-primary-foreground: oklch(0.984 0.002 247.858);
+  --sidebar-accent:             oklch(0.929 0.013 255.508);
+  --sidebar-accent-foreground:  oklch(0.208 0.042 265.755);
+  --sidebar-border:             oklch(0.929 0.013 255.508);
+  --sidebar-ring:               oklch(0.511 0.262 276.966);
+}
+
+/* ─── Dark theme ──────────────────────────────────────────────────────────── */
+
+.dark {
+  /* Surface colours (zinc-950 / zinc-900 base) */
+  --background:           oklch(0.1 0.004 285.75);       /* zinc-950 */
+  --foreground:           oklch(0.985 0.002 247.858);    /* slate-50 */
+
+  --card:                 oklch(0.145 0.004 285.75);     /* zinc-900 */
+  --card-foreground:      oklch(0.985 0.002 247.858);
+
+  --popover:              oklch(0.18 0.006 285.886);     /* zinc-800 */
+  --popover-foreground:   oklch(0.985 0.002 247.858);
+
+  /* Brand: indigo-400 (lighter for dark backgrounds) */
+  --primary:              oklch(0.673 0.182 276.935);
+  --primary-foreground:   oklch(0.1 0.004 285.75);
+
+  /* Neutral secondary (zinc-800) */
+  --secondary:            oklch(0.224 0.009 285.885);
+  --secondary-foreground: oklch(0.985 0.002 247.858);
+
+  /* Muted (zinc-800 / zinc-400) */
+  --muted:                oklch(0.224 0.009 285.885);
+  --muted-foreground:     oklch(0.707 0.013 264.364);
+
+  /* Accent (zinc-800 / slate-50) */
+  --accent:               oklch(0.224 0.009 285.885);
+  --accent-foreground:    oklch(0.985 0.002 247.858);
+
+  /* Destructive: red-500 */
+  --destructive:          oklch(0.637 0.237 25.331);
+  --destructive-foreground: oklch(0.985 0.002 247.858);
+
+  /* Borders (zinc-700 / zinc-700) */
+  --border:               oklch(0.32 0.009 285.885);
+  --input:                oklch(0.32 0.009 285.885);
+  --ring:                 oklch(0.673 0.182 276.935);    /* matches primary */
+
+  /* Charts */
+  --chart-1:              oklch(0.673 0.182 276.935);
+  --chart-2:              oklch(0.72  0.2   302.321);
+  --chart-3:              oklch(0.623 0.214 259.815);
+  --chart-4:              oklch(0.696 0.17  162.48);
+  --chart-5:              oklch(0.769 0.188 70.08);
+
+  /* Sidebar (zinc-900, one step darker than card) */
+  --sidebar:                    oklch(0.145 0.004 285.75);
+  --sidebar-foreground:         oklch(0.985 0.002 247.858);
+  --sidebar-primary:            oklch(0.673 0.182 276.935);
+  --sidebar-primary-foreground: oklch(0.1 0.004 285.75);
+  --sidebar-accent:             oklch(0.224 0.009 285.885);
+  --sidebar-accent-foreground:  oklch(0.985 0.002 247.858);
+  --sidebar-border:             oklch(0.32 0.009 285.885);
+  --sidebar-ring:               oklch(0.673 0.182 276.935);
+}
+
+/* ─── Base layer ──────────────────────────────────────────────────────────── */
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    @apply border-border box-border;
+  }
+
+  html {
+    @apply h-full scroll-smooth;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  body {
+    @apply h-full bg-background font-sans text-foreground antialiased;
+  }
+
+  /* Focus ring */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-1.5 h-1.5;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+  }
+}
+
+/* ─── Utilities ───────────────────────────────────────────────────────────── */
+
+@layer utilities {
+  /* Smooth text colour transitions when switching themes */
+  .theme-transition {
+    @apply transition-colors duration-200 ease-in-out;
+  }
+}

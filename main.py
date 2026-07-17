@@ -90,6 +90,11 @@ class RAGQueryRequestEnhanced(BaseModel):
     top_p: Optional[float] = 0.9
     frequency_penalty: Optional[float] = 0.0
     repetition_penalty: Optional[float] = 1.0
+    min_p: Optional[float] = 0.0  # Minimum token probability floor (0.0 to 1.0)
+    seed: Optional[int] = None  # Fixed seed for reproducible outputs (None = random)
+    stop: Optional[List[str]] = None  # Sequences that halt generation
+    serp_api_key: Optional[str] = None  # Optional SerpAPI key override for web search
+    use_web_search: Optional[bool] = False  # Combine retrieved docs with web search results
     is_voice_mode: Optional[bool] = False
     # Conversation memory fields
     session_id: Optional[str] = None

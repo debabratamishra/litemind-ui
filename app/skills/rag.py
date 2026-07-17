@@ -42,6 +42,9 @@ class StandardRAGSkill:
             top_p=request.top_p,
             frequency_penalty=request.frequency_penalty,
             repetition_penalty=request.repetition_penalty,
+            min_p=request.min_p,
+            seed=request.seed,
+            stop=request.stop,
             is_voice_mode=request.is_voice_mode,
         ):
             yield chunk

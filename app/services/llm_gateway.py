@@ -144,6 +144,10 @@ async def _stream_ollama_native(
     top_p: float,
     frequency_penalty: float,
     repetition_penalty: float,
+    top_k: int = 40,
+    min_p: float = 0.0,
+    seed: Optional[int] = None,
+    stop: Optional[list[str]] = None,
 ) -> AsyncGenerator[str, None]:
     """Stream chat completions directly via the ollama Python client.
 
@@ -163,12 +167,18 @@ async def _stream_ollama_native(
         "temperature": temperature,
         "top_p": top_p,
         "num_predict": max_tokens,
+        "top_k": top_k,
+        "min_p": min_p,
     }
     # Ollama uses repeat_penalty, not frequency_penalty
     if frequency_penalty:
         options["frequency_penalty"] = frequency_penalty
     if repetition_penalty > 1.0:
         options["repeat_penalty"] = repetition_penalty
+    if seed is not None:
+        options["seed"] = seed
+    if stop:
+        options["stop"] = stop
 
     client = _ollama.AsyncClient(host=api_base)
     try:
@@ -198,6 +208,10 @@ async def stream_completion(
     top_p: float = 0.9,
     frequency_penalty: float = 0.0,
     repetition_penalty: float = 1.0,
+    top_k: int = 40,
+    min_p: float = 0.0,
+    seed: Optional[int] = None,
+    stop: Optional[list[str]] = None,
 ) -> AsyncGenerator[str, None]:
     """Stream completion text via LiteLLM for the requested backend.
 
@@ -231,6 +245,10 @@ async def stream_completion(
                     top_p=top_p,
                     frequency_penalty=frequency_penalty,
                     repetition_penalty=repetition_penalty,
+                    top_k=top_k,
+                    min_p=min_p,
+                    seed=seed,
+                    stop=stop,
                 ):
                     yielded_any_content = True
                     yield text
@@ -258,9 +276,16 @@ async def stream_completion(
         "temperature": temperature,
         "max_tokens": max_tokens,
         "top_p": top_p,
+        "top_k": top_k,
+        "min_p": min_p,
         "frequency_penalty": frequency_penalty,
         "presence_penalty": _presence_penalty_from_repetition(repetition_penalty),
+        "repetition_penalty": repetition_penalty,
     }
+    if seed is not None:
+        kwargs["seed"] = seed
+    if stop:
+        kwargs["stop"] = stop
 
     if config.api_base:
         kwargs["api_base"] = config.api_base

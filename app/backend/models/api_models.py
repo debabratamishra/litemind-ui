@@ -22,6 +22,11 @@ class ChatRequestEnhanced(BaseModel):
     top_p: Optional[float] = 0.9  # Nucleus sampling parameter (0.0 to 1.0)
     frequency_penalty: Optional[float] = 0.0  # Penalize frequent tokens (-2.0 to 2.0)
     repetition_penalty: Optional[float] = 1.0  # Penalize repeated tokens (0.0 to 2.0)
+    top_k: Optional[int] = 40  # Top-K sampling cutoff (0 disables the limit)
+    min_p: Optional[float] = 0.0  # Minimum token probability floor (0.0 to 1.0)
+    seed: Optional[int] = None  # Fixed seed for reproducible outputs (None = random)
+    stop: Optional[List[str]] = None  # Sequences that halt generation
+    serp_api_key: Optional[str] = None  # Optional SerpAPI key override for web search
     backend: Optional[str] = "ollama"
     api_base: Optional[str] = None
     api_key: Optional[str] = None
@@ -50,7 +55,12 @@ class RAGQueryRequestEnhanced(BaseModel):
     top_p: Optional[float] = 0.9  # Nucleus sampling parameter (0.0 to 1.0)
     frequency_penalty: Optional[float] = 0.0  # Penalize frequent tokens (-2.0 to 2.0)
     repetition_penalty: Optional[float] = 1.0  # Penalize repeated tokens (0.0 to 2.0)
+    min_p: Optional[float] = 0.0  # Minimum token probability floor (0.0 to 1.0)
+    seed: Optional[int] = None  # Fixed seed for reproducible outputs (None = random)
+    stop: Optional[List[str]] = None  # Sequences that halt generation
+    serp_api_key: Optional[str] = None  # Optional SerpAPI key override for web search
     is_voice_mode: Optional[bool] = False  # True for voice agent, False for text agent
+    use_web_search: Optional[bool] = False  # Combine retrieved docs with web search results
     # Conversation memory fields
     session_id: Optional[str] = None  # Session ID for memory tracking
     conversation_summary: Optional[str] = None  # Summary of older messages
@@ -163,6 +173,17 @@ class WebSearchResponse(BaseModel):
 class SerpTokenStatus(BaseModel):
     status: str
     message: str
+
+
+class SerpTokenCheck(BaseModel):
+    """Optional body for the SerpAPI status endpoint.
+
+    When ``serp_api_key`` is supplied the endpoint validates that specific key
+    (e.g. a user-provided client key) instead of the server's ``SERP_API_KEY``
+    environment variable.
+    """
+
+    serp_api_key: Optional[str] = None
 
 
 class MemoryStatsResponse(BaseModel):

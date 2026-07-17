@@ -24,9 +24,14 @@ class WebSearchOrchestrator:
         model: Optional[str] = None,
         api_base: Optional[str] = None,
         api_key: Optional[str] = None,
+        serp_api_key: Optional[str] = None,
     ):
-        """Initialize the orchestrator with WebSearchService and a configurable LLM."""
-        self.web_search_service = WebSearchService()
+        """Initialize the orchestrator with WebSearchService and a configurable LLM.
+
+        Args:
+            serp_api_key: Optional SerpAPI key override forwarded to WebSearchService.
+        """
+        self.web_search_service = WebSearchService(api_key=serp_api_key)
 
         self.backend = normalize_backend(backend)
         self.requested_model = model
