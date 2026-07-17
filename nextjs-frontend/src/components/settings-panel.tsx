@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Dialog,
@@ -398,6 +399,29 @@ export function SettingsPanel({
                 <p className="text-[11px] leading-snug text-muted-foreground">
                   Comma-separated. Generation halts when any of these strings appears.
                 </p>
+              </div>
+            </Section>
+
+            <Separator />
+
+            <Section title="Generative UI">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <Label htmlFor="set-genui" className="text-xs">
+                    Enable Generative UI
+                  </Label>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    When enabled, the assistant can respond with rich UI components (charts, tables, metrics,
+                    interactive apps). When disabled, responses use plain markdown.
+                  </p>
+                </div>
+                <Switch
+                  id="set-genui"
+                  checked={settings.enableGenerativeUI}
+                  onCheckedChange={(v) => setSettings({ enableGenerativeUI: v })}
+                  aria-label="Enable Generative UI"
+                  className="mt-0.5"
+                />
               </div>
             </Section>
 

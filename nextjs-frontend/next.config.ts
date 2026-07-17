@@ -1,6 +1,13 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  // The Next.js dev-mode indicator defaults to bottom-left, where it overlaps
+  // the left sidebar's Settings control. Move it to the top-right corner so it
+  // stays clear of the sidebar in `next dev` (no effect on production builds).
+  devIndicators: {
+    position: 'top-right',
+  },
+
   // Produce a minimal self-contained server bundle for Docker
   output: 'standalone',
 
