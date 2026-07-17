@@ -67,7 +67,7 @@ def main():
     username = "debabratamishra"  # Your Docker Hub username
     repositories = [
         ("litemindui-backend", "LiteMindUI Backend - FastAPI application with LLM integration"),
-        ("litemindui-frontend", "LiteMindUI Frontend - Streamlit web interface")
+        ("litemindui-frontend", "LiteMindUI Frontend - Next.js web interface")
     ]
 
     print(f"Username: {username}")

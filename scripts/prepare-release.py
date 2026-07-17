@@ -71,7 +71,7 @@ docker-compose -f docker-compose.release.yml up -d
 
 ## 🌐 Access Points
 
-- Frontend (Streamlit): http://localhost:8501
+- Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
 - API Documentation: http://localhost:8000/docs
 

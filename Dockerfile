@@ -60,8 +60,8 @@ ENV VIRTUAL_ENV="/app/.venv"
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Create necessary directories with proper permissions
-RUN mkdir -p /app/uploads /app/chroma_db /app/storage /app/.streamlit /app/logs /tmp/litemind_tts_cache \
-    && chmod 755 /app/uploads /app/chroma_db /app/storage /app/.streamlit /app/logs /tmp/litemind_tts_cache
+RUN mkdir -p /app/uploads /app/chroma_db /app/storage /app/logs /tmp/litemind_tts_cache \
+    && chmod 755 /app/uploads /app/chroma_db /app/storage /app/logs /tmp/litemind_tts_cache
 
 # Make scripts executable
 RUN chmod +x /app/scripts/*.py /app/scripts/*.sh

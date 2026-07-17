@@ -9,11 +9,9 @@
 # ── Python / backend ──────────────────────────────────────────────
 uv sync --group all                   # install all dependency groups
 uv sync --group backend               # backend only
-uv sync --group frontend              # Legacy Streamlit frontend only
 uv sync --group dev                   # dev tools only (ruff, black, mypy, ty, pytest)
 
 uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload   # start backend
-uv run streamlit run streamlit_app.py --server.port 8501       # start legacy Streamlit UI
 
 uv run pytest                         # run all tests
 uv run pytest tests/test_file.py      # run a single test file
@@ -61,7 +59,6 @@ LiteMindUI is a **local-first AI workspace** supporting chat, RAG, web search, a
 |---------|------------|-------------|
 | FastAPI backend | `main.py` | 8000 |
 | Next.js frontend (primary) | `nextjs-frontend/` | 3000 |
-| Streamlit frontend (legacy) | `streamlit_app.py` | 8501 |
 
 The frontend calls the backend exclusively over HTTP. They share no Python imports.
 
@@ -73,7 +70,6 @@ app/
     api/          Route handlers: chat.py, rag.py, models.py, health.py, security_utils.py
     core/         Backend-specific config, embedding helpers, BackendConfig, DEFAULT_RAG_CONFIG
     models/       Pydantic request/response models
-  frontend/       Legacy Streamlit UI layer (pages/, components/, services/, utils/)
   core/           Shared utilities: environment detection, RAG formats, text markup
   services/       Backend business logic
     llm_gateway.py          Unified LLM transport (LiteLLM + Ollama direct client)
@@ -103,7 +99,6 @@ nextjs-frontend/
     hooks/         Custom React hooks
     lib/           Utility functions, API clients
 main.py            FastAPI entry point (lifespan, route registration)
-streamlit_app.py   Streamlit entry point
 config.py          Global Config class (env vars, paths, performance tuning)
 logging_config.py  Structured logging setup
 pyproject.toml     Python dependency manifest + tool config
@@ -171,7 +166,6 @@ PDF (PyMuPDF + pdfplumber + Camelot tables), DOCX, PPTX, XLSX, EPUB, RTF, ODF, H
 |------|---------|
 | `Dockerfile` | Backend image |
 | `Dockerfile.nextjs` | Next.js frontend image |
-| `Dockerfile.streamlit` | Legacy Streamlit frontend image |
 | `docker-compose.yml` | Default (local build) |
 | `docker-compose.dev.yml` | Development (hot-reload) |
 | `docker-compose.prod.yml` | Production |

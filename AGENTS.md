@@ -17,7 +17,6 @@ This repository contains **two runtimes** that are deployed independently:
 | FastAPI backend | `/` (Python) | Python 3.13 | 8000 |
 | Next.js frontend | `nextjs-frontend/` | TypeScript / React 19 | 3000 |
 
-A legacy **Streamlit** frontend (`streamlit_app.py`) still exists but is not the primary UI.  
 Never mix Python backend code with Next.js frontend code. They communicate only over HTTP.
 
 ---
@@ -65,7 +64,6 @@ AGENTS.md               ← this file (universal agent rules)
 CLAUDE.md               ← Claude-specific detail + full command reference
 CONSTITUTION.md         ← coding standards and hard constraints
 main.py                 ← FastAPI entry point
-streamlit_app.py        ← legacy Streamlit entry point
 config.py               ← global Config class
 logging_config.py       ← structured logging
 pyproject.toml          ← Python deps + tool config (ruff, black, mypy, ty)
@@ -80,7 +78,6 @@ app/
   skills/               pluggable skill routing (registry, base protocol)
   ingestion/            document processing pipeline
   core/                 shared utilities (environment detection, text markup)
-  frontend/             legacy Streamlit UI (pages, components, services, utils)
 nextjs-frontend/
   src/app/              Next.js App Router pages and layouts
   src/components/       shared React components (shadcn/ui)

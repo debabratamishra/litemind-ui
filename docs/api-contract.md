@@ -1,7 +1,7 @@
 # LiteMindUI Backend — API Contract
 
 This document is the single source of truth for the LiteMindUI FastAPI backend
-HTTP interface. Any frontend (Streamlit, TUI, VS Code extension, mobile app, …)
+HTTP interface. Any frontend (Next.js, TUI, VS Code extension, mobile app, …)
 that targets this backend should implement its own thin HTTP client against this
 contract rather than sharing Python code.
 

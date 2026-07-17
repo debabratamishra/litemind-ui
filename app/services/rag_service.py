@@ -1612,7 +1612,7 @@ class RAGService:
 
             # Use voice-optimized system prompt if in voice mode
             if is_voice_mode and system_prompt == "You are a helpful assistant.":
-                from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+                from app.backend.core.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
 
                 system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
 

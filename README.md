@@ -40,7 +40,7 @@ Useful variants:
 git clone https://github.com/debabratamishra/litemind-ui.git
 cd litemind-ui
 uv sync --group all
-mkdir -p uploads .streamlit
+mkdir -p uploads
 ```
 
 If you want to override defaults, copy `.env.example` to `.env` before starting the services.
@@ -91,7 +91,6 @@ The Next.js frontend is a full TypeScript application built on:
 app/
   backend/         FastAPI routes, schemas, and API logic
   core/            shared configuration and application wiring
-  frontend/        (legacy Streamlit) pages, components, and UI helpers
   ingestion/       document ingestion and knowledge-processing flow
   services/        model, RAG, speech, and web-search integrations
   skills/          pluggable chat and RAG capability layer
@@ -104,7 +103,6 @@ nextjs-frontend/   Next.js / TypeScript production frontend
 scripts/           setup, Docker, release, and health-check helpers
 docs/              deeper documentation and docs assets
 main.py            backend entrypoint
-streamlit_app.py   legacy frontend entrypoint (kept for reference)
 Dockerfile         backend container
 Dockerfile.nextjs  Next.js frontend container
 docker-compose*.yml supported container workflows
@@ -124,4 +122,4 @@ docker-compose*.yml supported container workflows
 - The frontend communicates with the FastAPI backend. Set `NEXT_PUBLIC_API_URL` to override the backend address (default `http://localhost:8000`).
 - RAG embeddings can use direct Ollama/HuggingFace integrations or hosted LiteLLM providers such as OpenRouter and Nvidia NIM.
 - For production-like deployments, prefer the compose workflows over ad hoc process startup.
-- The `Dockerfile.streamlit` and legacy `streamlit_app.py` are kept for backwards compatibility but the Next.js frontend is the recommended interface.
+- The Next.js frontend is the recommended interface; the backend is accessed over HTTP via `NEXT_PUBLIC_API_URL`.

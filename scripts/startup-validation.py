@@ -106,8 +106,7 @@ class StartupValidator:
             'ollama_cache': os.getenv('OLLAMA_MODELS', '/root/.ollama'),
             'uploads': os.getenv('UPLOAD_FOLDER', '/app/uploads'),
             'chroma_db': os.getenv('CHROMA_DB_PATH', '/app/chroma_db'),
-            'storage': os.getenv('STORAGE_PATH', '/app/storage'),
-            'streamlit_config': '/app/.streamlit'
+            'storage': os.getenv('STORAGE_PATH', '/app/storage')
         }
 
         results = {}

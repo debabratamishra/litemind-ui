@@ -156,11 +156,6 @@ def get_logging_config(environment: str | None = None) -> Dict[str, Any]:
                 'handlers': ['console'],
                 'propagate': False
             },
-            'streamlit': {
-                'level': 'INFO',
-                'handlers': ['console'],
-                'propagate': False
-            },
             'logging_config': {
                 'level': 'WARNING',  # Hide logging_config setup messages from console
                 'handlers': ['console'],

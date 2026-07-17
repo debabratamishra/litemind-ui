@@ -7,7 +7,6 @@ inclusion: always
 LiteMindUI is a **local-first AI workspace** (v0.0.27) with:
 - A **FastAPI backend** (`main.py`, port 8000) — chat, RAG, web search, voice, document ingestion
 - A **Next.js 16 / TypeScript frontend** (`nextjs-frontend/`, port 3000) — primary UI
-- A legacy **Streamlit frontend** (`streamlit_app.py`, port 8501) — kept but not primary
 
 The two runtimes are fully independent and communicate only over HTTP.
 

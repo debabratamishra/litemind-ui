@@ -126,7 +126,7 @@ class SpeechService:
         Transcribe audio data to text.
 
         Args:
-            audio_data: Raw audio bytes from streamlit-audiorecorder
+            audio_data: Raw audio bytes
             sample_rate: Sample rate of the audio
 
         Returns:

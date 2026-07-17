@@ -14,7 +14,6 @@ services:
       - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
       - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
       - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
-      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}
       # Development: mount source code for live reload
       - .:/app
       # Development: mount logs directory for easier debugging
@@ -65,23 +64,15 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.streamlit
+      dockerfile: Dockerfile.nextjs
     container_name: litemindui-frontend-dev
     network_mode: host
-    volumes:
-      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}
-      # Development: mount source code for live reload
-      - .:/app
-      # Development: mount logs directory
-      - ./logs:/app/logs
     environment:
-      - FASTAPI_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=development
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
       - DEFAULT_OPENROUTER_MODEL=${DEFAULT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
-      - STREAMLIT_SERVER_RUNONCAVE=true
-      - ENVIRONMENT=development
-      - STREAMLIT_LOGGER_LEVEL=DEBUG
       # Realtime voice (WebRTC) NAT traversal. With host networking (Linux) the
       # in-container peer shares the host network, so STUN is enough. Set the
       # TURN vars (and run a TURN server) if UDP is blocked or on Docker Desktop.
@@ -104,11 +95,10 @@ services:
         labels: "environment=development,service=frontend"
     # Development health check - more frequent
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
       interval: 15s
       timeout: 5s
       retries: 3
-      start_period: 10s
-    command: ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--server.fileWatcherType=poll", "--logger.level=debug"]
+      start_period: 15s
     depends_on:
       - backend

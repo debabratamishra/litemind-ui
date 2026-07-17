@@ -11,7 +11,7 @@ LiteMindUI supports Docker in four practical ways: source builds, development mo
 | Production-style | `make prod` | Validating the production compose setup locally |
 | Docker Hub images | `make hub-up` | Pulling prebuilt images instead of building locally |
 
-`make setup` runs `scripts/docker-setup.sh`, which creates the runtime directories and `.streamlit` config expected by the compose files.
+`make setup` runs `scripts/docker-setup.sh`, which creates the runtime directories expected by the compose files.
 
 ## Quick start
 
@@ -67,14 +67,13 @@ The Docker setup uses repository-local runtime directories so data survives cont
 - `uploads/`
 - `chroma_db/`
 - `storage/`
-- `.streamlit/`
 - `logs/`
 
 ## Provider notes
 
 - Native Ollama should usually be exposed to containers through `http://host.docker.internal:11434`.
 - Override provider settings in `.env` when you want to switch from Ollama to OpenRouter, Nvidia NIM, or another compatible endpoint.
-- The Streamlit frontend depends on the FastAPI backend, so both services should stay up together.
+- The Next.js frontend depends on the FastAPI backend, so both services should stay up together.
 
 ## Troubleshooting
 

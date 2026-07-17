@@ -17,7 +17,6 @@ services:
       - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
       - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
       - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
-      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}
       - ${HOST_LOGS_DIR:-./logs}:/app/logs
     environment:
       - OLLAMA_API_URL=http://host.docker.internal:11434

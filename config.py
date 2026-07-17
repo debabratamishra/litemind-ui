@@ -135,7 +135,7 @@ class Config:
             cache_dirs = cls.get_cache_directories()
 
             # Additional directories needed
-            additional_dirs = [".streamlit"]
+            additional_dirs = []
 
             # Create persistent directories
             for name, path_str in persistent_dirs.items():

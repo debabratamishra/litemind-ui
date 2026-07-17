@@ -1,6 +1,0 @@
-[server]
-address = "localhost"
-port = 8501
-
-[browser]
-serverAddress = "localhost"

@@ -170,7 +170,7 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
 
     # Add voice mode system prompt if voice mode is active
     if request.is_voice_mode:
-        from app.frontend.config import DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
+        from app.backend.core.config import DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
 
         messages.append({"role": "system", "content": DEFAULT_CHAT_SYSTEM_PROMPT_VOICE})
 

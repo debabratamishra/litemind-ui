@@ -54,14 +54,12 @@ def generate_docker_env(output_file: str = ".env.docker"):
         'HOST_UPLOADS_DIR': host_paths['uploads'],
         'HOST_CHROMA_DB_DIR': host_paths['chroma_db'],
         'HOST_STORAGE_DIR': host_paths['storage'],
-        'HOST_STREAMLIT_CONFIG_DIR': host_paths['streamlit_config'],
         # Container mount points (these are fixed)
         'CONTAINER_HF_CACHE': '/root/.cache/huggingface',
         'CONTAINER_OLLAMA_CACHE': '/root/.ollama',
         'CONTAINER_UPLOADS_DIR': '/app/uploads',
         'CONTAINER_CHROMA_DB_DIR': '/app/chroma_db',
-        'CONTAINER_STORAGE_DIR': '/app/storage',
-        'CONTAINER_STREAMLIT_CONFIG_DIR': '/app/.streamlit'
+        'CONTAINER_STORAGE_DIR': '/app/storage'
     }
 
     # Write environment file
