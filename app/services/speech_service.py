@@ -164,6 +164,61 @@ class SpeechService:
             logger.error(f"Transcription failed: {e}")
             return None
 
+    def transcribe_pcm(
+        self,
+        audio_data: bytes,
+        source_rate: int = 16000,
+        target_rate: int = 16000,
+    ) -> Optional[str]:
+        """Transcribe raw 16-bit mono PCM audio (as produced by a realtime STT frame).
+
+        Unlike :meth:`transcribe_audio`, this does NOT expect an encoded audio
+        file. Pipecat's ``STTService.run_stt`` hands us the raw PCM samples from
+        an ``AudioRawFrame`` (int16, mono). Loading those bytes with
+        ``librosa.load`` as if they were a WAV/encoded container fails
+        (``PySoundFile failed``) and yields garbage transcriptions, so we decode
+        the PCM directly.
+
+        Args:
+            audio_data: Raw 16-bit signed mono PCM bytes.
+            source_rate: Sample rate of the PCM data in Hz.
+            target_rate: Sample rate Whisper expects (16000).
+
+        Returns:
+            Transcribed text or None if transcription fails.
+        """
+        self._ensure_model_loaded()
+
+        try:
+            audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
+            if audio_int16.size == 0:
+                logger.warning("Received empty PCM audio; skipping transcription")
+                return None
+            audio_float = audio_int16.astype(np.float32) / 32768.0
+
+            if source_rate != target_rate:
+                if librosa is None:
+                    raise RuntimeError("librosa is required to resample PCM audio")
+                audio_float = librosa.resample(
+                    audio_float, orig_sr=source_rate, target_sr=target_rate
+                )
+
+            if self.pipe is None:
+                raise RuntimeError("SpeechService pipeline not initialized")
+            # Pass dict with 'raw' key to avoid deprecation warning
+            result = self.pipe({"raw": audio_float, "sampling_rate": target_rate})
+            text = (result.get("text") or "").strip()
+
+            if not text:
+                logger.warning("Transcription returned empty text")
+                return None
+            logger.info(f"Transcription successful: {len(text)} characters")
+            return text
+
+        except Exception as e:
+            logger.error(f"Transcription failed: {e}", exc_info=True)
+            return None
+
     def transcribe_file(self, file_path: str) -> Optional[str]:
         """
         Transcribe an audio file to text.

@@ -1,5 +1,5 @@
 import io
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
@@ -15,7 +15,9 @@ from pipecat.frames.frames import (
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.services.stt_service import SegmentedSTTService
 
 from app.services.voice_pipeline import (
     AssistantTranscriptEmitter,
@@ -39,7 +41,7 @@ def patch_services(monkeypatch):
     import app.services.voice_pipeline as vp
 
     class FakeSpeech:
-        def transcribe_audio(self, audio_data, sample_rate=16000):
+        def transcribe_pcm(self, audio_data, source_rate=16000):
             return "hello world"
 
     class FakeTTS:
@@ -57,6 +59,16 @@ async def test_stt_yields_transcription_frame(patch_services):
     assert texts, "expected a TranscriptionFrame"
     assert texts[0].text == "hello world"
     assert texts[0].finalized is True
+
+
+def test_stt_is_segmented_not_per_frame():
+    """Whisper is a batch model: STT must be SegmentedSTTService so it only
+    transcribes on VAD speech-stop, not on every ~20ms frame (which floods
+    Whisper with silent chunks and makes it hallucinate)."""
+    svc = BackendWhisperSTTService()
+    assert isinstance(svc, SegmentedSTTService)
+    # Whisper consumes the raw PCM buffer directly, not a WAV container.
+    assert svc.wants_wav_segments is False
 
 
 async def test_tts_yields_pcm_audio_frame(patch_services):
@@ -148,7 +160,7 @@ def test_build_voice_pipeline_constructs_without_real_peer(monkeypatch):
         def output(self):
             return FrameProcessor()
 
-    monkeypatch.setattr(vp, "SileroVADAnalyzer", lambda: FakeVAD())
+    monkeypatch.setattr(vp, "SileroVADAnalyzer", lambda *a, **k: FakeVAD())
     monkeypatch.setattr(vp, "SmallWebRTCTransport", FakeTransport)
 
     connection = MagicMock()
@@ -157,6 +169,11 @@ def test_build_voice_pipeline_constructs_without_real_peer(monkeypatch):
     assert isinstance(transport, FakeTransport)
     # The connection is threaded through to the emitters / transport.
     assert transport.webrtc_connection is connection
+
+    # Exactly one VAD source, placed upstream of the STT (so the segmented STT
+    # flushes on speech stop) and not duplicated in the aggregator.
+    vad_processors = [p for p in pipeline.processors if isinstance(p, VADProcessor)]
+    assert len(vad_processors) == 1, "expected a single VADProcessor in the pipeline"
 
 
 async def test_emitters_send_expected_event_json():
@@ -171,12 +188,18 @@ async def test_emitters_send_expected_event_json():
     fake_conn.send_app_message = lambda msg: sent.append(msg)
 
     user_emitter = UserTranscriptEmitter(fake_conn)
+    # Emitters must pass frames downstream (FrameProcessor does not do this
+    # automatically); mock push_frame so the direct call doesn't touch a pipeline.
+    user_emitter.push_frame = AsyncMock()
     await user_emitter.process_frame(
         TranscriptionFrame(text="hello there", user_id="user", timestamp="", finalized=True),
         FrameDirection.DOWNSTREAM,
     )
+    # The TranscriptionFrame must be forwarded downstream to the context aggregator.
+    user_emitter.push_frame.assert_awaited_once()
 
     assistant_emitter = AssistantTranscriptEmitter(fake_conn)
+    assistant_emitter.push_frame = AsyncMock()
     await assistant_emitter.process_frame(
         LLMTextFrame(text="Hi there"), FrameDirection.DOWNSTREAM
     )
@@ -186,6 +209,8 @@ async def test_emitters_send_expected_event_json():
     await assistant_emitter.process_frame(
         LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM
     )
+    # Every frame must be forwarded downstream to the TTS service / aggregator.
+    assert assistant_emitter.push_frame.await_count == 3
 
     user_events = [m for m in sent if m.get("type") == "user_transcript"]
     assert user_events, "expected a user_transcript event over the data channel"
