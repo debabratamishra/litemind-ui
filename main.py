@@ -25,6 +25,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app.backend.api import chat as chat_api
+from app.backend.api import voice as voice_api
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.core.config import DEFAULT_RAG_CONFIG
 from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
@@ -292,6 +293,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Cleanup failed: {e}")
 
+    # Tear down any open voice (WebRTC) peer connections
+    try:
+        from app.backend.api.voice import pcs_map
+
+        for conn in list(pcs_map.values()):
+            try:
+                await conn.disconnect()
+            except Exception:
+                pass
+        pcs_map.clear()
+        logger.info("Voice peer connections cleaned up")
+    except Exception as e:
+        logger.warning(f"Voice peer cleanup failed: {e}")
+
     logger.info("LiteMindUI API shutting down...")
 
 
@@ -305,7 +320,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8501", "http://127.0.0.1:8501"],
+    allow_origins=[
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -313,6 +333,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(chat_api.router)
+app.include_router(voice_api.router)
 
 # Templates
 try:
