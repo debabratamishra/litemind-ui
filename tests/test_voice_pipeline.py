@@ -1,15 +1,23 @@
-import asyncio
 import io
-import soundfile as sf
+
 import numpy as np
 import pytest
-from pipecat.frames.frames import TranscriptionFrame, TTSAudioRawFrame, LLMTextFrame
+import soundfile as sf
+from pipecat.frames.frames import (
+    LLMContextFrame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    LLMTextFrame,
+    TranscriptionFrame,
+    TTSAudioRawFrame,
+)
 from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.frame_processor import FrameDirection
 
 from app.services.voice_pipeline import (
-    BackendWhisperSTTService,
     BackendKokoroTTSService,
     BackendLLMService,
+    BackendWhisperSTTService,
     VoiceSettings,
 )
 
@@ -76,3 +84,34 @@ async def test_llm_streams_text_frames(monkeypatch):
     await svc._process_context(ctx)
     joined = "".join(f.text for f in captured if isinstance(f, LLMTextFrame))
     assert joined == "Hello world"
+
+
+async def test_llm_process_frame_drives_inference(monkeypatch):
+    import app.services.voice_pipeline as vp
+
+    async def fake_stream(messages, **kwargs):
+        for t in ["Hello", " world"]:
+            yield t
+
+    monkeypatch.setattr(vp, "stream_completion", fake_stream)
+    svc = BackendLLMService(VoiceSettings(model="llama3", backend="ollama"))
+    captured = []
+
+    async def cap(frame, direction=None):
+        captured.append(frame)
+
+    svc.push_frame = cap
+    ctx = LLMContext(messages=[{"role": "user", "content": "hi"}])
+    await svc.process_frame(
+        LLMContextFrame(context=ctx), FrameDirection.DOWNSTREAM
+    )
+
+    assert any(
+        isinstance(f, LLMFullResponseStartFrame) for f in captured
+    ), "expected LLMFullResponseStartFrame around the stream"
+    assert any(
+        isinstance(f, LLMFullResponseEndFrame) for f in captured
+    ), "expected LLMFullResponseEndFrame around the stream"
+    text_frames = [f for f in captured if isinstance(f, LLMTextFrame)]
+    assert text_frames, "expected at least one LLMTextFrame"
+    assert "".join(f.text for f in text_frames) == "Hello world"

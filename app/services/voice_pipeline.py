@@ -14,10 +14,10 @@ from typing import Any, cast
 
 import numpy as np
 import soundfile as sf
+from openai import AsyncOpenAI
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     LLMFullResponseEndFrame,
-    LLMFullResponseStartFrame,
     LLMTextFrame,
     TextFrame,
     TranscriptionFrame,
@@ -31,7 +31,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.services.llm_service import LLMService
+from pipecat.services.openai.base_llm import BaseOpenAILLMService, OpenAILLMSettings
 from pipecat.services.stt_service import STTService
 from pipecat.services.tts_service import TTSService
 from pipecat.transports.base_transport import TransportParams
@@ -90,12 +90,26 @@ class BackendKokoroTTSService(TTSService):
         )
 
 
-class BackendLLMService(LLMService):
+class BackendLLMService(BaseOpenAILLMService):
     """Streams tokens via the existing llm_gateway (chosen backend)."""
 
     def __init__(self, settings: VoiceSettings, **kwargs):
-        super().__init__(**kwargs)
         self._voice_settings = settings
+        super().__init__(settings=OpenAILLMSettings(model=settings.model or ""))
+
+    def create_client(
+        self,
+        api_key=None,
+        base_url=None,
+        organization=None,
+        project=None,
+        default_headers=None,
+        **kwargs,
+    ):
+        # We never use an AsyncOpenAI client — inference is delegated to the
+        # existing llm_gateway. Return None at runtime; we type it as the base
+        # client so the override still satisfies LSP.
+        return cast(AsyncOpenAI, None)
 
     async def _process_context(self, context: LLMContext):
         raw_messages = cast("list[dict[str, Any]]", context.get_messages())
@@ -103,7 +117,6 @@ class BackendLLMService(LLMService):
             {"role": m.get("role", "user"), "content": m.get("content", "")}
             for m in raw_messages
         ]
-        await self.push_frame(LLMFullResponseStartFrame())
         async for delta in stream_completion(
             messages,
             backend=self._voice_settings.backend,
@@ -115,7 +128,6 @@ class BackendLLMService(LLMService):
         ):
             if delta:
                 await self.push_frame(LLMTextFrame(text=delta))
-        await self.push_frame(LLMFullResponseEndFrame())
 
 
 class UserTranscriptEmitter(FrameProcessor):
