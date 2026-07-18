@@ -2,18 +2,21 @@
 
 import * as React from 'react';
 import {
-  Send, Globe, Mic, MicOff, Bot, Trash2, Code, Sparkles, Plus,
+  Send, Globe, Mic, MicOff, Bot, Code, Sparkles, Plus, Phone, PhoneOff, MoreVertical,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import GenerativeUIRenderer from '@/components/generative-ui-renderer';
 import MarkdownRenderer from '@/components/markdown-renderer';
+import VoiceActivityIndicator from '@/components/voice-activity';
 import { useAppStore, selectActiveConversation, selectActiveId, selectSettings } from '@/lib/store';
 import { streamChat, streamWebSearch } from '@/lib/api';
 import type { ChatMessage } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useVoiceInput } from '@/hooks/use-voice-input';
+import { useRealtimeVoice } from '@/hooks/use-realtime-voice';
 
 function ThinkingDots() {
   return (
@@ -58,6 +61,45 @@ export default function ChatPage() {
   const { state: voiceState, isSupported: voiceSupported, start: startVoice, stop: stopVoice } = useVoiceInput(
     (transcript) => { setInput(transcript); setVoiceOn(false); setTimeout(() => handleSend(transcript), 50); }
   );
+
+  // ── Realtime voice mode (independent of the browser-dictation Mic above) ──
+  const assistantActiveRef = React.useRef(false);
+  const convIdRef = React.useRef(activeId);
+  convIdRef.current = activeId;
+
+  const voiceCallbacks = React.useMemo(() => ({
+    onUserTranscript: (text: string) => {
+      const id = convIdRef.current;
+      if (id) addMessage(id, { role: 'user', content: text });
+    },
+    onAssistantText: (delta: string) => {
+      const id = convIdRef.current;
+      if (!id) return;
+      const cv = useAppStore.getState().conversations.find((c) => c.id === id);
+      const last = cv?.messages.slice(-1)[0];
+      if (!assistantActiveRef.current) {
+        addMessage(id, { role: 'assistant', content: delta, isStreaming: true });
+        assistantActiveRef.current = true;
+      } else if (last && last.role === 'assistant') {
+        updateLastMessage(id, last.content + delta, true);
+      }
+    },
+    onAssistantEnd: () => {
+      const id = convIdRef.current;
+      if (id) {
+        const cv = useAppStore.getState().conversations.find((c) => c.id === id);
+        const last = cv?.messages.slice(-1)[0];
+        if (last && last.role === 'assistant') updateLastMessage(id, last.content, false);
+      }
+      assistantActiveRef.current = false;
+    },
+    onError: (message: string) => {
+      const id = convIdRef.current;
+      if (id) addMessage(id, { role: 'assistant', content: `⚠️ Voice error: ${message}` });
+    },
+  }), [addMessage, updateLastMessage]);
+
+  const { state: realtimeState, start: startRealtime, stop: stopRealtime, isConnected: realtimeOn } = useRealtimeVoice(settings, voiceCallbacks);
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -153,6 +195,23 @@ export default function ChatPage() {
   const msgs = conv.messages;
   return (
     <div className="flex h-full flex-col overflow-hidden" aria-label="Chat interface">
+      <div className="flex h-9 shrink-0 items-center justify-end border-b border-border bg-background px-4 md:px-6">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Conversation options">
+                <MoreVertical className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => activeId && clearConversation(activeId)}>
+              Clear conversation
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       {settings.enableGenerativeUI && (
         <div className="flex h-11 shrink-0 items-center justify-between border-b border-border bg-background px-4 md:px-6">
           <span className="text-xs font-medium text-muted-foreground">Generative UI</span>
@@ -210,6 +269,12 @@ export default function ChatPage() {
             <span className="text-xs text-muted-foreground">(Escape to cancel)</span>
           </div>
         )}
+        {realtimeOn && (
+          <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <VoiceActivityIndicator state={realtimeState} />
+            <span>{realtimeState === 'speaking' ? 'Assistant is speaking' : 'Listening…'}</span>
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <Textarea
             ref={textareaRef}
@@ -227,16 +292,29 @@ export default function ChatPage() {
               <TooltipTrigger render={<Button variant={conv.webSearch ? 'default' : 'outline'} size="icon" className="h-9 w-9" onClick={() => setWebSearch(activeId, !conv.webSearch)} aria-label={conv.webSearch ? 'Disable web search' : 'Enable web search'} aria-pressed={conv.webSearch}><Globe className="h-4 w-4" aria-hidden="true" /></Button>} />
               <TooltipContent>Web search</TooltipContent>
             </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant={realtimeOn ? 'default' : 'outline'}
+                    size="icon"
+                    className={cn('h-9 w-9', realtimeOn && 'bg-primary text-primary-foreground')}
+                    onClick={() => (realtimeOn ? stopRealtime() : startRealtime())}
+                    aria-label={realtimeOn ? 'Stop voice mode' : 'Start voice mode'}
+                    aria-pressed={realtimeOn}
+                  >
+                    {realtimeOn ? <PhoneOff className="h-4 w-4" aria-hidden="true" /> : <Phone className="h-4 w-4" aria-hidden="true" />}
+                  </Button>
+                }
+              />
+              <TooltipContent>Voice mode</TooltipContent>
+            </Tooltip>
             {voiceSupported && (
               <Tooltip>
                 <TooltipTrigger render={<Button variant={voiceOn ? 'default' : 'outline'} size="icon" className={cn('h-9 w-9', voiceOn && 'animate-pulse bg-red-500 text-white')} onClick={() => { if (voiceOn) { stopVoice(); setVoiceOn(false); } else { setVoiceOn(true); startVoice(); } }} aria-label={voiceOn ? 'Stop voice input' : 'Start voice input'} aria-pressed={voiceOn} disabled={voiceState === 'processing'}>{voiceOn ? <MicOff className="h-4 w-4" aria-hidden="true" /> : <Mic className="h-4 w-4" aria-hidden="true" />}</Button>} />
                 <TooltipContent>{voiceOn ? 'Stop recording' : 'Voice input'}</TooltipContent>
               </Tooltip>
             )}
-            <Tooltip>
-              <TooltipTrigger render={<Button variant="outline" size="icon" className="h-9 w-9" onClick={() => clearConversation(activeId)} aria-label="Clear chat"><Trash2 className="h-4 w-4" aria-hidden="true" /></Button>} />
-              <TooltipContent>Clear chat</TooltipContent>
-            </Tooltip>
             <Button size="icon" className="h-9 w-9" onClick={() => void handleSend()} disabled={!input.trim() || isStreaming} aria-label={isStreaming ? 'Sending…' : 'Send message'}>
               <Send className="h-4 w-4" aria-hidden="true" />
             </Button>
