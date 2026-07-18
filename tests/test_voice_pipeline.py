@@ -1,4 +1,5 @@
 import io
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -8,17 +9,22 @@ from pipecat.frames.frames import (
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
+    TextFrame,
     TranscriptionFrame,
     TTSAudioRawFrame,
 )
+from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from app.services.voice_pipeline import (
+    AssistantTranscriptEmitter,
     BackendKokoroTTSService,
     BackendLLMService,
     BackendWhisperSTTService,
+    UserTranscriptEmitter,
     VoiceSettings,
+    build_voice_pipeline,
 )
 
 
@@ -115,3 +121,80 @@ async def test_llm_process_frame_drives_inference(monkeypatch):
     text_frames = [f for f in captured if isinstance(f, LLMTextFrame)]
     assert text_frames, "expected at least one LLMTextFrame"
     assert "".join(f.text for f in text_frames) == "Hello world"
+
+
+def test_build_voice_pipeline_constructs_without_real_peer(monkeypatch):
+    """build_voice_pipeline must construct cheaply and network-free.
+
+    SileroVADAnalyzer (downloads a torch model) and SmallWebRTCTransport
+    (binds to a real WebRTC peer) are monkeypatched to dummies so we can
+    assert the pipeline is built without loading heavy weights or touching
+    a real connection.
+    """
+    import app.services.voice_pipeline as vp
+
+    class FakeVAD:
+        pass
+
+    class FakeTransport(FrameProcessor):
+        def __init__(self, webrtc_connection, params, **kwargs):
+            super().__init__()
+            self.webrtc_connection = webrtc_connection
+            self.params = params
+
+        def input(self):
+            return FrameProcessor()
+
+        def output(self):
+            return FrameProcessor()
+
+    monkeypatch.setattr(vp, "SileroVADAnalyzer", lambda: FakeVAD())
+    monkeypatch.setattr(vp, "SmallWebRTCTransport", FakeTransport)
+
+    connection = MagicMock()
+    pipeline, transport = build_voice_pipeline(connection, VoiceSettings())
+    assert isinstance(pipeline, Pipeline)
+    assert isinstance(transport, FakeTransport)
+    # The connection is threaded through to the emitters / transport.
+    assert transport.webrtc_connection is connection
+
+
+async def test_emitters_send_expected_event_json():
+    """Emitters must push the documented event JSON over the data channel.
+
+    UserTranscriptEmitter -> {"type":"user_transcript","text":...,"final":True}
+    AssistantTranscriptEmitter -> {"type":"assistant_text","text":...}
+                               -> {"type":"assistant_end"} on turn end.
+    """
+    sent = []
+    fake_conn = MagicMock()
+    fake_conn.send_app_message = lambda msg: sent.append(msg)
+
+    user_emitter = UserTranscriptEmitter(fake_conn)
+    await user_emitter.process_frame(
+        TranscriptionFrame(text="hello there", user_id="user", timestamp="", finalized=True),
+        FrameDirection.DOWNSTREAM,
+    )
+
+    assistant_emitter = AssistantTranscriptEmitter(fake_conn)
+    await assistant_emitter.process_frame(
+        LLMTextFrame(text="Hi there"), FrameDirection.DOWNSTREAM
+    )
+    await assistant_emitter.process_frame(
+        TextFrame(text=" how are you"), FrameDirection.DOWNSTREAM
+    )
+    await assistant_emitter.process_frame(
+        LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM
+    )
+
+    user_events = [m for m in sent if m.get("type") == "user_transcript"]
+    assert user_events, "expected a user_transcript event over the data channel"
+    assert user_events[0] == {"type": "user_transcript", "text": "hello there", "final": True}
+
+    assistant_text_events = [m for m in sent if m.get("type") == "assistant_text"]
+    assert assistant_text_events, "expected assistant_text events over the data channel"
+    joined = "".join(m["text"] for m in assistant_text_events)
+    assert joined == "Hi there how are you"
+
+    end_events = [m for m in sent if m.get("type") == "assistant_end"]
+    assert end_events == [{"type": "assistant_end"}]
