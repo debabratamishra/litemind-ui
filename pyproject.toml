@@ -158,6 +158,13 @@ dev = [
     "ty>=0.0.60",
 ]
 
+voice = [
+    # Realtime voice mode: Pipecat WebRTC transport + Silero VAD (core includes both)
+    "pipecat-ai",
+    # Optional dep required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
+    "aiortc",
+]
+
 # All dependencies for local development (both backend and frontend)
 all = [
     # Shared core dependencies
@@ -216,6 +223,9 @@ all = [
     # Audio Processing
     "librosa",
     "soundfile",
+    "pipecat-ai",
+    # Required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
+    "aiortc",
 ]
 
 # Configure PyTorch to use CPU-only version
