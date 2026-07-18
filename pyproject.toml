@@ -265,3 +265,8 @@ disallow_untyped_defs = false
 
 [tool.ty]
 environment = { python-version = "3.13" }
+
+[tool.pytest.ini_options]
+# Async tests (Pipecat voice pipeline) run via the anyio pytest plugin, which
+# is auto-discovered; enable auto mode so plain `async def test_*` are run.
+anyio_mode = "auto"
