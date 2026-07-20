@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import dataclasses
 from types import SimpleNamespace
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
+
+from unittest.mock import patch
 
 from app.skills.base import SkillValidationResult, StreamingChatSkill
 from app.skills.rag import MultiAgentRAGSkill, StandardRAGSkill
@@ -203,3 +205,74 @@ def test_build_web_search_conversation_history_summary_and_messages():
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi there"},
     ]
+
+
+def _web_search_request(serp_api_key: str, **kwargs) -> SimpleNamespace:
+    """Build a minimal ChatRequestEnhanced-like object for WebSearchChatSkill.
+
+    Only the fields actually consumed by validate()/stream() are populated.
+    """
+    data = dict(
+        use_web_search=True,
+        backend="ollama",
+        model="gemma3:1b",
+        api_base=None,
+        api_key=None,
+        serp_api_key=serp_api_key,
+        message="What is the weather today?",
+        conversation_summary=None,
+        conversation_history=[],
+    )
+    data.update(kwargs)
+    return SimpleNamespace(**data)
+
+
+def test_web_search_chat_skill_validate_valid_token():
+    # validate() only runs an offline key-format check (validate_token).
+    skill = WebSearchChatSkill()
+    req = _web_search_request(serp_api_key="abcdefghij123456")
+    result = skill.validate(req)
+    assert isinstance(result, SkillValidationResult)
+    assert result.ok is True
+    assert result.message is None
+
+
+def test_web_search_chat_skill_validate_invalid_token():
+    skill = WebSearchChatSkill()
+    # Too-short token -> offline format check fails with a descriptive message.
+    # (Uses a short key so the result is deterministic regardless of SERP_API_KEY env.)
+    req = _web_search_request(serp_api_key="short")
+    result = skill.validate(req)
+    assert isinstance(result, SkillValidationResult)
+    assert result.ok is False
+    assert result.message
+
+
+class _FakeOrchestrator:
+    """Stand-in for WebSearchOrchestrator that yields chunks without network."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.init_args = (args, kwargs)
+
+    async def process_query(
+        self, query: str, conversation_history=None, stream: bool = True
+    ) -> AsyncIterator[str]:
+        yield "chunk-1"
+        yield "chunk-2"
+
+
+def test_web_search_chat_skill_stream_mocked_boundary():
+    # stream() constructs a WebSearchOrchestrator (which does network/LLM work).
+    # Patch the boundary class so no real network occurs.
+    skill = WebSearchChatSkill()
+    req = _web_search_request(serp_api_key="abcdefghij123456")
+
+    with patch("app.skills.web_search.WebSearchOrchestrator", _FakeOrchestrator):
+        import anyio
+
+        async def run() -> list[str]:
+            return [c async for c in skill.stream(req)]
+
+        chunks = anyio.run(run)
+
+    assert chunks == ["chunk-1", "chunk-2"]
