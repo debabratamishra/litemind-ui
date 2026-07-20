@@ -1,6 +1,6 @@
 ---
 layout: default
-title: LiteMindUI — your private AI workspace
+title: "LiteMindUI: your private AI workspace"
 permalink: /
 description: >-
   LiteMindUI is a friendly, private AI workspace you run on your own computer:
@@ -10,7 +10,7 @@ description: >-
 <section class="hero">
   <div class="container">
     <p class="eyebrow">Private · Local-first · Open source</p>
-    <h1>Your own AI workspace —<br>private, friendly, and easy</h1>
+    <h1>Your own AI workspace<br>private, friendly, and easy</h1>
     <p class="lead">
       LiteMindUI lets you chat, ask questions about <em>your own files</em>,
       search the web, and even talk out loud with an AI that runs on your
@@ -29,7 +29,7 @@ description: >-
       <h2>What is LiteMindUI?</h2>
       <p>
         Think of it as a friendly helper that lives on your computer. You type
-        or speak to it, and it answers, writes, and finds things for you — using
+        or speak to it, and it answers, writes, and finds things for you, using
         either a smart AI model on your machine or one from the internet, your
         choice.
       </p>
@@ -46,7 +46,7 @@ description: >-
         <div class="icon">📄</div>
         <h3>Ask your documents</h3>
         <p>Drop in your PDFs, notes, or reports and ask questions about them.
-        "What did we decide in the meeting notes?" — it knows.</p>
+        Ask "What did we decide in the meeting notes?" and it will tell you.</p>
       </div>
       <div class="card">
         <div class="icon">🌐</div>
@@ -58,13 +58,13 @@ description: >-
         <div class="icon">🎙️</div>
         <h3>Talk out loud</h3>
         <p>Turn on voice mode and just speak. It listens, thinks, and replies
-        with a natural voice — like a phone call with your assistant.</p>
+        with a natural voice, like a phone call with your assistant.</p>
       </div>
     </div>
 
     <figure class="demo">
       <img src="{{ site.baseurl }}/assets/demo.gif" alt="Short demo of LiteMindUI in action">
-      <figcaption>A quick look at LiteMindUI — chatting, asking documents, and more.</figcaption>
+      <figcaption>A quick look at LiteMindUI: chatting, asking documents, and more.</figcaption>
     </figure>
   </div>
 </section>
@@ -108,7 +108,7 @@ description: >-
   <div class="container">
     <div class="section-head">
       <h2>How do I get started?</h2>
-      <p>Three simple steps. The details live in the project README — here is
+      <p>Three simple steps. The details live in the project README, and here is
       the friendly version.</p>
     </div>
     <div class="steps">
@@ -148,9 +148,52 @@ description: >-
   <div class="container prose" style="margin:0 auto;text-align:center;">
     <h2>Curious about how it works?</h2>
     <p style="max-width:640px;margin:0 auto;">
-      If you like computers and want to see the engines under the hood — the
-      architecture, the APIs, and the design — we wrote a
+      If you like computers and want to see the engines under the hood,
+      including the architecture, the APIs, and the design, we wrote a
       <a href="{{ site.baseurl }}/developer/">Developer guide</a> just for you.
     </p>
+  </div>
+</section>
+
+<section class="block enterprise">
+  <div class="container prose" style="margin:0 auto;text-align:center;">
+    <h2>Building something bigger?</h2>
+    <p style="max-width:680px;margin:0 auto;">
+      LiteMindUI is free and open source, and a great fit for personal use and small
+      teams. If you are rolling it out across a company, or need it to meet stricter
+      requirements, I offer <strong>enterprise support</strong> shaped around how your
+      organisation actually works.
+    </p>
+
+    <div class="cards" style="margin-top:30px;text-align:left;">
+      <div class="card">
+        <div class="icon">🛡️</div>
+        <h3>Private, on-prem deployment</h3>
+        <p>Run entirely inside your own network, with no data leaving your perimeter and no third-party APIs required.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔐</div>
+        <h3>SSO &amp; access control</h3>
+        <p>Connect your identity provider and decide exactly who can see what, down to workspace and document level.</p>
+      </div>
+      <div class="card">
+        <div class="icon">📈</div>
+        <h3>SLAs &amp; priority support</h3>
+        <p>Guaranteed response times and a direct line to me when something business-critical is on the line.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🧩</div>
+        <h3>Custom integrations</h3>
+        <p>Wire up your internal tools, private models, and data sources, plus features built to your spec.</p>
+      </div>
+    </div>
+
+    <div class="ent-cta">
+      <p>
+        Have a use case in mind, or want to see what is possible for your team? Reach
+        out and we can talk through how LiteMindUI can support your business.
+      </p>
+      <a class="btn btn-solid" href="mailto:debabrata.mishra641@gmail.com?subject=LiteMindUI%20enterprise%20support">Email me about enterprise support</a>
+    </div>
   </div>
 </section>

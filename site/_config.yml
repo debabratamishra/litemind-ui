@@ -3,7 +3,7 @@
 title: LiteMindUI
 description: >-
   LiteMindUI is a private, local-first AI workspace for chat, document Q&A,
-  web search, and realtime voice — your data stays with you.
+  web search, and realtime voice. Your data stays with you.
 url: "https://debabratamishra.github.io"
 baseurl: "/litemind-ui"
 markdown: kramdown

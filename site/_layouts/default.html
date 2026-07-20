@@ -7,6 +7,17 @@
   <meta name="description" content="{{ page.description | default: site.description }}">
   <link rel="icon" href="{{ site.baseurl }}/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="{{ site.baseurl }}/assets/css/style.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('lm-theme');
+        if (!t) {
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
 
@@ -20,6 +31,11 @@
         <a href="{{ site.baseurl }}/" {% if page.url == site.baseurl or page.url == "/" %}class="active"{% endif %}>Home</a>
         <a href="{{ site.baseurl }}/developer/" {% if page.url contains "/developer" %}class="active"{% endif %}>Developer</a>
         <a class="github" href="https://github.com/debabratamishra/litemind-ui" target="_blank" rel="noopener">GitHub ↗</a>
+        <button id="theme-toggle" class="theme-toggle" type="button"
+                aria-label="Switch between light and dark theme" aria-pressed="false"
+                title="Switch theme">
+          <span class="t-icon" aria-hidden="true">🌙</span>
+        </button>
       </nav>
     </div>
   </header>
@@ -34,7 +50,7 @@
         <div class="brand"><span class="logo">L</span><span>LiteMindUI</span></div>
         <p style="max-width:320px;color:#94a3b8;font-size:.92rem;margin:12px 0 0;">
           A private, local-first AI workspace. Chat, ask your documents,
-          search the web, and talk out loud — your data stays with you.
+          search the web, and talk out loud, with your data staying with you.
         </p>
       </div>
       <div class="footer-cols">
@@ -57,6 +73,27 @@
       <span>Built with Jekyll &amp; GitHub Pages.</span>
     </div>
   </footer>
+
+  <script>
+    (function () {
+      var btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      var root = document.documentElement;
+      function sync() {
+        var icon = btn.querySelector('.t-icon');
+        var dark = root.getAttribute('data-theme') === 'dark';
+        icon.textContent = dark ? '☀️' : '🌙';
+        btn.setAttribute('aria-pressed', String(dark));
+      }
+      sync();
+      btn.addEventListener('click', function () {
+        var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        root.setAttribute('data-theme', next);
+        try { localStorage.setItem('lm-theme', next); } catch (e) {}
+        sync();
+      });
+    })();
+  </script>
 
 </body>
 </html>
