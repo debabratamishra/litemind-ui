@@ -18,11 +18,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
-# Keep the Next.js frontend's src/lib (API client, store, hooks) tracked;
-# the bare `lib/` rule above would otherwise ignore it at any depth.
-!nextjs-frontend/src/lib/
 parts/
 sdist/
 var/
