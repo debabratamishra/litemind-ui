@@ -71,10 +71,10 @@ version.json            ← canonical version { version, major, minor, patch }
 Makefile                ← Docker lifecycle (make up/dev/prod/down/logs/health/clean)
 .env.example            ← all supported environment variables with comments
 app/
-  backend/api/          route handlers (chat, rag, models, health)
+  backend/api/          route handlers (chat, rag, models, health, voice — WebRTC signaling)
   backend/core/         BackendConfig, embedding helpers, DEFAULT_RAG_CONFIG
   backend/models/       Pydantic models
-  services/             business logic (llm_gateway, rag_service, speech, tts, …)
+  services/             business logic (llm_gateway, rag_service, speech, tts, voice_pipeline, …)
   skills/               pluggable skill routing (registry, base protocol)
   ingestion/            document processing pipeline
   core/                 shared utilities (environment detection, text markup)
@@ -129,6 +129,12 @@ Is it a new RAG capability?
 
 Is it a new document format?
   → Extend app/ingestion/file_ingest.py (format detection + extraction)
+
+Is it a realtime-voice capability?
+  → WebRTC signaling: app/backend/api/voice.py (POST /api/voice/offer)
+  → Pipecat pipeline: app/services/voice_pipeline.py (build_voice_pipeline / run_voice_pipeline)
+  → Voice is a SEPARATE pipeline, not a Skill — never add it to app/skills/
+  → Event contract: docs/superpowers/specs/2026-07-18-realtime-voice-mode-design.md
 
 Is it a new API endpoint?
   → Add route handler in app/backend/api/

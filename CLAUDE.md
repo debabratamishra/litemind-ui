@@ -51,7 +51,7 @@ python3 scripts/version.py tag
 
 ## Architecture overview
 
-LiteMindUI is a **local-first AI workspace** supporting chat, RAG, web search, and voice workflows.
+LiteMindUI is a **local-first AI workspace** supporting chat, RAG, web search, and realtime voice workflows.
 
 ### Processes and ports
 
@@ -67,7 +67,7 @@ The frontend calls the backend exclusively over HTTP. They share no Python impor
 ```
 app/
   backend/
-    api/          Route handlers: chat.py, rag.py, models.py, health.py, security_utils.py
+    api/          Route handlers: chat.py, rag.py, models.py, health.py, security_utils.py, voice.py (WebRTC SDP signaling)
     core/         Backend-specific config, embedding helpers, BackendConfig, DEFAULT_RAG_CONFIG
     models/       Pydantic request/response models
   core/           Shared utilities: environment detection, RAG formats, text markup
@@ -81,6 +81,8 @@ app/
     web_search_crew.py      CrewAI web-search orchestrator
     speech_service.py       STT via Whisper (transformers)
     tts_service.py          TTS via kokoro (primary) / pyttsx3 (fallback)
+    voice_pipeline.py       Realtime voice: Pipecat pipeline (Whisper STT + Kokoro TTS + LLM)
+    tts_text_processing.py  Text cleanup (markdown/URLs) before TTS synthesis
     host_service_manager.py Environment-aware config (Docker vs native)
     ollama.py               Direct Ollama HTTP client
   ingestion/
@@ -122,6 +124,19 @@ Session-based multi-turn context. Summarises older messages when token count exc
 
 **Generative UI** (`app/backend/api/chat.py`)
 When `enable_generative_ui` is set, the LLM emits `` `ui:component_name` `` fenced blocks. The Next.js frontend renders these as charts, tables, metrics, progress bars, and iframe apps.
+
+### Realtime voice mode (`app/backend/api/voice.py`, `app/services/voice_pipeline.py`)
+Browser and server establish a WebRTC peer connection. The browser POSTs an SDP
+offer to `POST /api/voice/offer`; the server answers and runs a Pipecat pipeline
+(`build_voice_pipeline` → `run_voice_pipeline`) as a background task. All
+transcript/control events flow back over the WebRTC data channel.
+
+- STT: `BackendWhisperSTTService` (segmented, VAD-gated). TTS: `BackendKokoroTTSService`.
+- The LLM leg is `BackendLLMService` (subclasses `BaseOpenAILLMService`); `process_frame`
+  drives inference, so do not call the LLM gateway directly inside the voice pipeline.
+- Backend→browser events: `ready`, `user_transcript`, `assistant_text`, `assistant_end`,
+  `error`, `ended`. Full contract: `docs/superpowers/specs/2026-07-18-realtime-voice-mode-design.md`.
+- Voice is a **separate pipeline, not a Skill** — do not route it through the skill layer.
 
 ### LLM provider backends
 

@@ -31,6 +31,7 @@ differ from older versions in your training data. Before writing any code:
 | Markdown | react-markdown + remark-gfm + rehype-highlight | Use for all AI response rendering |
 | Theme | next-themes | Dark / light mode; always test both |
 | HTTP to backend | Native `fetch` | SSE / streaming via `ReadableStream` |
+| Realtime voice | WebRTC + Pipecat | `useRealtimeVoice` hook; `voice-activity.tsx`, `voice-input-button.tsx` |
 
 ---
 
@@ -41,7 +42,8 @@ src/
   app/              Next.js App Router — pages, layouts, route segments
   components/       Shared React components (shadcn/ui based)
     ui/             shadcn/ui primitives (auto-generated; do not hand-edit)
-  hooks/            Custom React hooks (prefix: use*)
+    voice-activity.tsx, voice-input-button.tsx   realtime-voice UI
+  hooks/            Custom React hooks (prefix: use*): use-realtime-voice.ts, use-voice-input.ts
   lib/              Utilities, API client helpers, type definitions
 public/             Static assets
 ```
@@ -186,3 +188,18 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
   the `NEXT_PUBLIC_API_URL` / internal Docker URL pattern.
 - Do not suppress TypeScript errors with blanket `any` casts — fix the type properly.
 - Do not ship `console.log()` statements in committed code.
+
+---
+
+## 12. Realtime voice mode
+
+Realtime voice uses **WebRTC**, not the Web Speech API (the latter only powers the
+non-realtime `use-voice-input.ts` dictation button).
+
+- Entry point: `useRealtimeVoice(settings, callbacks)` hook in `src/hooks/use-realtime-voice.ts`.
+- It POSTs an SDP offer to `${NEXT_PUBLIC_API_URL}/api/voice/offer` and streams events
+  over the WebRTC data channel: `ready`, `user_transcript`, `assistant_text`,
+  `assistant_end`, `error`, `ended`.
+- UI: `voice-activity.tsx` (speaking indicator), `voice-input-button.tsx` (toggle).
+- Full event contract: `docs/superpowers/specs/2026-07-18-realtime-voice-mode-design.md`.
+- Do **not** call the backend LLM gateway from the frontend; the server pipeline drives TTS.
