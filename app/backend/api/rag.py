@@ -51,9 +51,9 @@ async def get_rag_status():
             bm25_corpus_size=len(rag_service.bm25_corpus) if rag_service.bm25_corpus else 0,
         )
 
-    except Exception as e:
-        logger.error(f"RAG status error: {e}")
-        return RAGStatusResponse(status="error", message=str(e))
+    except Exception:
+        logger.exception("Failed to get RAG status")
+        return RAGStatusResponse(status="error", message="Failed to retrieve RAG status")
 
 
 @router.post("/save_config")

@@ -374,9 +374,9 @@ async def readiness_check():
 
         return status if status["status"] == "ready" else JSONResponse(status_code=503, content=status)
 
-    except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
-        return JSONResponse(status_code=503, content={"status": "error", "error": str(e)})
+    except Exception:
+        logger.exception("Readiness check failed")
+        return JSONResponse(status_code=503, content={"status": "error", "error": "Readiness check failed"})
 
 
 def _get_ollama_url() -> str:
@@ -443,9 +443,9 @@ async def get_rag_status():
             "indexed_chunks": collection_count,
             "bm25_corpus_size": len(rag_service.bm25_corpus) if rag_service.bm25_corpus else 0,
         }
-    except Exception as e:
-        logger.error(f"RAG status error: {e}")
-        return {"status": "error", "message": str(e)}
+    except Exception:
+        logger.exception("Failed to get RAG status")
+        return {"status": "error", "message": "Failed to retrieve RAG status"}
 
 
 @app.post("/api/rag/save_config")
@@ -585,8 +585,11 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
                                 ),
                             }
                         )
-                except Exception as e:
-                    results.append({"filename": filename, "status": "error", "message": str(e), "chunks_created": 0})
+                except Exception:
+                    logger.exception("Failed to process uploaded file: %s", filename)
+                    results.append(
+                        {"filename": filename, "status": "error", "message": "Failed to process file", "chunks_created": 0}
+                    )
 
         if saved_paths:
             await asyncio.gather(*(process_one(path_info) for path_info in saved_paths))
@@ -850,9 +853,9 @@ async def get_tts_status():
     try:
         tts_service = get_tts_service()
         return tts_service.get_status()
-    except Exception as e:
-        logger.error(f"Failed to get TTS status: {e}")
-        return {"available": False, "error": str(e)}
+    except Exception:
+        logger.exception("Failed to get TTS status")
+        return {"available": False, "error": "Failed to retrieve TTS status"}
 
 
 @app.post("/api/tts/synthesize-chunk")
