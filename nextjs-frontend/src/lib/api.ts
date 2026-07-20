@@ -54,6 +54,10 @@ export interface RAGQueryRequest {
   stop?: string[] | null;
   /** Number of results to retrieve; mapped to the backend's `n_results`. */
   top_k?: number;
+  /** When true, the backend uses hybrid BM25 + semantic retrieval. */
+  use_hybrid_search?: boolean;
+  /** When true, routes the query through the multi-agent (CrewAI) RAG skill. */
+  use_multi_agent?: boolean;
 }
 
 // ─── Low-level streaming helpers ───────────────────────────────────────────────
@@ -157,6 +161,8 @@ export async function* streamRagQuery(
     seed: request.seed,
     stop: request.stop,
     n_results: request.top_k,
+    use_hybrid_search: request.use_hybrid_search,
+    use_multi_agent: request.use_multi_agent,
   };
   const res = await postJSON('/api/rag/query', body, signal);
   if (!res.ok) throw new Error(await errorText(res));

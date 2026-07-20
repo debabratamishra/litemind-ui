@@ -11,10 +11,10 @@ import MarkdownRenderer from '@/components/markdown-renderer';
 import { SourcesButton, CitationsDialog } from '@/components/citations';
 import { RagAttachButton } from '@/components/rag-attach-button';
 import { useAppStore, selectActiveConversation, selectActiveId, selectSettings } from '@/lib/store';
-import { streamRagQuery } from '@/lib/api';
+import { streamRagQuery, type RAGQueryRequest } from '@/lib/api';
 import { useRagUpload } from '@/hooks/use-rag-upload';
 import { parseRagContent, convertCitationMarkers, normalizeAnswerWhitespace } from '@/lib/web-search-citations';
-import type { RagQueryRequest, UIMessage } from '@/lib/types';
+import type { UIMessage } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 /**
@@ -108,7 +108,7 @@ export default function RagPage() {
       //   use_multi_agent=true                             -> multi-agent (CrewAI)
       // They were previously declared/wired to the UI but never sent, so every
       // query silently fell through to standard RAG.
-      const ragRequest: RagQueryRequest & {
+      const ragRequest: RAGQueryRequest & {
         use_multi_agent?: boolean;
         use_hybrid_search?: boolean;
       } = {
