@@ -718,20 +718,25 @@ async def delete_rag_file(filename: str):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-        dest = UPLOAD_FOLDER / safe_filename
-
-        # Security check: ensure resolved destination is within UPLOAD_FOLDER
-        dest_resolved = dest.resolve()
-        upload_resolved = UPLOAD_FOLDER.resolve()
-        try:
-            dest_resolved.relative_to(upload_resolved)
-        except ValueError:
+        # Require exact canonical filename form from clients.
+        if safe_filename != filename:
             raise HTTPException(status_code=400, detail="Invalid filename")
 
-        if not dest_resolved.exists():
+        dest = UPLOAD_FOLDER / safe_filename
+        upload_resolved = UPLOAD_FOLDER.resolve()
+
+        # Security check: only allow direct files under UPLOAD_FOLDER.
+        if dest.parent.resolve() != upload_resolved:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        if not dest.exists():
             raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
 
-        dest_resolved.unlink()
+        # Do not follow symlinks for delete.
+        if dest.is_symlink():
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        dest.unlink()
 
         # Remove from the RAG index (ChromaDB + BM25). This is a no-op if the
         # file was never successfully indexed.
