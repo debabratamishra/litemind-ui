@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import dataclasses
 from types import SimpleNamespace
-from typing import AsyncIterator, Optional
-
+from typing import AsyncIterator
 from unittest.mock import patch
 
-from app.skills.base import SkillValidationResult, StreamingChatSkill
+from app.skills.base import SkillValidationResult
 from app.skills.rag import MultiAgentRAGSkill, StandardRAGSkill
 from app.skills.registry import ChatSkillRegistry, RAGSkillRegistry
 from app.skills.web_search import (

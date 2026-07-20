@@ -1,5 +1,4 @@
 from app.core.text_markup import (
-    _find_tagged_spans,
     _match_tag,
     extract_tagged_sections,
     remove_tagged_sections,
