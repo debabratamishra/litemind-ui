@@ -716,7 +716,9 @@ async def delete_rag_file(filename: str):
         # Security check: ensure dest is within UPLOAD_FOLDER
         dest_resolved = dest.resolve()
         upload_resolved = UPLOAD_FOLDER.resolve()
-        if not str(dest_resolved).startswith(str(upload_resolved)):
+        try:
+            dest_resolved.relative_to(upload_resolved)
+        except ValueError:
             raise HTTPException(status_code=400, detail="Invalid filename")
 
         if not dest.exists():
