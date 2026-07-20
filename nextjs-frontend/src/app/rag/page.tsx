@@ -14,7 +14,7 @@ import { useAppStore, selectActiveConversation, selectActiveId, selectSettings }
 import { streamRagQuery } from '@/lib/api';
 import { useRagUpload } from '@/hooks/use-rag-upload';
 import { parseRagContent, convertCitationMarkers, normalizeAnswerWhitespace } from '@/lib/web-search-citations';
-import type { UIMessage } from '@/lib/types';
+import type { RagQueryRequest, UIMessage } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 /**
@@ -102,23 +102,33 @@ export default function RagPage() {
         .map((s) => s.trim())
         .filter(Boolean);
 
-      const stream = streamRagQuery(
-        {
-          query: q,
-          model: settings.model,
-          session_id: settings.sessionId,
-          temperature: settings.temperature,
-          max_tokens: settings.maxTokens,
-          top_p: settings.topP,
-          frequency_penalty: settings.frequencyPenalty,
-          repetition_penalty: settings.repetitionPenalty,
-          min_p: settings.minP,
-          seed: settings.seed,
-          stop: stop.length ? stop : undefined,
-          top_k: nResults,
-        },
-        controller.signal,
-      );
+      // The backend selects the RAG strategy from these two flags:
+      //   use_multi_agent=false + use_hybrid_search=false -> standard RAG
+      //   use_multi_agent=false + use_hybrid_search=true  -> hybrid (BM25 + vector)
+      //   use_multi_agent=true                             -> multi-agent (CrewAI)
+      // They were previously declared/wired to the UI but never sent, so every
+      // query silently fell through to standard RAG.
+      const ragRequest: RagQueryRequest & {
+        use_multi_agent?: boolean;
+        use_hybrid_search?: boolean;
+      } = {
+        query: q,
+        model: settings.model,
+        session_id: settings.sessionId,
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens,
+        top_p: settings.topP,
+        frequency_penalty: settings.frequencyPenalty,
+        repetition_penalty: settings.repetitionPenalty,
+        min_p: settings.minP,
+        seed: settings.seed,
+        stop: stop.length ? stop : undefined,
+        top_k: nResults,
+        use_multi_agent: multiAgent,
+        use_hybrid_search: hybridSearch,
+      };
+
+      const stream = streamRagQuery(ragRequest, controller.signal);
       for await (const chunk of stream) {
         // The backend prepends a `data: {"citations": {...}}` frame to the
         // plain-text stream. We keep it in the stored content and let the
