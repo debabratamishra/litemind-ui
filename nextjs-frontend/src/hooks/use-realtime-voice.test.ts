@@ -26,7 +26,9 @@ function mockBrowser() {
     onconnectionstatechange: null as any,
     connectionState: "connected",
   };
-  (globalThis as any).RTCPeerConnection = vi.fn().mockReturnValue(pc);
+  (globalThis as any).RTCPeerConnection = vi.fn().mockImplementation(function () {
+    return pc;
+  });
   (globalThis as any).RTCSessionDescription = class {
     constructor(public init: any) {}
   };
