@@ -266,6 +266,31 @@ disallow_untyped_defs = false
 [tool.ty]
 environment = { python-version = "3.13" }
 
+# `pipecat` is an optional dependency (the `voice` group) that is NOT installed in
+# CI's `ty` job, which installs only `--group backend --group dev`. Allow its
+# submodules as unresolved imports so type-checking of the voice pipeline does not
+# fail in CI. New `pipecat.*` imports must be added here to avoid `unresolved-import`.
+[tool.ty.analysis]
+allowed-unresolved-imports = [
+    "pipecat.audio.vad.silero",
+    "pipecat.audio.vad.vad_analyzer",
+    "pipecat.frames.frames",
+    "pipecat.pipeline.pipeline",
+    "pipecat.pipeline.worker",
+    "pipecat.processors.aggregators.llm_context",
+    "pipecat.processors.aggregators.llm_response_universal",
+    "pipecat.processors.audio.vad_processor",
+    "pipecat.processors.frame_processor",
+    "pipecat.services.openai.base_llm",
+    "pipecat.services.settings",
+    "pipecat.services.stt_service",
+    "pipecat.services.tts_service",
+    "pipecat.transports.base_transport",
+    "pipecat.transports.smallwebrtc.connection",
+    "pipecat.transports.smallwebrtc.transport",
+    "pipecat.workers.runner",
+]
+
 [tool.pytest.ini_options]
 # Async tests (Pipecat voice pipeline) run via the anyio pytest plugin, which
 # is auto-discovered; enable auto mode so plain `async def test_*` are run.
