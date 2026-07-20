@@ -710,10 +710,14 @@ async def delete_rag_file(filename: str):
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
 
-        safe_filename = sanitize_filename(filename)
+        try:
+            safe_filename = sanitize_filename(filename)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         dest = UPLOAD_FOLDER / safe_filename
 
-        # Security check: ensure dest is within UPLOAD_FOLDER
+        # Security check: ensure resolved destination is within UPLOAD_FOLDER
         dest_resolved = dest.resolve()
         upload_resolved = UPLOAD_FOLDER.resolve()
         try:
@@ -721,10 +725,10 @@ async def delete_rag_file(filename: str):
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid filename")
 
-        if not dest.exists():
+        if not dest_resolved.exists():
             raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
 
-        dest.unlink()
+        dest_resolved.unlink()
 
         # Remove from the RAG index (ChromaDB + BM25). This is a no-op if the
         # file was never successfully indexed.
