@@ -635,11 +635,9 @@ async def check_file_duplicates(request: RagDuplicateCheckRequest):
         safe_filename = sanitize_filename(filename)
 
         # Pre-flight check: the file is not on disk yet, so only do the
-        # filename-based duplicate check. Content-hash duplicates are still
-        # caught at upload time.
-        is_duplicate, reason = rag_service._is_file_already_processed(
-            str(UPLOAD_FOLDER / safe_filename), safe_filename, check_content_hash=False
-        )
+        # filename-based duplicate check (no file-system access). Content-hash
+        # duplicates are still caught at upload time.
+        is_duplicate, reason = rag_service._is_filename_already_processed(safe_filename)
 
         return {
             "is_duplicate": is_duplicate,

@@ -360,26 +360,32 @@ class RAGService:
             logger.error(f"Error calculating hash for {file_path}: {e}")
             return None
 
-    def _is_file_already_processed(
-        self, file_path: str, filename: str, check_content_hash: bool = True
-    ) -> tuple[bool, str]:
-        """Check if file is already processed. Returns (is_duplicate, reason).
-
-        `check_content_hash` should be set to False for pre-flight checks where the
-        file may not exist on disk yet (e.g. the duplicate-check endpoint). Content-hash
-        duplicates are still caught at upload time, so skipping the hash there is safe.
-        """
+    def _is_file_already_processed(self, file_path: str, filename: str) -> tuple[bool, str]:
+        """Check if file is already processed. Returns (is_duplicate, reason)."""
         # Check by filename first
         if filename in self.processed_files:
             file_info = self.processed_files[filename]
             return True, f"File '{filename}' already processed ({file_info['chunk_count']} chunks)"
 
         # Check by content hash to detect renamed duplicates
-        if check_content_hash:
-            file_hash = self._calculate_file_hash(file_path)
-            if file_hash and file_hash in self.file_hashes:
-                original_name = self.file_hashes[file_hash]
-                return True, f"File content already processed as '{original_name}' (duplicate content detected)"
+        file_hash = self._calculate_file_hash(file_path)
+        if file_hash and file_hash in self.file_hashes:
+            original_name = self.file_hashes[file_hash]
+            return True, f"File content already processed as '{original_name}' (duplicate content detected)"
+
+        return False, ""
+
+    def _is_filename_already_processed(self, filename: str) -> tuple[bool, str]:
+        """Filename-only duplicate check that performs no file-system access.
+
+        Used for pre-flight checks (e.g. the duplicate-check endpoint) where the file
+        is not on disk yet. Content-hash duplicates are still caught at upload time, so
+        skipping the hash read here is safe and avoids passing a caller-influenced path
+        to ``_calculate_file_hash``.
+        """
+        if filename in self.processed_files:
+            file_info = self.processed_files[filename]
+            return True, f"File '{filename}' already processed ({file_info['chunk_count']} chunks)"
 
         return False, ""
 
