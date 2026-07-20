@@ -71,7 +71,15 @@ function CodeBlock({ language, children, inline }: CodeBlockProps) {
 
 // ─── MarkdownRenderer ─────────────────────────────────────────────────────────
 
-export default function MarkdownRenderer({ content }: { content: string }) {
+export default function MarkdownRenderer({
+  content,
+  onCitationClick,
+}: {
+  content: string;
+  /** When provided, markdown links whose href starts with `#cite-` render as
+   *  clickable citation chips that call this handler with the citation index. */
+  onCitationClick?: (index: number) => void;
+}) {
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none break-words">
       <ReactMarkdown
@@ -151,16 +159,33 @@ export default function MarkdownRenderer({ content }: { content: string }) {
           ),
 
           // ── Links ─────────────────────────────────────────────────────────
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary underline-offset-2 hover:underline"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            if (onCitationClick && href && href.startsWith("#cite-")) {
+              const idx = Number.parseInt(href.slice("#cite-".length), 10);
+              if (!Number.isNaN(idx)) {
+                return (
+                  <button
+                    type="button"
+                    onClick={() => onCitationClick(idx)}
+                    aria-label={`Citation ${idx}`}
+                    className="mx-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded bg-primary/10 px-1 align-super text-[10px] font-semibold text-primary transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    {children}
+                  </button>
+                );
+              }
+            }
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                {children}
+              </a>
+            );
+          },
 
           // ── Images ────────────────────────────────────────────────────────
           img: ({ src, alt }) => (

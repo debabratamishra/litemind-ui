@@ -8,8 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import GenerativeUIRenderer from '@/components/generative-ui-renderer';
-import MarkdownRenderer from '@/components/markdown-renderer';
+import MessageBubble from '@/components/message-bubble';
 import VoiceActivityIndicator from '@/components/voice-activity';
 import { useAppStore, selectActiveConversation, selectActiveId, selectSettings } from '@/lib/store';
 import { streamChat, streamWebSearch } from '@/lib/api';
@@ -17,16 +16,6 @@ import type { ChatMessage } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useVoiceInput } from '@/hooks/use-voice-input';
 import { useRealtimeVoice } from '@/hooks/use-realtime-voice';
-
-function ThinkingDots() {
-  return (
-    <div className="flex items-center gap-1 px-1 py-0.5" aria-label="Assistant is thinking" role="status">
-      {[0, 1, 2].map((i) => (
-        <span key={i} className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/60" style={{ animationDelay: `${i * 150}ms` }} />
-      ))}
-    </div>
-  );
-}
 
 const DISPLAY_MODES = [
   { mode: 'rendered', label: 'Rendered', Icon: Sparkles },
@@ -231,31 +220,12 @@ export default function ChatPage() {
             </div>
           ) : (
             msgs.map((msg) => (
-              <div key={msg.id} className={cn('flex gap-3', msg.role === 'user' ? 'justify-end' : 'justify-start')} role="article" aria-label={`${msg.role === 'user' ? 'Your' : 'Assistant'} message`}>
-                {msg.role === 'assistant' && (
-                  <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10" aria-hidden="true">
-                    <Bot className="h-4 w-4 text-primary" />
-                  </div>
-                )}
-                <div className={cn('max-w-[75%] rounded-2xl px-4 py-3 text-sm', msg.role === 'user' ? 'rounded-br-sm bg-primary text-primary-foreground' : 'rounded-bl-sm border border-border bg-card text-foreground')}>
-                  {msg.role === 'user' ? (
-                    <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                  ) : msg.isStreaming && !msg.content ? (
-                    <ThinkingDots />
-                  ) : settings.enableGenerativeUI ? (
-                    settings.genUIDisplayMode === 'rendered' ? (
-                      <GenerativeUIRenderer content={msg.content} onAction={handleAction} />
-                    ) : (
-                      <MarkdownRenderer content={msg.content} />
-                    )
-                  ) : (
-                    <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                  )}
-                  {msg.isStreaming && msg.content && (
-                    <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-current align-middle" aria-hidden="true" />
-                  )}
-                </div>
-              </div>
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                settings={settings}
+                onAction={handleAction}
+              />
             ))
           )}
           <div ref={bottomRef} aria-hidden="true" />

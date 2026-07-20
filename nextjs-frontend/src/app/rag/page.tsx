@@ -1,26 +1,73 @@
 'use client';
 
 import * as React from 'react';
-import { Globe, Database, Plus, Loader2 } from 'lucide-react';
+import { Database, Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import MarkdownRenderer from '@/components/markdown-renderer';
+import { SourcesButton, CitationsDialog } from '@/components/citations';
 import { RagAttachButton } from '@/components/rag-attach-button';
 import { useAppStore, selectActiveConversation, selectActiveId, selectSettings } from '@/lib/store';
 import { streamRagQuery } from '@/lib/api';
 import { useRagUpload } from '@/hooks/use-rag-upload';
+import { parseRagContent, convertCitationMarkers, normalizeAnswerWhitespace } from '@/lib/web-search-citations';
+import type { UIMessage } from '@/lib/types';
 import { cn } from '@/lib/utils';
+
+/**
+ * A single RAG message. Assistant messages that carry a `data: {"citations": …}`
+ * frame are rendered with clickable `[n]` citation chips plus a "Sources (N)"
+ * button that opens a Dialog listing every cited document chunk — mirroring the
+ * web-search citation UX. User messages and plain assistant messages render
+ * exactly as before.
+ */
+function RagMessage({ msg }: { msg: UIMessage }) {
+  const [citeOpen, setCiteOpen] = React.useState(false);
+  const [citeFocus, setCiteFocus] = React.useState<number | null>(null);
+
+  const openCitations = React.useCallback((focus: number | null) => {
+    setCiteFocus(focus);
+    setCiteOpen(true);
+  }, []);
+
+  if (msg.role === 'user') {
+    return <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>;
+  }
+
+  const parsed = msg.content ? parseRagContent(msg.content) : null;
+
+  // While streaming, show the (frame-stripped) prose without citation controls.
+  if (msg.isStreaming) {
+    return <MarkdownRenderer content={parsed ? parsed.answer : msg.content} />;
+  }
+
+  if (parsed && parsed.sources.length > 0) {
+    const answer = convertCitationMarkers(normalizeAnswerWhitespace(parsed.answer));
+    return (
+      <>
+        <MarkdownRenderer content={answer} onCitationClick={(index) => openCitations(index)} />
+        <SourcesButton count={parsed.sources.length} onClick={() => openCitations(null)} />
+        <CitationsDialog
+          open={citeOpen}
+          onOpenChange={setCiteOpen}
+          sources={parsed.sources}
+          focusIndex={citeFocus}
+        />
+      </>
+    );
+  }
+
+  return <MarkdownRenderer content={msg.content} />;
+}
 
 export default function RagPage() {
   const conv = useAppStore(selectActiveConversation);
   const activeId = useAppStore(selectActiveId);
   const settings = useAppStore(selectSettings);
-  const { addMessage, updateLastMessage, setWebSearch, createConversation } = useAppStore();
+  const { addMessage, updateLastMessage, createConversation } = useAppStore();
 
   const [multiAgent, setMultiAgent] = React.useState(false);
   const [hybridSearch, setHybridSearch] = React.useState(true);
@@ -41,7 +88,6 @@ export default function RagPage() {
     const q = query.trim();
     const convId = activeId;
     if (!q || queryLoading || !convId) return;
-    const webSearch = useAppStore.getState().conversations.find((c) => c.id === convId)?.webSearch ?? false;
     setQuery('');
     setQueryLoading(true);
 
@@ -69,13 +115,17 @@ export default function RagPage() {
           min_p: settings.minP,
           seed: settings.seed,
           stop: stop.length ? stop : undefined,
-          serp_api_key: settings.serpApiKey ?? null,
           top_k: nResults,
-          use_web_search: webSearch,
         },
         controller.signal,
       );
-      for await (const chunk of stream) { accumulated += chunk; updateLastMessage(convId, accumulated, true); }
+      for await (const chunk of stream) {
+        // The backend prepends a `data: {"citations": {...}}` frame to the
+        // plain-text stream. We keep it in the stored content and let the
+        // renderer strip it so the citation chips can be built from it.
+        accumulated += chunk;
+        updateLastMessage(convId, accumulated, true);
+      }
       updateLastMessage(convId, accumulated, false);
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
@@ -114,11 +164,6 @@ export default function RagPage() {
           <Label htmlFor="rag-n-results" className="text-xs text-muted-foreground">Results</Label>
           <Input id="rag-n-results" type="number" min={1} max={20} value={nResults} onChange={(e) => setNResults(parseInt(e.target.value) || 5)} className="h-7 w-14 text-xs" />
         </div>
-        <Separator orientation="vertical" className="h-5" />
-        <Tooltip>
-          <TooltipTrigger render={<Button variant={conv.webSearch ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setWebSearch(activeId, !conv.webSearch)} aria-label="Toggle web search" aria-pressed={conv.webSearch}><Globe className="h-4 w-4" aria-hidden="true" />Web</Button>} />
-          <TooltipContent>Combine docs with web search</TooltipContent>
-        </Tooltip>
       </div>
 
       <div className="flex flex-1 flex-col overflow-y-auto min-h-0">
@@ -127,14 +172,13 @@ export default function RagPage() {
             <div className="flex flex-col items-center justify-center gap-2 py-20 text-center">
               <Database className="h-10 w-10 text-muted-foreground/40" aria-hidden="true" />
               <p className="text-sm font-medium text-muted-foreground">Ask questions about your documents</p>
-              <p className="text-xs text-muted-foreground">{conv.webSearch ? 'Web search is on — answers may also use the web.' : 'Attach documents with the paperclip to start querying.'}</p>
+              <p className="text-xs text-muted-foreground">Attach documents with the paperclip to start querying.</p>
             </div>
           )}
           {msgs.map((m, i) => (
             <div key={m.id ?? i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
               <div className={cn('max-w-[75%] rounded-2xl px-4 py-3 text-sm', m.role === 'user' ? 'rounded-br-sm bg-primary text-primary-foreground' : 'rounded-bl-sm border border-border bg-card')}>
-                {m.role === 'user' ? <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
-                  : <MarkdownRenderer content={m.content} />}
+                <RagMessage msg={m} />
                 {m.isStreaming && <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-foreground align-middle" aria-hidden="true" />}
               </div>
             </div>

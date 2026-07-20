@@ -8,8 +8,15 @@ WORKDIR /app
 # Copy package files for caching
 COPY nextjs-frontend/package.json nextjs-frontend/package-lock.json* ./
 
-# Install production dependencies only (reproducible with lockfile)
-RUN npm ci --omit=dev
+# Install all dependencies (do NOT use --omit=dev here).
+# The lockfile marks the platform-specific native binary for lightningcss
+# (lightningcss-linux-*-musl) as "dev": true because it was generated on macOS
+# where it is only reachable through the dev-only Tailwind chain. With
+# --omit=dev npm would skip that optional native module, and Tailwind v4's CSS
+# build would fail with "Cannot find module 'lightningcss.linux-arm64-musl.node'".
+# Keeping dev deps here only inflates the throwaway build layer — the runner
+# stage copies only .next/standalone, which bundles just the runtime deps.
+RUN npm ci
 
 # ── Stage 2: Builder ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder

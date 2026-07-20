@@ -28,6 +28,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     espeak \
     espeak-ng \
+    # Realtime voice mode: aiortc (via Pipecat small-webrtc) is a cffi wrapper
+    # that dlopen()s these shared libraries at runtime. The -dev packages provide
+    # the unversioned .so symlinks aiortc's cffi loader expects.
+    pkg-config \
+    libavformat-dev \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libopus-dev \
+    libvpx-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -44,16 +56,19 @@ WORKDIR /app
 # Copy dependency metadata first for better caching
 COPY pyproject.toml uv.lock ./
 
-# Install only backend dependencies (not frontend, not dev)
+# Install backend + voice dependencies (not frontend, not dev).
+# The voice group pulls in pipecat-ai and aiortc, which main.py imports at
+# startup (app/backend/api/voice.py). Without it the app fails with
+# "ModuleNotFoundError: No module named 'pipecat'".
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --only-group backend --no-install-project
+    uv sync --no-dev --only-group backend --only-group voice --no-install-project
 
 # Copy application code
 COPY . .
 
-# Install the project itself
+# Install the project itself (backend + voice groups)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --only-group backend
+    uv sync --no-dev --only-group backend --only-group voice
 
 # Ensure the container uses the project's virtual environment for runtime
 ENV VIRTUAL_ENV="/app/.venv"

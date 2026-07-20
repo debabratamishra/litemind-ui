@@ -94,8 +94,6 @@ class RAGQueryRequestEnhanced(BaseModel):
     min_p: Optional[float] = 0.0  # Minimum token probability floor (0.0 to 1.0)
     seed: Optional[int] = None  # Fixed seed for reproducible outputs (None = random)
     stop: Optional[List[str]] = None  # Sequences that halt generation
-    serp_api_key: Optional[str] = None  # Optional SerpAPI key override for web search
-    use_web_search: Optional[bool] = False  # Combine retrieved docs with web search results
     is_voice_mode: Optional[bool] = False
     # Conversation memory fields
     session_id: Optional[str] = None
@@ -114,6 +112,10 @@ class RAGConfigRequest(BaseModel):
     embedding_api_base: Optional[str] = None
     embedding_api_key: Optional[str] = None
     chunk_size: int
+
+
+class RagDuplicateCheckRequest(BaseModel):
+    filename: str
 
 
 class STTRequest(BaseModel):
@@ -610,57 +612,37 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
 
 
 @app.post("/api/rag/check-duplicates")
-async def check_file_duplicates(files: List[UploadFile] = File(...)):
-    """Check if uploaded files are duplicates without processing them."""
+async def check_file_duplicates(request: RagDuplicateCheckRequest):
+    """Check if an uploaded file is a duplicate without processing it.
+
+    The frontend pre-flight sends the filename as JSON; we do a filename-based
+    duplicate check against already-processed files. Content-hash duplicates are
+    still caught at upload time, so this only prevents redundant uploads of the
+    same filename.
+    """
     try:
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
 
-        results = []
+        filename = request.filename
+        if not filename:
+            raise HTTPException(status_code=400, detail="filename is required")
 
-        for up in files:
-            try:
-                # Sanitize filename to prevent path traversal
-                safe_filename = sanitize_filename(up.filename or "")
-            except ValueError as e:
-                results.append(
-                    {"filename": up.filename, "is_duplicate": False, "reason": f"Invalid filename: {str(e)}"}
-                )
-                continue
+        # Sanitize to mirror the check used during upload
+        safe_filename = sanitize_filename(filename)
 
-            # Save file temporarily to calculate hash
-            temp_path = UPLOAD_FOLDER / f"temp_{safe_filename}"
+        is_duplicate, reason = rag_service._is_file_already_processed(
+            str(UPLOAD_FOLDER / safe_filename), safe_filename
+        )
 
-            # Security check: ensure temp_path is within UPLOAD_FOLDER
-            try:
-                temp_resolved = temp_path.resolve()
-                upload_resolved = UPLOAD_FOLDER.resolve()
-                if not str(temp_resolved).startswith(str(upload_resolved)):
-                    raise ValueError("Path traversal attempt detected")
-            except (ValueError, OSError, RuntimeError) as e:
-                results.append({"filename": up.filename, "is_duplicate": False, "reason": f"Security error: {str(e)}"})
-                continue
+        return {
+            "is_duplicate": is_duplicate,
+            "filename": filename,
+            "message": reason if is_duplicate else "",
+        }
 
-            try:
-                with open(temp_path, "wb") as f:
-                    f.write(await up.read())
-
-                is_duplicate, reason = rag_service._is_file_already_processed(str(temp_path), safe_filename)
-
-                results.append(
-                    {
-                        "filename": up.filename,
-                        "is_duplicate": is_duplicate,
-                        "reason": reason if is_duplicate else "File is new and can be processed",
-                    }
-                )
-
-            finally:
-                if temp_path.exists():
-                    temp_path.unlink()
-
-        return {"status": "completed", "results": results}
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error checking duplicates: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to check duplicates: {str(e)}")
@@ -690,6 +672,71 @@ async def reset_rag_system():
     except Exception as e:
         logger.error(f"Reset error: {e}")
         raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
+
+
+@app.get("/api/rag/files")
+async def list_rag_files():
+    """List the files currently in the knowledge base."""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        files = []
+        for path in sorted(UPLOAD_FOLDER.iterdir()):
+            if not path.is_file():
+                continue
+            chunks = 0
+            info = rag_service.processed_files.get(path.name)
+            if info:
+                chunks = info.get("chunk_count", 0)
+            files.append(
+                {
+                    "filename": path.name,
+                    "size": path.stat().st_size,
+                    "chunks": chunks,
+                }
+            )
+
+        return {"files": files}
+    except Exception as e:
+        logger.error(f"List RAG files error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
+
+@app.delete("/api/rag/files/{filename}")
+async def delete_rag_file(filename: str):
+    """Delete a single file from the knowledge base."""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        safe_filename = sanitize_filename(filename)
+        dest = UPLOAD_FOLDER / safe_filename
+
+        # Security check: ensure dest is within UPLOAD_FOLDER
+        dest_resolved = dest.resolve()
+        upload_resolved = UPLOAD_FOLDER.resolve()
+        if not str(dest_resolved).startswith(str(upload_resolved)):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        if not dest.exists():
+            raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
+
+        dest.unlink()
+
+        # Remove from the RAG index (ChromaDB + BM25). This is a no-op if the
+        # file was never successfully indexed.
+        rag_service.remove_processed_file(safe_filename)
+
+        return {
+            "message": f"Deleted '{filename}'.",
+            "filename": filename,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete RAG file error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
 
 @app.post("/api/rag/query")

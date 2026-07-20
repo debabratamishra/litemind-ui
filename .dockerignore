@@ -72,7 +72,6 @@ install.sh
 .env
 .env.local
 .env.*.local
-.streamlit/secrets.toml
 config.local.*
 
 # Virtual environments (IMPORTANT - saves gigabytes)

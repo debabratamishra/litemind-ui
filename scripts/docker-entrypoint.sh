@@ -199,11 +199,6 @@ handle_application_startup() {
             log_info "🔧 Detected FastAPI backend startup"
             start_application "$command" $args
             ;;
-        "streamlit")
-            # Streamlit frontend
-            log_info "🔧 Detected Streamlit frontend startup"
-            start_application "$command" $args
-            ;;
         *)
             # Generic application
             log_info "🔧 Generic application startup"

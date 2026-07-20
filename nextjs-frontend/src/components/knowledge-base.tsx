@@ -73,11 +73,11 @@ function StatusCard({
           </div>
           <div>
             <p className="text-muted-foreground">Files</p>
-            <p className="font-medium">{status.files_count ?? 0}</p>
+            <p className="font-medium">{status.uploaded_files ?? 0}</p>
           </div>
           <div>
             <p className="text-muted-foreground">Chunks</p>
-            <p className="font-medium">{status.chunks_count ?? '—'}</p>
+            <p className="font-medium">{status.indexed_chunks ?? '—'}</p>
           </div>
         </div>
       ) : (

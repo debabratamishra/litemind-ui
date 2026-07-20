@@ -217,6 +217,22 @@ Streaming RAG response.
 
 **Response:** `text/plain` — plain-text stream (no SSE envelope, unlike `/api/chat/stream`)
 
+The stream opens with a single transport-metadata frame, then the answer prose:
+
+```
+data: {"citations": {"1": {"id": "chunk1", "content": "...", "score": 0.91, "retrieval_method": "semantic", "metadata": {"filename": "doc.pdf", "page_number": 3}}, "2": {...}}}\n\n
+According to the document [1], the cat sat on the mat.
+```
+
+- The `data: {"citations": {...}}` line is **metadata, not answer text**. Each key is a
+  1-based citation index; the value carries the retrieved chunk (`content`), its
+  `retrieval_method` (`semantic` / `bm25` / `hybrid`), a normalised `score`, and a
+  `metadata` object (typically `filename`, optionally `page_number`).
+- The answer prose that follows cites sources with bracketed numbers (`[1]`, `[2]`, …).
+  The frontend strips the `data:` frame and renders those markers as clickable
+  source chips plus a "Sources (N)" dialog. **Clients must ignore the `data:` frame**
+  (do not display it as answer text).
+
 ---
 
 ### `POST /api/rag/upload`
@@ -261,7 +277,7 @@ List all indexed files.
 ```json
 {
   "files": [
-    { "filename": "doc.pdf", "chunk_count": 47 }
+    { "filename": "doc.pdf", "size": 12345, "chunks": 47 }
   ]
 }
 ```
@@ -274,7 +290,7 @@ Remove a file from the index.
 
 **Response `200`**
 ```json
-{ "message": "File doc.pdf removed successfully" }
+{ "message": "Deleted 'doc.pdf'.", "filename": "doc.pdf" }
 ```
 
 ---
@@ -328,16 +344,16 @@ Update the embedding model configuration. Takes effect immediately for subsequen
 
 ### `POST /api/rag/check-duplicates`
 
-Check whether files have already been indexed before uploading.
+Check whether a file has already been indexed before uploading.
 
-**Request:** `multipart/form-data` — same as `/api/rag/upload`
+**Request:** `application/json`
+```json
+{ "filename": "doc.pdf" }
+```
 
 **Response `200`**
 ```json
-{
-  "duplicates": ["existing.pdf"],
-  "new_files": ["new.pdf"]
-}
+{ "is_duplicate": false, "filename": "doc.pdf", "message": "" }
 ```
 
 ---
