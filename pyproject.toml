@@ -295,3 +295,7 @@ allowed-unresolved-imports = [
 # Async tests (Pipecat voice pipeline) run via the anyio pytest plugin, which
 # is auto-discovered; enable auto mode so plain `async def test_*` are run.
 anyio_mode = "auto"
+testpaths = ["tests"]
+# Coverage is reported for visibility; there is intentionally NO fail_under
+# gate (the goal is comprehensive per-module tests, not a hard percentage).
+addopts = "--cov=app --cov-report=term-missing"
