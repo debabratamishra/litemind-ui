@@ -24,6 +24,24 @@
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
     "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --nav-bg: rgba(255, 255, 255, .85);
+}
+
+/* ---------- Dark theme ---------- */
+[data-theme="dark"] {
+  --bg: #0b1020;
+  --bg-soft: #0f172a;
+  --bg-tint: #1e293b;
+  --ink: #e6e9f0;
+  --ink-soft: #c3cad6;
+  --muted: #94a3b8;
+  --line: #243049;
+  --nav-bg: rgba(11, 16, 32, .85);
+  --indigo: #818cf8;
+  --indigo-600: #6366f1;
+  --indigo-700: #a5b4fc;
+  --teal: #2dd4bf;
+  --teal-600: #5eead4;
 }
 
 * { box-sizing: border-box; }
@@ -57,7 +75,7 @@ img { max-width: 100%; height: auto; }
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(255, 255, 255, .85);
+  background: var(--nav-bg);
   backdrop-filter: saturate(180%) blur(10px);
   border-bottom: 1px solid var(--line);
 }
@@ -104,6 +122,28 @@ img { max-width: 100%; height: auto; }
   border: 1px solid var(--line);
 }
 .nav-links a.github:hover { background: var(--bg-soft); }
+
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-left: 4px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--ink-soft);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .2s ease, border-color .2s ease;
+}
+.theme-toggle:hover { background: var(--bg-tint); }
+.theme-toggle:focus-visible {
+  outline: 3px solid var(--teal);
+  outline-offset: 2px;
+}
 
 /* ---------- Hero ---------- */
 .hero {
@@ -170,6 +210,13 @@ img { max-width: 100%; height: auto; }
   border: 1.5px solid var(--indigo);
 }
 .btn-outline:hover { background: var(--bg-tint); }
+.btn-solid {
+  background: var(--indigo);
+  color: #fff;
+  border: 1px solid var(--indigo);
+}
+.btn-solid:hover { background: var(--indigo-600); text-decoration: none; }
+[data-theme="dark"] .btn-solid { color: #0b1020; }
 
 /* ---------- Sections ---------- */
 section.block { padding: 64px 0; }
@@ -258,6 +305,11 @@ section.block.soft { background: var(--bg-soft); }
   margin: 24px 0;
 }
 .callout strong { color: var(--teal-600); }
+[data-theme="dark"] .callout { background: #06281f; border-left-color: #14b8a6; }
+
+/* ---------- Enterprise CTA ---------- */
+.ent-cta { margin-top: 36px; }
+.ent-cta p { max-width: 640px; margin: 0 auto 18px; color: var(--ink-soft); }
 
 /* ---------- Tables ---------- */
 .table-wrap { overflow-x: auto; margin: 18px 0; }
@@ -323,6 +375,7 @@ pre code {
   font-size: .85rem;
   line-height: 1.7;
   overflow-x: auto;
+  white-space: pre;
 }
 .tree .c { color: #94a3b8; }
 .tree .k { color: #7dd3fc; }

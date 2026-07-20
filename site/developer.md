@@ -1,6 +1,6 @@
 ---
 layout: default
-title: Developer guide — LiteMindUI
+title: "Developer guide: LiteMindUI"
 permalink: /developer/
 description: >-
   The technical backbone of LiteMindUI: architecture, processes and ports,
@@ -15,7 +15,7 @@ description: >-
       LiteMindUI is a <strong>local-first AI workspace</strong> supporting chat,
       retrieval-augmented generation (RAG), web search, and realtime voice. It is
       composed of a FastAPI backend and a Next.js frontend that talk to each other
-      exclusively over HTTP — they share no code imports.
+      exclusively over HTTP. They share no code imports.
     </p>
 
     <div class="table-wrap">
@@ -40,22 +40,24 @@ description: >-
     <h2>Directory layout</h2>
     <p>The backend lives in <code>app/</code>; the UI in <code>nextjs-frontend/src/</code>.</p>
     <div class="tree">
-<span class="c">app/</span>
-  <span class="k">backend/</span>
-    api/          <span class="c"># routes: chat.py, rag.py, models.py, health.py, voice.py (WebRTC SDP)</span>
-    core/         <span class="c"># backend config, embedding helpers, DEFAULT_RAG_CONFIG</span>
-    models/       <span class="c"># Pydantic request/response models</span>
-  <span class="k">core/</span>           <span class="c"># shared utils: env detection, RAG formats, text markup</span>
-  <span class="k">services/</span>       <span class="c"># business logic: llm_gateway, rag_service, voice_pipeline, …</span>
-  <span class="k">ingestion/</span>     <span class="c"># file_ingest, document processors, OCR extractors</span>
-  <span class="k">skills/</span>         <span class="c"># pluggable chat &amp; RAG skill routing</span>
+<span class="k">app/</span>
+├── <span class="k">backend/</span>
+│   ├── <span class="k">api/</span>          <span class="c">routes: chat.py, rag.py, models.py, health.py, voice.py (WebRTC SDP)</span>
+│   ├── <span class="k">core/</span>         <span class="c">backend config, embedding helpers, DEFAULT_RAG_CONFIG</span>
+│   └── <span class="k">models/</span>       <span class="c">Pydantic request/response models</span>
+├── <span class="k">core/</span>           <span class="c">shared utils: env detection, RAG formats, text markup</span>
+├── <span class="k">services/</span>       <span class="c">business logic: llm_gateway, rag_service, voice_pipeline, …</span>
+├── <span class="k">ingestion/</span>     <span class="c">file_ingest, document processors, OCR extractors</span>
+└── <span class="k">skills/</span>         <span class="c">pluggable chat &amp; RAG skill routing</span>
+
 <span class="k">nextjs-frontend/src/</span>
-  app/           <span class="c"># App Router pages &amp; layouts</span>
-  components/    <span class="c"># shadcn/ui components</span>
-  hooks/         <span class="c"># custom React hooks</span>
-  lib/           <span class="c"># API clients &amp; utilities</span>
-<span class="c">main.py</span>            <span class="c"># FastAPI entry (lifespan, route registration)</span>
-<span class="c">config.py</span>          <span class="c"># global Config (env vars, paths, tuning)</span>
+├── <span class="k">app/</span>           <span class="c">App Router pages &amp; layouts</span>
+├── <span class="k">components/</span>    <span class="c">shadcn/ui components</span>
+├── <span class="k">hooks/</span>         <span class="c">custom React hooks</span>
+└── <span class="k">lib/</span>           <span class="c">API clients &amp; utilities</span>
+
+<span class="c">main.py</span>            <span class="c">FastAPI entry (lifespan, route registration)</span>
+<span class="c">config.py</span>          <span class="c">global Config (env vars, paths, tuning)</span>
     </div>
 
     <h2>Key design patterns</h2>
@@ -73,7 +75,7 @@ description: >-
     <p>
       Chat and RAG requests route through <code>ChatSkillRegistry</code> /
       <code>RAGSkillRegistry</code>. Each skill implements <code>supports()</code>,
-      <code>validate()</code>, and <code>stream()</code> — add new capabilities
+      <code>validate()</code>, and <code>stream()</code>, so you can add new capabilities
       without touching the API routes.
     </p>
 
@@ -102,9 +104,37 @@ description: >-
     <p>
       Browser and server establish a WebRTC peer connection; the browser POSTs an SDP
       offer to <code>POST /api/voice/offer</code>. A Pipecat pipeline runs in the
-      background — Whisper STT + Kokoro TTS + LLM. Transcripts and control events flow
+      background, with Whisper STT + Kokoro TTS + LLM. Transcripts and control events flow
       back over the WebRTC data channel. <strong>Voice is a separate pipeline, not a
-      Skill</strong> — do not route it through the skill layer.
+      Skill</strong>. Do not route it through the skill layer.
+    </p>
+
+    <h2>How a request travels</h2>
+    <p>
+      A chat message is a good example of the moving parts. The browser POSTs to
+      <code>POST /api/chat</code>, and <code>chat.py</code> picks a skill from the
+      <code>ChatSkillRegistry</code> based on the request. The skill calls the
+      <code>llm_gateway</code> to reach a model, streams tokens back to the route, and
+      the route forwards them to the browser over Server-Sent Events. RAG and web
+      search follow the same shape, with an extra retrieval step before the model is
+      called.
+    </p>
+
+    <h2>Local development tips</h2>
+    <ul>
+      <li><strong>Hot reload.</strong> The backend runs with <code>uvicorn --reload</code> and the frontend with <code>npm run dev</code>; both rebuild on save.</li>
+      <li><strong>Start with a small local model.</strong> <code>gemma3:1b</code> through Ollama keeps everything on your machine while you build.</li>
+      <li><strong>Read the logs.</strong> Set <code>LOG_LEVEL=DEBUG</code> to see request routing, skill selection, and RAG retrieval scores.</li>
+      <li><strong>Containers are optional.</strong> <code>make dev</code> gives you the same stack with hot-reload if you would rather not manage Python and Node versions yourself.</li>
+    </ul>
+
+    <h2>Extending LiteMindUI</h2>
+    <p>
+      The skill layer is the main extension point. To add a capability, write a class
+      that implements <code>supports()</code>, <code>validate()</code>, and
+      <code>stream()</code>, then register it with the relevant registry. The API
+      routes never change, so new features stay isolated and testable. Voice is the one
+      intentional exception: it runs as its own Pipecat pipeline, not through a skill.
     </p>
 
     <h2>LLM provider backends</h2>
