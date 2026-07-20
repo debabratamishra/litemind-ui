@@ -13,7 +13,20 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.ingestion import enhanced_document_processor as edp
+
+
+@pytest.fixture(autouse=True)
+def _disable_easyocr(monkeypatch):
+    """Prevent `EnhancedDocumentProcessor.__init__` from loading a real
+    EasyOCR model (which would attempt a network download offline).
+
+    The constructor only calls ``easyocr.Reader`` when ``EASYOCR_AVAILABLE``
+    is True, so forcing it False keeps every test fully offline.
+    """
+    monkeypatch.setattr(edp, "EASYOCR_AVAILABLE", False)
 
 
 # ── Fake PyMuPDF (fitz) objects ────────────────────────────────────────────
@@ -524,6 +537,42 @@ def test_classify_document_type():
     assert processor._classify_document_type({
         "has_toc": False, "total_pages": 10, "avg_images_per_page": 0, "avg_text_density": 0.06
     }) == "text_heavy_document"
+
+    # presentation_or_visual_document: many images, very low text density
+    assert processor._classify_document_type({
+        "has_toc": False, "total_pages": 10, "avg_images_per_page": 5, "avg_text_density": 0.005
+    }) == "presentation_or_visual_document"
+
+    # report_with_figures: some images, moderate text density
+    assert processor._classify_document_type({
+        "has_toc": False, "total_pages": 10, "avg_images_per_page": 2, "avg_text_density": 0.03
+    }) == "report_with_figures"
+
+    # academic_paper: pages >= 5, very few images, moderate density (not > 0.05)
+    assert processor._classify_document_type({
+        "has_toc": False, "total_pages": 10, "avg_images_per_page": 0.05, "avg_text_density": 0.045
+    }) == "academic_paper"
+
+    # mixed_content_document: falls through every specific branch
+    assert processor._classify_document_type({
+        "has_toc": False, "total_pages": 10, "avg_images_per_page": 0.5, "avg_text_density": 0.03
+    }) == "mixed_content_document"
+
+
+def test_no_easyocr_model_load_on_construction(monkeypatch):
+    """Constructing the processor must NOT invoke ``easyocr.Reader`` (which
+    would download/load a real ML model). We stub ``easyocr`` with a recorder
+    and assert it is never called, confirming the offline guarantee.
+    """
+    recorder = MagicMock()
+    fake_easyocr = MagicMock()
+    fake_easyocr.Reader = recorder
+    monkeypatch.setattr(edp, "EASYOCR_AVAILABLE", False)
+    monkeypatch.setattr(edp, "easyocr", fake_easyocr)
+
+    edp.EnhancedDocumentProcessor()
+
+    assert recorder.call_count == 0, "easyocr.Reader was invoked — a model load occurred"
 
 
 # ── Module-level convenience functions delegate to the processor ───────────
