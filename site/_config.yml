@@ -1,0 +1,13 @@
+# LiteMindUI — GitHub Pages configuration
+# Published from the gh-pages branch (root).
+title: LiteMindUI
+description: >-
+  LiteMindUI is a private, local-first AI workspace for chat, document Q&A,
+  web search, and realtime voice — your data stays with you.
+url: "https://debabratamishra.github.io"
+baseurl: "/litemind-ui"
+markdown: kramdown
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
