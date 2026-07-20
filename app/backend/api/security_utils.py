@@ -34,6 +34,9 @@ def sanitize_filename(filename: str | None) -> str:
         if re.search(pattern, filename):
             raise ValueError(f"Filename contains dangerous pattern: {filename}")
 
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
+        raise ValueError("Filename contains invalid characters")
+
     if ext.lower() not in ALLOWED_EXTENSIONS:
         allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise ValueError(f"File extension '{ext}' not allowed. Allowed: {allowed}")
