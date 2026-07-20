@@ -60,8 +60,9 @@ suite must run offline with `uv run pytest` (backend) and `npm run test`
 - Files: `tests/<mirrored-path>/test_<module>.py`, mirroring `app/...`.
 - Run with `uv run pytest` (root). `anyio_mode = "auto"` covers `async def test_*`.
 - Mocks via `unittest.mock` (`MagicMock`/`AsyncMock`) and `monkeypatch`.
-- HTTP mocking via `respx` if available, else `httpx.MockTransport` / monkeypatched
-  `httpx.AsyncClient`. (Use whichever is installed after `uv sync --group all`.)
+- HTTP mocking via `httpx.MockTransport` / monkeypatched `httpx.AsyncClient`
+  (preferred — no new dependency). Only use `respx` if it is already installed by
+  `uv sync --group all`; do not add it as a new dependency.
 - Use FastAPI `TestClient` (sync wrapper) or `httpx.AsyncClient` +
   `ASGITransport` for API routes, with skill/LLM layers monkeypatched.
 - Each test is offline by construction; no real model loads or network.
