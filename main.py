@@ -634,8 +634,11 @@ async def check_file_duplicates(request: RagDuplicateCheckRequest):
         # Sanitize to mirror the check used during upload
         safe_filename = sanitize_filename(filename)
 
+        # Pre-flight check: the file is not on disk yet, so only do the
+        # filename-based duplicate check. Content-hash duplicates are still
+        # caught at upload time.
         is_duplicate, reason = rag_service._is_file_already_processed(
-            str(UPLOAD_FOLDER / safe_filename), safe_filename
+            str(UPLOAD_FOLDER / safe_filename), safe_filename, check_content_hash=False
         )
 
         return {
@@ -722,21 +725,22 @@ async def delete_rag_file(filename: str):
         if safe_filename != filename:
             raise HTTPException(status_code=400, detail="Invalid filename")
 
-        dest = UPLOAD_FOLDER / safe_filename
+        # Resolve the target from the trusted directory listing rather than
+        # constructing the path from the user-supplied name. The matched entry
+        # is a real path returned by the OS and is gated only by a basename
+        # comparison, so the filesystem sink contains no caller-controlled path
+        # component -- this removes any path-injection from the request.
         upload_resolved = UPLOAD_FOLDER.resolve()
+        target: Path | None = None
+        for entry in upload_resolved.iterdir():
+            if entry.is_file() and not entry.is_symlink() and entry.name == safe_filename:
+                target = entry
+                break
 
-        # Security check: only allow direct files under UPLOAD_FOLDER.
-        if dest.parent.resolve() != upload_resolved:
-            raise HTTPException(status_code=400, detail="Invalid filename")
-
-        if not dest.exists():
+        if target is None:
             raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
 
-        # Do not follow symlinks for delete.
-        if dest.is_symlink():
-            raise HTTPException(status_code=400, detail="Invalid filename")
-
-        dest.unlink()
+        target.unlink()
 
         # Remove from the RAG index (ChromaDB + BM25). This is a no-op if the
         # file was never successfully indexed.

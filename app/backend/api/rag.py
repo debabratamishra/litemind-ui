@@ -275,6 +275,8 @@ async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
                 yield chunk + "\n"
         except Exception as exc:
             logger.error("RAG stream error: %s", exc)
-            yield f"\n⚠️ Error: {exc}\n"
+            # Do not expose the exception (which may include a stack trace or
+            # internal details) to the client; surface a generic message only.
+            yield "\n⚠️ An error occurred while processing your request.\n"
 
     return StreamingResponse(event_generator(), media_type="text/plain")
