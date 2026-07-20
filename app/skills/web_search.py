@@ -45,7 +45,7 @@ class WebSearchChatSkill:
         return bool(request.use_web_search)
 
     def validate(self, request: ChatRequestEnhanced) -> SkillValidationResult:
-        validation = WebSearchService().validate_token()
+        validation = WebSearchService(api_key=request.serp_api_key).validate_token()
         if validation["valid"]:
             return SkillValidationResult(ok=True)
 
@@ -57,6 +57,7 @@ class WebSearchChatSkill:
             model=request.model,
             api_base=request.api_base,
             api_key=request.api_key,
+            serp_api_key=request.serp_api_key,
         )
 
         async for chunk in orchestrator.process_query(

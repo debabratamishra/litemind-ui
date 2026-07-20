@@ -13,7 +13,6 @@ services:
       - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
       - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
       - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
-      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}:ro
       # Production logs directory
       - ${HOST_LOGS_DIR:-./logs}:/app/logs
     environment:
@@ -81,24 +80,16 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.streamlit
+      dockerfile: Dockerfile.nextjs
     container_name: litemindui-frontend-prod
     network_mode: host
-    volumes:
-      - ${HOST_STREAMLIT_CONFIG_DIR:-./.streamlit}:${CONTAINER_STREAMLIT_CONFIG_DIR:-/app/.streamlit}:ro
-      # Production logs directory
-      - ${HOST_LOGS_DIR:-./logs}:/app/logs
     environment:
-      - FASTAPI_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=production
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
       - DEFAULT_OPENROUTER_MODEL=${DEFAULT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
       - ENVIRONMENT=production
-      - STREAMLIT_LOGGER_LEVEL=INFO
-      # Security settings
-      - STREAMLIT_SERVER_ENABLE_CORS=false
-      - STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true
-      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
       # Realtime voice (WebRTC) NAT traversal. With host networking (Linux) the
       # in-container peer shares the host network, so STUN is enough. Set the
       # TURN vars (and run a TURN server) if UDP is blocked or on Docker Desktop.
@@ -115,7 +106,7 @@ services:
     # Production security settings
     security_opt:
       - no-new-privileges:true
-    read_only: false  # Streamlit needs some write access
+    read_only: false  # Application needs some write access for runtime files
     tmpfs:
       - /tmp:noexec,nosuid,size=50m
     # Resource limits for frontend
@@ -129,7 +120,7 @@ services:
           cpus: ${FRONTEND_CPU_RESERVATION:-0.25}
     # Production health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
       interval: 30s
       timeout: 15s
       retries: 5

@@ -25,6 +25,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app.backend.api import chat as chat_api
+from app.backend.api import voice as voice_api
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.core.config import DEFAULT_RAG_CONFIG
 from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
@@ -90,6 +91,9 @@ class RAGQueryRequestEnhanced(BaseModel):
     top_p: Optional[float] = 0.9
     frequency_penalty: Optional[float] = 0.0
     repetition_penalty: Optional[float] = 1.0
+    min_p: Optional[float] = 0.0  # Minimum token probability floor (0.0 to 1.0)
+    seed: Optional[int] = None  # Fixed seed for reproducible outputs (None = random)
+    stop: Optional[List[str]] = None  # Sequences that halt generation
     is_voice_mode: Optional[bool] = False
     # Conversation memory fields
     session_id: Optional[str] = None
@@ -108,6 +112,10 @@ class RAGConfigRequest(BaseModel):
     embedding_api_base: Optional[str] = None
     embedding_api_key: Optional[str] = None
     chunk_size: int
+
+
+class RagDuplicateCheckRequest(BaseModel):
+    filename: str
 
 
 class STTRequest(BaseModel):
@@ -287,6 +295,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Cleanup failed: {e}")
 
+    # Tear down any open voice (WebRTC) peer connections
+    try:
+        from app.backend.api.voice import pcs_map
+
+        for conn in list(pcs_map.values()):
+            try:
+                await conn.disconnect()
+            except Exception:
+                pass
+        pcs_map.clear()
+        logger.info("Voice peer connections cleaned up")
+    except Exception as e:
+        logger.warning(f"Voice peer cleanup failed: {e}")
+
     logger.info("LiteMindUI API shutting down...")
 
 
@@ -300,7 +322,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8501", "http://127.0.0.1:8501"],
+    allow_origins=[
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -308,6 +335,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(chat_api.router)
+app.include_router(voice_api.router)
 
 # Templates
 try:
@@ -346,9 +374,9 @@ async def readiness_check():
 
         return status if status["status"] == "ready" else JSONResponse(status_code=503, content=status)
 
-    except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
-        return JSONResponse(status_code=503, content={"status": "error", "error": str(e)})
+    except Exception:
+        logger.exception("Readiness check failed")
+        return JSONResponse(status_code=503, content={"status": "error", "error": "Readiness check failed"})
 
 
 def _get_ollama_url() -> str:
@@ -415,9 +443,9 @@ async def get_rag_status():
             "indexed_chunks": collection_count,
             "bm25_corpus_size": len(rag_service.bm25_corpus) if rag_service.bm25_corpus else 0,
         }
-    except Exception as e:
-        logger.error(f"RAG status error: {e}")
-        return {"status": "error", "message": str(e)}
+    except Exception:
+        logger.exception("Failed to get RAG status")
+        return {"status": "error", "message": "Failed to retrieve RAG status"}
 
 
 @app.post("/api/rag/save_config")
@@ -557,8 +585,11 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
                                 ),
                             }
                         )
-                except Exception as e:
-                    results.append({"filename": filename, "status": "error", "message": str(e), "chunks_created": 0})
+                except Exception:
+                    logger.exception("Failed to process uploaded file: %s", filename)
+                    results.append(
+                        {"filename": filename, "status": "error", "message": "Failed to process file", "chunks_created": 0}
+                    )
 
         if saved_paths:
             await asyncio.gather(*(process_one(path_info) for path_info in saved_paths))
@@ -584,57 +615,38 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
 
 
 @app.post("/api/rag/check-duplicates")
-async def check_file_duplicates(files: List[UploadFile] = File(...)):
-    """Check if uploaded files are duplicates without processing them."""
+async def check_file_duplicates(request: RagDuplicateCheckRequest):
+    """Check if an uploaded file is a duplicate without processing it.
+
+    The frontend pre-flight sends the filename as JSON; we do a filename-based
+    duplicate check against already-processed files. Content-hash duplicates are
+    still caught at upload time, so this only prevents redundant uploads of the
+    same filename.
+    """
     try:
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
 
-        results = []
+        filename = request.filename
+        if not filename:
+            raise HTTPException(status_code=400, detail="filename is required")
 
-        for up in files:
-            try:
-                # Sanitize filename to prevent path traversal
-                safe_filename = sanitize_filename(up.filename or "")
-            except ValueError as e:
-                results.append(
-                    {"filename": up.filename, "is_duplicate": False, "reason": f"Invalid filename: {str(e)}"}
-                )
-                continue
+        # Sanitize to mirror the check used during upload
+        safe_filename = sanitize_filename(filename)
 
-            # Save file temporarily to calculate hash
-            temp_path = UPLOAD_FOLDER / f"temp_{safe_filename}"
+        # Pre-flight check: the file is not on disk yet, so only do the
+        # filename-based duplicate check (no file-system access). Content-hash
+        # duplicates are still caught at upload time.
+        is_duplicate, reason = rag_service._is_filename_already_processed(safe_filename)
 
-            # Security check: ensure temp_path is within UPLOAD_FOLDER
-            try:
-                temp_resolved = temp_path.resolve()
-                upload_resolved = UPLOAD_FOLDER.resolve()
-                if not str(temp_resolved).startswith(str(upload_resolved)):
-                    raise ValueError("Path traversal attempt detected")
-            except (ValueError, OSError, RuntimeError) as e:
-                results.append({"filename": up.filename, "is_duplicate": False, "reason": f"Security error: {str(e)}"})
-                continue
+        return {
+            "is_duplicate": is_duplicate,
+            "filename": filename,
+            "message": reason if is_duplicate else "",
+        }
 
-            try:
-                with open(temp_path, "wb") as f:
-                    f.write(await up.read())
-
-                is_duplicate, reason = rag_service._is_file_already_processed(str(temp_path), safe_filename)
-
-                results.append(
-                    {
-                        "filename": up.filename,
-                        "is_duplicate": is_duplicate,
-                        "reason": reason if is_duplicate else "File is new and can be processed",
-                    }
-                )
-
-            finally:
-                if temp_path.exists():
-                    temp_path.unlink()
-
-        return {"status": "completed", "results": results}
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error checking duplicates: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to check duplicates: {str(e)}")
@@ -664,6 +676,83 @@ async def reset_rag_system():
     except Exception as e:
         logger.error(f"Reset error: {e}")
         raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
+
+
+@app.get("/api/rag/files")
+async def list_rag_files():
+    """List the files currently in the knowledge base."""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        files = []
+        for path in sorted(UPLOAD_FOLDER.iterdir()):
+            if not path.is_file():
+                continue
+            chunks = 0
+            info = rag_service.processed_files.get(path.name)
+            if info:
+                chunks = info.get("chunk_count", 0)
+            files.append(
+                {
+                    "filename": path.name,
+                    "size": path.stat().st_size,
+                    "chunks": chunks,
+                }
+            )
+
+        return {"files": files}
+    except Exception as e:
+        logger.error(f"List RAG files error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
+
+@app.delete("/api/rag/files/{filename}")
+async def delete_rag_file(filename: str):
+    """Delete a single file from the knowledge base."""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        try:
+            safe_filename = sanitize_filename(filename)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Require exact canonical filename form from clients.
+        if safe_filename != filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        # Resolve the target from the trusted directory listing rather than
+        # constructing the path from the user-supplied name. The matched entry
+        # is a real path returned by the OS and is gated only by a basename
+        # comparison, so the filesystem sink contains no caller-controlled path
+        # component -- this removes any path-injection from the request.
+        upload_resolved = UPLOAD_FOLDER.resolve()
+        target: Path | None = None
+        for entry in upload_resolved.iterdir():
+            if entry.is_file() and not entry.is_symlink() and entry.name == safe_filename:
+                target = entry
+                break
+
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
+
+        target.unlink()
+
+        # Remove from the RAG index (ChromaDB + BM25). This is a no-op if the
+        # file was never successfully indexed.
+        rag_service.remove_processed_file(safe_filename)
+
+        return {
+            "message": f"Deleted '{filename}'.",
+            "filename": filename,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete RAG file error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
 
 @app.post("/api/rag/query")
@@ -771,9 +860,9 @@ async def get_tts_status():
     try:
         tts_service = get_tts_service()
         return tts_service.get_status()
-    except Exception as e:
-        logger.error(f"Failed to get TTS status: {e}")
-        return {"available": False, "error": str(e)}
+    except Exception:
+        logger.exception("Failed to get TTS status")
+        return {"available": False, "error": "Failed to retrieve TTS status"}
 
 
 @app.post("/api/tts/synthesize-chunk")

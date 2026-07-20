@@ -96,18 +96,7 @@ download_files() {
 # Basic setup script for Docker Hub installation
 
 # Create necessary directories
-mkdir -p uploads chroma_db storage .streamlit logs
-
-# Create basic .streamlit config
-mkdir -p .streamlit
-cat > .streamlit/config.toml << 'CONFIG_EOF'
-[server]
-address = "localhost"
-port = 8501
-
-[browser]
-serverAddress = "localhost"
-CONFIG_EOF
+mkdir -p uploads chroma_db storage logs
 
 if [ ! -f ".env" ]; then
 cat > .env << 'ENV_EOF'
@@ -138,10 +127,7 @@ run_setup() {
         ./"$SETUP_SCRIPT"
     else
         # Fallback setup
-        mkdir -p uploads chroma_db storage .streamlit logs
-        echo "[server]" > .streamlit/config.toml
-        echo "address = \"localhost\"" >> .streamlit/config.toml
-        echo "port = 8501" >> .streamlit/config.toml
+        mkdir -p uploads chroma_db storage logs
     fi
     
     echo -e "${GREEN}✅ Setup completed${NC}"
@@ -163,7 +149,7 @@ start_services() {
         echo "🎉 LiteMindUI is now running!"
         echo ""
         echo "Access Points:"
-        echo "  • Frontend (Streamlit): http://localhost:8501"
+        echo "  • Frontend (Next.js): http://localhost:3000"
         echo "  • Backend API: http://localhost:8000"
         echo "  • API Documentation: http://localhost:8000/docs"
         echo ""

@@ -1,147 +1,197 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+> Guidance for Claude Code and other AI coding assistants working in this repository.
+> See also: `AGENTS.md` (universal rules) and `CONSTITUTION.md` (coding standards).
 
-## Commands
+## Quick-reference commands
 
 ```bash
-# Install all dependencies (backend + frontend + dev)
-uv sync --group all
+# ── Python / backend ──────────────────────────────────────────────
+uv sync --group all                   # install all dependency groups
+uv sync --group backend               # backend only
+uv sync --group dev                   # dev tools only (ruff, black, mypy, ty, pytest)
 
-# Install only specific groups
-uv sync --group backend
-uv sync --group frontend
-uv sync --group dev
+uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload   # start backend
 
-# Start backend (FastAPI)
-uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run pytest                         # run all tests
+uv run pytest tests/test_file.py      # run a single test file
+uv run pytest -x -q                   # fail-fast, quiet
 
-# Start frontend (Streamlit)
-uv run streamlit run streamlit_app.py --server.port 8501
+uv run ruff check .                   # lint (ruff)
+uv run ruff format .                  # format (ruff)
+uv run black .                        # alternative formatter (line-length 120)
+uv run ty check app/backend app/services app/core app/ingestion app/skills main.py config.py logging_config.py
+uv run mypy .                         # type check
 
-# Run tests
-uv run pytest
+# ── Next.js frontend ──────────────────────────────────────────────
+cd nextjs-frontend
+npm install
+npm run dev           # dev server at http://localhost:3000
+npm run build         # production build
+npm start             # production server
+npm run lint          # eslint (Next.js core-web-vitals + TypeScript)
 
-# Run a single test file
-uv run pytest tests/test_file.py
+# ── Docker (primary workflow) ─────────────────────────────────────
+make up               # default compose stack (builds images locally)
+make dev              # development compose with hot-reload
+make prod             # production compose
+make hub-up           # pull and run prebuilt Docker Hub images
+make down             # stop all services
+make logs             # tail compose logs
+make health           # run health-check script
+make clean            # full teardown (containers + images + volumes)
+make restart          # down + up
 
-# Lint
-uv run ruff check .
-
-# Format
-uv run black .
-
-# Type check
-uv run mypy .
-
-# Docker (primary development workflow)
-make up          # default compose stack
-make dev         # development compose stack
-make prod        # production compose stack
-make logs        # tail container logs
-make health      # health check
-make down        # stop services
-make clean       # full cleanup
-
-# Version management
-# python3 scripts/version.py bump patch|minor|major
-# python3 scripts/version.py current
-# python3 scripts/version.py tag
+# ── Version management ────────────────────────────────────────────
+python3 scripts/version.py current
+python3 scripts/version.py bump patch   # or minor / major
+python3 scripts/version.py tag
+# version is stored in version.json; pyproject.toml is kept in sync manually
 ```
 
-## Architecture
+## Architecture overview
 
-LiteMindUI is a **local-first AI workspace** with a **FastAPI backend** and a **Streamlit frontend** for chat, RAG, web search, and voice-enabled workflows.
+LiteMindUI is a **local-first AI workspace** supporting chat, RAG, web search, and realtime voice workflows.
 
-### Two-Process Architecture
+### Processes and ports
 
-The app runs as two separate processes that communicate over HTTP:
+| Process | Entry point | Default port |
+|---------|------------|-------------|
+| FastAPI backend | `main.py` | 8000 |
+| Next.js frontend (primary) | `nextjs-frontend/` | 3000 |
 
-1. **FastAPI backend** (`main.py`) — serves API endpoints on port 8000
-2. **Streamlit frontend** (`streamlit_app.py`) — serves UI on port 8501, calls backend via HTTP
+The frontend calls the backend exclusively over HTTP. They share no Python imports.
 
-### Directory Layout
+### Directory layout
 
 ```
 app/
-  backend/          FastAPI routes, Pydantic schemas, and backend config
-    api/            Route handlers (chat.py, rag.py, models.py, health.py, security_utils.py)
-    core/           Backend-specific config (embeddings, model helpers, BackendConfig)
-    models/         Pydantic request/response models
-  frontend/         Streamlit UI layer
-    pages/          Page-level components (chat_page.py, rag_page.py)
-    components/     Reusable UI components (voice_input, tts, generative_ui, sidebar, etc.)
-    services/       HTTP client for backend REST API (backend_service, chat_service, rag_service)
-    config.py       Frontend config (URLs, timeouts, system prompts)
-    utils/          Audio recording, memory management, text processing
-  core/             Shared utilities (environment detection, RAG formats, text markup)
-  services/         Backend service layer (business logic)
-    llm_gateway.py  Unified LLM transport via LiteLLM (Ollama, OpenRouter, Nvidia NIM)
-    rag_service.py  RAG: ChromaDB + BM25 hybrid retrieval, document ingestion, answer composition
-    rag_multi_agent.py  CrewAI multi-agent RAG orchestrator
-    conversation_memory.py  Multi-turn conversation memory with summarization
-    conversation_db.py  SQLite conversation persistence
-    web_search_service.py  SerpAPI web search client
-    web_search_crew.py  CrewAI web search orchestrator
-    speech_service.py  Speech-to-text (Whisper via transformers)
-    tts_service.py  Text-to-speech (kokoro primary, pyttsx3 fallback)
-    host_service_manager.py  Docker/native environment detection, service connectivity
-    ollama.py       Direct Ollama HTTP client
-  ingestion/        Document processing pipeline
-    file_ingest.py  Format detection, text extraction, chunking
-    enhanced_document_processor.py  PDF/DOCX/EPUB enhanced extraction
-    enhanced_extractors.py  CSV/image enhanced extraction with OCR
-  skills/           Pluggable skill layer for routing requests
-    base.py         Protocol definitions (StreamingChatSkill, StreamingRAGSkill)
-    registry.py     ChatSkillRegistry and RAGSkillRegistry for skill resolution
-    web_search.py   Web search chat skill
-    rag.py          Standard and multi-agent RAG skills
-main.py             FastAPI entrypoint (lifespan, route registration, startup)
-streamlit_app.py    Streamlit entrypoint (page config, session state, routing)
-config.py           Global config (paths, URLs, performance tuning)
-logging_config.py   Structured logging setup
+  backend/
+    api/          Route handlers: chat.py, rag.py, models.py, health.py, security_utils.py, voice.py (WebRTC SDP signaling)
+    core/         Backend-specific config, embedding helpers, BackendConfig, DEFAULT_RAG_CONFIG
+    models/       Pydantic request/response models
+  core/           Shared utilities: environment detection, RAG formats, text markup
+  services/       Backend business logic
+    llm_gateway.py          Unified LLM transport (LiteLLM + Ollama direct client)
+    rag_service.py          ChromaDB + BM25 hybrid retrieval, ingestion, answer composition
+    rag_multi_agent.py      CrewAI multi-agent RAG orchestrator
+    conversation_memory.py  Multi-turn memory with auto-summarisation
+    conversation_db.py      SQLite conversation persistence
+    web_search_service.py   SerpAPI REST client
+    web_search_crew.py      CrewAI web-search orchestrator
+    speech_service.py       STT via Whisper (transformers)
+    tts_service.py          TTS via kokoro (primary) / pyttsx3 (fallback)
+    voice_pipeline.py       Realtime voice: Pipecat pipeline (Whisper STT + Kokoro TTS + LLM)
+    tts_text_processing.py  Text cleanup (markdown/URLs) before TTS synthesis
+    host_service_manager.py Environment-aware config (Docker vs native)
+    ollama.py               Direct Ollama HTTP client
+  ingestion/
+    file_ingest.py                     Format detection, text extraction, chunking
+    enhanced_document_processor.py     PDF/DOCX/EPUB
+    enhanced_extractors.py             CSV/image + EasyOCR
+  skills/         Pluggable skill routing
+    base.py        Protocol definitions (StreamingChatSkill, StreamingRAGSkill)
+    registry.py    ChatSkillRegistry / RAGSkillRegistry
+    web_search.py  Web-search chat skill
+    rag.py         Standard and multi-agent RAG skills
+nextjs-frontend/
+  src/
+    app/           Next.js 16 App Router pages and layouts
+    components/    Shared React components (shadcn/ui based)
+    hooks/         Custom React hooks
+    lib/           Utility functions, API clients
+main.py            FastAPI entry point (lifespan, route registration)
+config.py          Global Config class (env vars, paths, performance tuning)
+logging_config.py  Structured logging setup
+pyproject.toml     Python dependency manifest + tool config
+version.json       Canonical version { version, major, minor, patch, build_date, git_commit }
+Makefile           Docker lifecycle commands
 ```
 
-### Key Design Patterns
+### Key design patterns
 
-**LiteLLM Gateway** (`app/services/llm_gateway.py`): A unified transport layer that abstracts LLM providers. Supports three backends: `ollama`, `openrouter`, and `nvidia_nim`. For Ollama, it bypasses LiteLLM's streaming and uses the `ollama` Python client directly to avoid a LiteLLM streaming bug. The `resolve_backend_config()` function normalizes backend names, API bases, and API keys from request parameters or environment variables.
+**LiteLLM Gateway** (`app/services/llm_gateway.py`)
+Unified transport for `ollama`, `openrouter`, and `nvidia_nim`. For Ollama, uses the native `ollama` Python client directly (bypasses LiteLLM streaming) to avoid a known upstream bug. `resolve_backend_config()` normalises provider names, API bases, and keys from request params or env vars.
 
-**Pluggable Skill Layer** (`app/skills/`): Chat and RAG requests are routed through registries (`ChatSkillRegistry`, `RAGSkillRegistry`) that resolve the first matching skill. Each skill implements a protocol (`StreamingChatSkill`, `StreamingRAGSkill`) with `supports()`, `validate()`, and `stream()` methods. This allows adding new capabilities (web search, multi-agent RAG, etc.) without modifying the API routes.
+**Pluggable Skill Layer** (`app/skills/`)
+Chat and RAG requests route through `ChatSkillRegistry` / `RAGSkillRegistry`. Each skill implements `supports()`, `validate()`, `stream()`. Add new capabilities here without touching API routes.
 
-**RAG System** (`app/services/rag_service.py`): Uses ChromaDB for vector storage with configurable embedding providers (HuggingFace sentence-transformers, Ollama, OpenRouter, Nvidia NIM). Hybrid search combines vector similarity (ChromaDB) with keyword retrieval (BM25). Documents go through a pipeline: format detection → text extraction → chunking → embedding → indexing.
+**RAG System** (`app/services/rag_service.py`)
+ChromaDB vector store + BM25 keyword retrieval (hybrid search). Configurable embedding providers (sentence-transformers, Ollama, OpenRouter, Nvidia NIM). Documents: format detection → extraction → chunking → embedding → indexing.
 
-**Conversation Memory** (`app/services/conversation_memory.py`): Manages multi-turn conversation context with automatic summarization. When token count exceeds 75% of the 24K context limit, older messages are summarized. Supports session-based memory with SQLite persistence.
+**Conversation Memory** (`app/services/conversation_memory.py`)
+Session-based multi-turn context. Summarises older messages when token count exceeds 75 % of the 24 K context limit. Persisted in SQLite.
 
-**Environment Detection** (`app/core/environment.py`): Singleton `EnvironmentDetector` that detects Docker vs native execution using multiple heuristics (`.dockerenv` file, cgroup info, environment variables, mount points). `HostServiceManager` (`app/services/host_service_manager.py`) builds on this to provide environment-aware configuration (Ollama URLs, cache directories, paths).
+**Generative UI** (`app/backend/api/chat.py`)
+When `enable_generative_ui` is set, the LLM emits `` `ui:component_name` `` fenced blocks. The Next.js frontend renders these as charts, tables, metrics, progress bars, and iframe apps.
 
-**Generative UI** (`app/backend/api/chat.py`): When `enable_generative_ui` is set, the system prompt instructs the LLM to emit rich UI components using ````ui:component_name` fenced code blocks. The Streamlit frontend renders these as rich components (data tables, charts, metrics, webapps, iframe apps, etc.).
+### Realtime voice mode (`app/backend/api/voice.py`, `app/services/voice_pipeline.py`)
+Browser and server establish a WebRTC peer connection. The browser POSTs an SDP
+offer to `POST /api/voice/offer`; the server answers and runs a Pipecat pipeline
+(`build_voice_pipeline` → `run_voice_pipeline`) as a background task. All
+transcript/control events flow back over the WebRTC data channel.
 
-### Key Configuration
+- STT: `BackendWhisperSTTService` (segmented, VAD-gated). TTS: `BackendKokoroTTSService`.
+- The LLM leg is `BackendLLMService` (subclasses `BaseOpenAILLMService`); `process_frame`
+  drives inference, so do not call the LLM gateway directly inside the voice pipeline.
+- Backend→browser events: `ready`, `user_transcript`, `assistant_text`, `assistant_end`,
+  `error`, `ended`. Full contract: `docs/superpowers/specs/2026-07-18-realtime-voice-mode-design.md`.
+- Voice is a **separate pipeline, not a Skill** — do not route it through the skill layer.
 
-- `.env` / `.env.example` — all environment variables
-- `config.py` — `Config` class loads env vars, detects container environment, sets paths and performance tuning
-- `app/backend/core/config.py` — `BackendConfig` manages RAG config persistence and dynamic settings
-- `app/frontend/config.py` — frontend URLs, timeouts, system prompts
+### LLM provider backends
 
-### Document Processing
-
-The ingestion pipeline (`app/ingestion/`) supports: PDF (PyMuPDF + pdfplumber + Camelot tables), DOCX, PPTX, XLSX, EPUB, RTF, ODF, HTML, CSV, images (with EasyOCR fallback), and plain text. Chunking is configurable by size. Image indexing within documents is optional (`ENABLE_SIMPLE_IMAGE_INDEXING`).
-
-### LLM Provider Backends
-
-| Backend | Config | Default Model |
-|---------|--------|---------------|
-| Ollama | `OLLAMA_API_URL` | `gemma3:1b` |
-| OpenRouter | `OPENROUTER_API_KEY` | `openai/gpt-4o-mini` |
+| Backend | Key env var | Default model |
+|---------|------------|---------------|
+| Ollama (local) | `OLLAMA_API_URL` | `gemma3:1b` |
+| OpenRouter | `OPENROUTER_API_KEY` | `meta-llama/llama-3.3-70b-instruct` |
 | Nvidia NIM | `NVIDIA_NIM_API_KEY` | `meta/llama3-70b-instruct` |
 
-### Docker Deployments
+### Key environment variables
 
-- `Dockerfile` — backend image
-- `Dockerfile.streamlit` — frontend image
-- `docker-compose.yml` — default (local build)
-- `docker-compose.dev.yml` — development (hot reload)
-- `docker-compose.prod.yml` — production
-- `docker-compose.hub.yml` — prebuilt images from Docker Hub
-- `install.sh` — quick installer pulling Docker Hub images
-- `scripts/` — health checks, startup validation, cache setup, Docker setup helpers
+Copy `.env.example` → `.env` and fill in secrets. Critical variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `OLLAMA_API_URL` | Ollama server URL (default `http://localhost:11434`) |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `NVIDIA_NIM_API_KEY` | Nvidia NIM API key |
+| `SERP_API_KEY` | SerpAPI key for web search |
+| `SECRET_KEY` | Flask/FastAPI secret (change in production) |
+| `CHROMA_DB_PATH` | ChromaDB storage path |
+| `UPLOAD_FOLDER` | Document upload directory |
+| `LOG_LEVEL` | Logging verbosity (`INFO` / `DEBUG`) |
+
+## CI / CD
+
+| Workflow | Trigger | What it does |
+|----------|---------|-------------|
+| `pr-checks.yml` | PR → `main` / `develop` | Python syntax compile, ruff lint, ty type-check |
+| `docker-publish.yml` | Push to `main` / tags | Build and push backend + frontend Docker images to Docker Hub |
+| `release.yml` | PR merged to `main` | Bumps `version.json`, creates git tag and GitHub release |
+
+PRs are labelled `patch` (default), `minor`, or `major` to control the version bump.
+
+## Document ingestion formats
+
+PDF (PyMuPDF + pdfplumber + Camelot tables), DOCX, PPTX, XLSX, EPUB, RTF, ODF, HTML, CSV, images (EasyOCR fallback), plain text.
+
+## Docker images
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Backend image |
+| `Dockerfile.nextjs` | Next.js frontend image |
+| `docker-compose.yml` | Default (local build) |
+| `docker-compose.dev.yml` | Development (hot-reload) |
+| `docker-compose.prod.yml` | Production |
+| `docker-compose.hub.yml` | Docker Hub prebuilt images |
+
+## Working in this repo
+
+- Always read the relevant source file(s) before making changes.
+- Run `uv run ruff check .` and `uv run ty check ...` before considering a Python change done.
+- Run `npm run lint` inside `nextjs-frontend/` before considering a TypeScript change done.
+- Follow the style conventions in `CONSTITUTION.md`.
+- Do not modify `version.json` manually; use `python3 scripts/version.py bump`.
+- Do not commit `.env` (it is in `.gitignore`); update `.env.example` instead.
+- Tests live in `tests/`. Add or update tests when fixing bugs or adding features.

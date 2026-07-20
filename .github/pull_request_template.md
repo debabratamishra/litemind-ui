@@ -31,15 +31,14 @@
 - [ ] Tested frontend functionality
 - [ ] Tested backend API endpoints
 - [ ] Tested RAG functionality
+- [ ] Tested Web Search functionality
 - [ ] Tested with Ollama backend
+- [ ] Tested with NIM backend
+- [ ] Tested with OpenRouter backend
 
 ## 📸 Screenshots (if applicable)
 
 <!-- Add screenshots to help explain your changes -->
-
-## 📝 Additional Notes
-
-<!-- Any additional information, breaking changes, deprecations, etc. -->
 
 ## ✅ Checklist
 

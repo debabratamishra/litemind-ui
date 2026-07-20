@@ -87,7 +87,7 @@ body:
       description: |
         Provide system information to help debug the issue
       placeholder: |
-        - OS: [e.g. macOS 14.0, Ubuntu 20.04, Windows 11]
+        - OS: [e.g. macOS 26.0, Ubuntu 22.04, Windows 11]
         - Docker Version: [e.g. 20.10.8]
         - Python Version: [e.g. 3.13.0]
     validations:

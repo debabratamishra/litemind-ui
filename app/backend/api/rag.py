@@ -51,9 +51,9 @@ async def get_rag_status():
             bm25_corpus_size=len(rag_service.bm25_corpus) if rag_service.bm25_corpus else 0,
         )
 
-    except Exception as e:
-        logger.error(f"RAG status error: {e}")
-        return RAGStatusResponse(status="error", message=str(e))
+    except Exception:
+        logger.exception("Failed to get RAG status")
+        return RAGStatusResponse(status="error", message="Failed to retrieve RAG status")
 
 
 @router.post("/save_config")
@@ -269,7 +269,14 @@ async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
 
     async def event_generator():
         logger.info("Routing RAG query through skill '%s'", skill.name)
-        async for chunk in skill.stream(request, rag_service):
-            yield chunk + "\n"
+
+        try:
+            async for chunk in skill.stream(request, rag_service):
+                yield chunk + "\n"
+        except Exception as exc:
+            logger.error("RAG stream error: %s", exc)
+            # Do not expose the exception (which may include a stack trace or
+            # internal details) to the client; surface a generic message only.
+            yield "\n⚠️ An error occurred while processing your request.\n"
 
     return StreamingResponse(event_generator(), media_type="text/plain")

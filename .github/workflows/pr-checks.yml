@@ -29,7 +29,7 @@ jobs:
 
       - name: Validate Python compiles
         run: |
-          python -m compileall -q app main.py streamlit_app.py || {
+          python -m compileall -q app main.py || {
             echo 'Python syntax errors detected.';
             exit 1;
           }
@@ -77,8 +77,6 @@ jobs:
           python-version: "3.13"
 
       # Backend + dev groups cover the core application code that `ty` checks.
-      # The Streamlit frontend (app/frontend) is excluded from ty to avoid
-      # pulling the heavy Streamlit/Pipecat stack into every PR check.
       - name: Install backend + dev dependencies
         run: uv sync --group backend --group dev
 

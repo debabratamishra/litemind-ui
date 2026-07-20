@@ -78,41 +78,9 @@ backend = [
     "accelerate",
 ]
 
-# Frontend: Streamlit + Audio/Voice
-frontend = [
-    # Shared core dependencies
-    "python-dotenv",
-    "psutil",
-    
-    # Streamlit
-    "streamlit",
-    "streamlit-audiorecorder",
-    "streamlit-webrtc",
-    "av",
-    "webrtcvad",
-    
-    # Pipecat (VAD + turn detection) - requires torch for Silero
-    "pipecat-ai[silero,local-smart-turn-v3]",
-    "torch",
-    
-    # Audio Processing
-    "librosa",
-    "soundfile",
-    "numpy",
-    
-    # Text Processing
-    "wordfreq",
-    "nltk",
-    
-    # HTTP client for backend communication
-    "httpx",
-    "requests",
-]
-
 [tool.uv]
 # Dependency groups for optional installation
 # Backend: FastAPI, ML, RAG
-# Frontend: Streamlit, audio
 # Dev: testing and code quality
 
 [dependency-groups]
@@ -181,36 +149,6 @@ backend = [
     "accelerate",
 ]
 
-frontend = [
-    # Shared core dependencies
-    "python-dotenv",
-    "psutil",
-    
-    # Streamlit
-    "streamlit",
-    "streamlit-audiorecorder",
-    "streamlit-webrtc",
-    "av",
-    "webrtcvad",
-    
-    # Pipecat (VAD + turn detection) - requires torch for Silero
-    "pipecat-ai[silero,local-smart-turn-v3]",
-    "torch",
-    
-    # Audio Processing
-    "librosa",
-    "soundfile",
-    "numpy",
-    
-    # Text Processing
-    "wordfreq",
-    "nltk",
-    
-    # HTTP client for backend communication
-    "httpx",
-    "requests",
-]
-
 dev = [
     "pytest",
     "pytest-cov",
@@ -218,6 +156,13 @@ dev = [
     "ruff",
     "mypy",
     "ty>=0.0.60",
+]
+
+voice = [
+    # Realtime voice mode: Pipecat WebRTC transport + Silero VAD (core includes both)
+    "pipecat-ai",
+    # Optional dep required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
+    "aiortc",
 ]
 
 # All dependencies for local development (both backend and frontend)
@@ -274,23 +219,13 @@ all = [
     "pyttsx3",
     "kokoro",
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-    
-    # Streamlit
-    "streamlit",
-    "streamlit-audiorecorder",
-    "streamlit-webrtc",
-    "av",
-    "webrtcvad",
-    
-    # Pipecat (VAD + turn detection)
-    "pipecat-ai[silero,local-smart-turn-v3]",
-    
+
     # Audio Processing
     "librosa",
     "soundfile",
-    
-    # Text Processing
-    "wordfreq",
+    "pipecat-ai",
+    # Required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
+    "aiortc",
 ]
 
 # Configure PyTorch to use CPU-only version
@@ -330,3 +265,33 @@ disallow_untyped_defs = false
 
 [tool.ty]
 environment = { python-version = "3.13" }
+
+# `pipecat` is an optional dependency (the `voice` group) that is NOT installed in
+# CI's `ty` job, which installs only `--group backend --group dev`. Allow its
+# submodules as unresolved imports so type-checking of the voice pipeline does not
+# fail in CI. New `pipecat.*` imports must be added here to avoid `unresolved-import`.
+[tool.ty.analysis]
+allowed-unresolved-imports = [
+    "pipecat.audio.vad.silero",
+    "pipecat.audio.vad.vad_analyzer",
+    "pipecat.frames.frames",
+    "pipecat.pipeline.pipeline",
+    "pipecat.pipeline.worker",
+    "pipecat.processors.aggregators.llm_context",
+    "pipecat.processors.aggregators.llm_response_universal",
+    "pipecat.processors.audio.vad_processor",
+    "pipecat.processors.frame_processor",
+    "pipecat.services.openai.base_llm",
+    "pipecat.services.settings",
+    "pipecat.services.stt_service",
+    "pipecat.services.tts_service",
+    "pipecat.transports.base_transport",
+    "pipecat.transports.smallwebrtc.connection",
+    "pipecat.transports.smallwebrtc.transport",
+    "pipecat.workers.runner",
+]
+
+[tool.pytest.ini_options]
+# Async tests (Pipecat voice pipeline) run via the anyio pytest plugin, which
+# is auto-discovered; enable auto mode so plain `async def test_*` are run.
+anyio_mode = "auto"

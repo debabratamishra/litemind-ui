@@ -105,18 +105,17 @@ ensure_directories() {
         "uploads"
         "chroma_db"
         "storage"
-        ".streamlit"
     )
-    
+
     for dir in "${directories[@]}"; do
         if [[ ! -d "$dir" ]]; then
             mkdir -p "$dir"
             print_status "Created directory: $dir"
         fi
     done
-    
+
     # Set proper permissions
-    chmod 755 logs uploads chroma_db storage .streamlit 2>/dev/null || true
+    chmod 755 logs uploads chroma_db storage 2>/dev/null || true
 }
 
 # Function to validate Docker setup

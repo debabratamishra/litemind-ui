@@ -245,8 +245,7 @@ class HostServiceManager:
             "ollama_cache": str(ollama_cache),
             "uploads": str(Path("./uploads").resolve()),
             "chroma_db": str(Path("./chroma_db").resolve()),
-            "storage": str(Path("./storage").resolve()),
-            "streamlit_config": str(Path("./.streamlit").resolve())
+            "storage": str(Path("./storage").resolve())
         }
 
     def ensure_directories_exist(self) -> Dict[str, bool]:

@@ -118,7 +118,7 @@ class HealthChecker:
             "fastapi_health": "http://localhost:8000/health",
             "fastapi_ready": "http://localhost:8000/health/ready",
             "fastapi_live": "http://localhost:8000/health/live",
-            "streamlit": "http://localhost:8501/_stcore/health"
+            "frontend": "http://localhost:3000/"
         }
 
         results = {}

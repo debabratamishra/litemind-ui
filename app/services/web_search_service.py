@@ -5,7 +5,7 @@ and format results for the web-search orchestration pipeline.
 """
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -24,35 +24,47 @@ DEFAULT_NUM_RESULTS = 10
 class WebSearchService:
     """Service for interacting with SerpAPI to perform web searches."""
 
-    def __init__(self):
-        """Initialize the web search service and load API key from environment."""
-        self.api_key = os.getenv("SERP_API_KEY")
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize the web search service.
+
+        Args:
+            api_key: Optional SerpAPI key override. When provided (e.g. a
+                user-supplied client key) it takes precedence over the
+                ``SERP_API_KEY`` environment variable.
+        """
+        override = (api_key or "").strip()
+        self.api_key = override or os.getenv("SERP_API_KEY")
         self.base_url = SERP_API_BASE_URL
         self.timeout = SERP_API_TIMEOUT
 
         if not self.api_key or self.api_key == "your-serpapi-key-here":
             logger.warning("SERP_API_KEY not configured or using placeholder value")
 
-    def validate_token(self) -> Dict[str, Any]:
+    def validate_token(self, api_key: Optional[str] = None) -> Dict[str, Any]:
         """Validate the presence and basic format of the SerpAPI token.
+
+        Args:
+            api_key: Optional key to validate instead of the configured one
+                (e.g. a user-supplied client key).
 
         Returns:
             dict: Status dictionary with 'valid' (bool) and 'message' (str) keys
         """
-        if not self.api_key:
+        key = (api_key or "").strip() or self.api_key
+        if not key:
             return {
                 "valid": False,
                 "message": "SERP_API_KEY environment variable is not set"
             }
 
-        if self.api_key == "your-serpapi-key-here":
+        if key == "your-serpapi-key-here":
             return {
                 "valid": False,
                 "message": "SERP_API_KEY is using placeholder value. Please configure a valid API key."
             }
 
         # Basic format check - SerpAPI keys are typically alphanumeric
-        if len(self.api_key) < 10:
+        if len(key) < 10:
             return {
                 "valid": False,
                 "message": "SERP_API_KEY appears to be invalid (too short)"

@@ -4,7 +4,7 @@ Chat API endpoints with conversation memory support
 
 import json
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
@@ -17,6 +17,7 @@ from app.backend.models.api_models import (  # noqa: E402
     ChatRequestEnhanced,
     ChatResponse,
     MemoryStatsResponse,
+    SerpTokenCheck,
     SerpTokenStatus,
 )
 from app.services.conversation_memory import get_memory_service  # noqa: E402
@@ -169,7 +170,7 @@ def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str,
 
     # Add voice mode system prompt if voice mode is active
     if request.is_voice_mode:
-        from app.frontend.config import DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
+        from app.backend.core.config import DEFAULT_CHAT_SYSTEM_PROMPT_VOICE
 
         messages.append({"role": "system", "content": DEFAULT_CHAT_SYSTEM_PROMPT_VOICE})
 
@@ -297,6 +298,10 @@ async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
         top_p=request.top_p,
         frequency_penalty=request.frequency_penalty,
         repetition_penalty=request.repetition_penalty,
+        top_k=request.top_k,
+        min_p=request.min_p,
+        seed=request.seed,
+        stop=request.stop,
     )
 
     return ChatResponse(response=response_text, model=request.model if request.model is not None else "default")
@@ -326,6 +331,10 @@ async def _stream_chat_response(request: ChatRequestEnhanced):
         top_p=request.top_p if request.top_p is not None else 0.9,
         frequency_penalty=request.frequency_penalty if request.frequency_penalty is not None else 0.0,
         repetition_penalty=request.repetition_penalty if request.repetition_penalty is not None else 1.0,
+        top_k=request.top_k if request.top_k is not None else 40,
+        min_p=request.min_p if request.min_p is not None else 0.0,
+        seed=request.seed,
+        stop=request.stop,
     ):
         yield chunk
 
@@ -358,14 +367,19 @@ async def chat_web_search(request: ChatRequestEnhanced):
         return StreamingResponse(error_fallback(), media_type="text/plain")
 
 
-@router.get("/api/chat/serp-status", response_model=SerpTokenStatus)
-async def get_serp_token_status():
-    """Get SerpAPI token validation status"""
+@router.post("/api/chat/serp-status", response_model=SerpTokenStatus)
+async def get_serp_token_status(payload: Optional[SerpTokenCheck] = None):
+    """Get SerpAPI token validation status.
+
+    When a ``serp_api_key`` is supplied in the request body, that key is
+    validated instead of the server's ``SERP_API_KEY`` environment variable.
+    """
     logger.info("Checking SerpAPI token status")
 
     try:
-        web_search_service = WebSearchService()
-        validation = web_search_service.validate_token()
+        provided_key = payload.serp_api_key if payload else None
+        web_search_service = WebSearchService(api_key=provided_key)
+        validation = web_search_service.validate_token(api_key=provided_key)
 
         if validation["valid"]:
             return SerpTokenStatus(status="valid", message=validation["message"])

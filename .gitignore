@@ -5,6 +5,7 @@ chroma_db/
 storage/
 logs/
 CI_CD.md
+.ruff_cache
 
 # Python
 __pycache__/
@@ -28,6 +29,7 @@ wheels/
 *.egg
 MANIFEST
 .pytest_cache/
+.venv
 
 # Environment files
 .env
@@ -71,3 +73,7 @@ Thumbs.db
 
 #Scripts
 scripts/test-docker-publish.py
+
+#Harness
+.claude
+.superpowers

@@ -375,6 +375,20 @@ class RAGService:
 
         return False, ""
 
+    def _is_filename_already_processed(self, filename: str) -> tuple[bool, str]:
+        """Filename-only duplicate check that performs no file-system access.
+
+        Used for pre-flight checks (e.g. the duplicate-check endpoint) where the file
+        is not on disk yet. Content-hash duplicates are still caught at upload time, so
+        skipping the hash read here is safe and avoids passing a caller-influenced path
+        to ``_calculate_file_hash``.
+        """
+        if filename in self.processed_files:
+            file_info = self.processed_files[filename]
+            return True, f"File '{filename}' already processed ({file_info['chunk_count']} chunks)"
+
+        return False, ""
+
     def _register_processed_file(self, file_path: str, filename: str, chunk_count: int):
         """Register a file as processed to prevent future duplicates."""
         import time
@@ -1540,6 +1554,9 @@ class RAGService:
             top_p: float = 0.9,
             frequency_penalty: float = 0.0,
             repetition_penalty: float = 1.0,
+            min_p: float = 0.0,
+            seed: Optional[int] = None,
+            stop: Optional[list] = None,
             is_voice_mode: bool = False,
         ):
             """Answer a query using semantic or hybrid retrieval and stream model tokens.
@@ -1560,6 +1577,9 @@ class RAGService:
                 top_p: Nucleus sampling parameter (0.0 to 1.0)
                 frequency_penalty: Penalize frequent tokens (-2.0 to 2.0)
                 repetition_penalty: Penalize repeated tokens (0.0 to 2.0)
+                min_p: Minimum token probability floor (0.0 to 1.0)
+                seed: Fixed seed for reproducible outputs (None = random)
+                stop: Sequences that halt generation
                 is_voice_mode: Whether this is voice mode (uses shorter, conversational responses)
             """
             messages = messages or []
@@ -1606,7 +1626,7 @@ class RAGService:
 
             # Use voice-optimized system prompt if in voice mode
             if is_voice_mode and system_prompt == "You are a helpful assistant.":
-                from app.frontend.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
+                from app.backend.core.config import DEFAULT_RAG_SYSTEM_PROMPT_VOICE
 
                 system_prompt = DEFAULT_RAG_SYSTEM_PROMPT_VOICE
 
@@ -1652,6 +1672,9 @@ class RAGService:
                 top_p=top_p,
                 frequency_penalty=frequency_penalty,
                 repetition_penalty=repetition_penalty,
+                min_p=min_p,
+                seed=seed,
+                stop=stop,
             ):
                 yield chunk
 

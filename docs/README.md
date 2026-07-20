@@ -13,7 +13,7 @@ LiteMindUI keeps the repository root focused on setup and navigation. Deeper ope
 
 | Surface | URL | Notes |
 | --- | --- | --- |
-| Frontend | `http://localhost:8501` | Streamlit UI |
+| Frontend | `http://localhost:3000` | Next.js UI |
 | Backend API | `http://localhost:8000` | FastAPI app |
 | API docs | `http://localhost:8000/docs` | OpenAPI / Swagger UI |
 | Health check | `http://localhost:8000/health` | Backend readiness |

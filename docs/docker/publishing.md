@@ -36,7 +36,7 @@ Version bump behavior:
 - runs on pushes to `main` and `develop`
 - runs on version tags
 - can also be started manually with `workflow_dispatch`
-- builds `Dockerfile` and `Dockerfile.streamlit`
+- builds `Dockerfile` and `Dockerfile.nextjs`
 - publishes backend and frontend images to Docker Hub
 - pushes the semver image tags from the `v*.*.*` tag build
 - uploads `docker-compose.release.yml` to the matching GitHub release

@@ -190,7 +190,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./Dockerfile.streamlit
+        file: ./Dockerfile.nextjs
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ steps.meta-frontend.outputs.tags }}
         labels: ${{ steps.meta-frontend.outputs.labels }}
@@ -237,7 +237,6 @@ jobs:
               - ./uploads:/app/uploads
               - ./chroma_db:/app/chroma_db
               - ./storage:/app/storage
-              - ./.streamlit:/app/.streamlit
               - ./logs:/app/logs
             environment:
               - OLLAMA_API_URL=http://host.docker.internal:11434
@@ -260,16 +259,16 @@ jobs:
             image: ${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.version.outputs.VERSION }}
             container_name: litemindui-frontend
             ports:
-              - "8501:8501"
+              - "3000:3000"
             volumes:
-              - ./.streamlit:/app/.streamlit
               - ./logs:/app/logs
             environment:
-              - FASTAPI_URL=http://backend:8000
+              - NEXT_PUBLIC_API_URL=http://backend:8000
+              - NODE_ENV=production
               - ENVIRONMENT=production
             restart: unless-stopped
             healthcheck:
-              test: ["CMD", "curl", "-f", "http://localhost:8501"]
+              test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
               interval: 30s
               timeout: 10s
               retries: 3
