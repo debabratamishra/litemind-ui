@@ -93,10 +93,10 @@ async def test_llm_streams_text_frames(monkeypatch):
     svc = BackendLLMService(VoiceSettings(model="llama3", backend="ollama"))
     captured = []
 
-    async def cap(frame, direction=None):
+    async def cap(frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
         captured.append(frame)
 
-    svc.push_frame = cap
+    svc.push_frame = cap  # type: ignore
     ctx = LLMContext()
     ctx.add_message({"role": "user", "content": "hi"})
     await svc._process_context(ctx)
@@ -115,10 +115,10 @@ async def test_llm_process_frame_drives_inference(monkeypatch):
     svc = BackendLLMService(VoiceSettings(model="llama3", backend="ollama"))
     captured = []
 
-    async def cap(frame, direction=None):
+    async def cap(frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
         captured.append(frame)
 
-    svc.push_frame = cap
+    svc.push_frame = cap  # type: ignore
     ctx = LLMContext(messages=[{"role": "user", "content": "hi"}])
     await svc.process_frame(
         LLMContextFrame(context=ctx), FrameDirection.DOWNSTREAM
