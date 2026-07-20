@@ -13,7 +13,11 @@ from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.core.config import backend_config
 from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
 from app.backend.models.api_models import (
+    DuplicateCheckRequest,
+    DuplicateCheckResponse,
     RAGConfigRequest,
+    RagFileInfo,
+    RagFilesResponse,
     RAGQueryRequestEnhanced,
     RAGStatusResponse,
     ResetResponse,
@@ -54,6 +58,22 @@ async def get_rag_status():
     except Exception:
         logger.exception("Failed to get RAG status")
         return RAGStatusResponse(status="error", message="Failed to retrieve RAG status")
+
+
+@router.get("/files", response_model=RagFilesResponse)
+async def list_rag_files():
+    """List the files currently uploaded to the knowledge base."""
+    try:
+        files = [
+            RagFileInfo(filename=f.name, size=f.stat().st_size)
+            for f in backend_config.upload_folder.iterdir()
+            if f.is_file()
+        ]
+        files.sort(key=lambda info: info.filename.lower())
+        return RagFilesResponse(files=files)
+    except Exception:
+        logger.exception("Failed to list RAG files")
+        return RagFilesResponse(files=[])
 
 
 @router.post("/save_config")
@@ -220,6 +240,43 @@ async def reset_rag_system():
     except Exception as e:
         logger.error(f"Reset error: {e}")
         raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
+
+
+@router.post("/duplicate-check", response_model=DuplicateCheckResponse)
+async def duplicate_check_rag(request: DuplicateCheckRequest):
+    """Preflight check: is a file with this name already in the knowledge base?"""
+    try:
+        safe_filename = sanitize_filename(request.filename)
+    except ValueError as e:
+        return DuplicateCheckResponse(is_duplicate=False, reason=f"Invalid filename: {e}")
+
+    dest_path = backend_config.upload_folder / safe_filename
+    if dest_path.is_file():
+        return DuplicateCheckResponse(is_duplicate=True, reason=f"'{safe_filename}' is already uploaded.")
+    return DuplicateCheckResponse(is_duplicate=False, reason="")
+
+
+@router.delete("/files/{filename}")
+async def delete_rag_file(filename: str):
+    """Delete a single uploaded knowledge-base file."""
+    try:
+        safe_filename = sanitize_filename(filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid filename: {e}")
+
+    dest_path = backend_config.upload_folder / safe_filename
+
+    # Guard against path traversal: ensure the resolved path stays in upload_folder.
+    dest_resolved = dest_path.resolve()
+    upload_resolved = backend_config.upload_folder.resolve()
+    if not str(dest_resolved).startswith(str(upload_resolved)):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not dest_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    dest_path.unlink()
+    return {"status": "deleted", "filename": safe_filename}
 
 
 @router.post("/query")

@@ -121,6 +121,33 @@ class RAGStatusResponse(BaseModel):
     message: Optional[str] = None
 
 
+class RagFileInfo(BaseModel):
+    """A single uploaded knowledge-base file."""
+
+    filename: str
+    size: int
+    indexed: bool = False
+
+
+class RagFilesResponse(BaseModel):
+    """Response for listing uploaded knowledge-base files."""
+
+    files: List[RagFileInfo] = []
+
+
+class DuplicateCheckRequest(BaseModel):
+    """Body for the duplicate-check preflight before upload."""
+
+    filename: str
+
+
+class DuplicateCheckResponse(BaseModel):
+    """Result of a duplicate-check preflight."""
+
+    is_duplicate: bool
+    reason: str = ""
+
+
 class UploadResult(BaseModel):
     filename: str
     status: str
