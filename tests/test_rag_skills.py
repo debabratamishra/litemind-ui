@@ -84,7 +84,7 @@ async def test_multi_agent_falls_back_when_crewai_unavailable():
     req = _make_request(use_multi_agent=True, use_hybrid_search=False)
 
     with patch(
-        "app.services.rag_multi_agent.multi_agent_rag_available",
+        "app.skills.rag.multi_agent_rag_available",
         return_value=(False, "No module named 'crewai'"),
     ):
         chunks = [c async for c in skill.stream(req, rag_service)]
