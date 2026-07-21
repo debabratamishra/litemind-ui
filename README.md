@@ -116,6 +116,35 @@ docker-compose*.yml supported container workflows
 - [`docs/docker/README.md`](docs/docker/README.md) - Docker workflows, health checks, and compose files
 - [`docs/docker/publishing.md`](docs/docker/publishing.md) - image publishing and release automation
 
+## Testing
+
+### Backend tests (Python/pytest)
+
+```bash
+# Run all tests with coverage
+uv run pytest
+
+# Run with verbose output
+uv run pytest -v
+
+# Run specific test file
+uv run pytest tests/test_rag_skills.py
+
+# Run with coverage report
+uv run pytest --cov=app --cov-report=term-missing
+
+# Run with HTML coverage report
+uv run pytest --cov=app --cov-report=html
+# Open htmlcov/index.html in a browser to view coverage
+```
+
+### Frontend tests (React/Vitest)
+
+```bash
+cd nextjs-frontend
+npm run test
+```
+
 ## Notes
 
 - Ollama should be reachable at `http://localhost:11434` for native runs and `http://host.docker.internal:11434` from containers unless you override `OLLAMA_API_URL`.
