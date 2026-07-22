@@ -103,4 +103,3 @@ export interface MemoryRecord {
   created_at: string;
   updated_at: string;
 }
-}
