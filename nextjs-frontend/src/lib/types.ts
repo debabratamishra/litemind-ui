@@ -58,6 +58,7 @@ export interface AppSettings {
   apiBase: string | null;
   ollamaUrl: string | null;
   serpApiKey: string | null;
+  providerKeys: Record<BackendType, string | null>;
   sessionId: string;
   temperature: number;
   maxTokens: number;
@@ -80,4 +81,16 @@ export interface MemoryRecord {
   source: 'auto' | 'manual';
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * A provider override — a named configuration that lets a user switch the
+ * active backend/model on the fly (e.g. via an "@alias" shorthand in chat).
+ */
+export interface ProviderOverride {
+  alias: string;
+  backend: BackendType;
+  model: string;
+  text: string;
+  hasKey: boolean;
 }

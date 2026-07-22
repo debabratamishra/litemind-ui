@@ -97,6 +97,36 @@ describe('app store — settings and files', () => {
   });
 });
 
+describe('app store — providerKeys', () => {
+  it('default settings initialise providerKeys with all null values', () => {
+    const { providerKeys } = useAppStore.getState().settings;
+    expect(providerKeys).toEqual({ ollama: null, openrouter: null, nvidia_nim: null });
+  });
+
+  it('setProviderKey updates a single provider key', () => {
+    useAppStore.getState().setProviderKey('openrouter', 'sk-test-123');
+    const { providerKeys } = useAppStore.getState().settings;
+    expect(providerKeys.openrouter).toBe('sk-test-123');
+    expect(providerKeys.ollama).toBeNull();
+    expect(providerKeys.nvidia_nim).toBeNull();
+  });
+
+  it('setProviderKey can set null to clear a key', () => {
+    useAppStore.getState().setProviderKey('nvidia_nim', 'nv-key');
+    useAppStore.getState().setProviderKey('nvidia_nim', null);
+    expect(useAppStore.getState().settings.providerKeys.nvidia_nim).toBeNull();
+  });
+
+  it('setProviderKey preserves other provider keys', () => {
+    useAppStore.getState().setProviderKey('openrouter', 'sk-a');
+    useAppStore.getState().setProviderKey('nvidia_nim', 'nv-b');
+    const { providerKeys } = useAppStore.getState().settings;
+    expect(providerKeys.openrouter).toBe('sk-a');
+    expect(providerKeys.nvidia_nim).toBe('nv-b');
+    expect(providerKeys.ollama).toBeNull();
+  });
+});
+
 describe('app store — selectors', () => {
   it('selectActiveId and selectSettings read state', () => {
     const id = useAppStore.getState().createConversation('chat');
