@@ -14,8 +14,11 @@ import { useAppStore, selectActiveConversation, selectActiveId, selectSettings }
 import { streamRagQuery, type RAGQueryRequest } from '@/lib/api';
 import { useRagUpload } from '@/hooks/use-rag-upload';
 import { parseRagContent, convertCitationMarkers, normalizeAnswerWhitespace } from '@/lib/web-search-citations';
-import type { UIMessage } from '@/lib/types';
+import type { UIMessage, ProviderOverride } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { parseProviderOverride } from '@/hooks/use-provider-override';
+import { ProviderOverrideBadge } from '@/components/provider-override-badge';
+import { ProviderKeyPrompt } from '@/components/provider-key-prompt';
 
 /**
  * A single RAG message. Assistant messages that carry a `data: {"citations": …}`
@@ -74,11 +77,19 @@ export default function RagPage() {
   const [nResults, setNResults] = React.useState(5);
   const [query, setQuery] = React.useState('');
   const [queryLoading, setQueryLoading] = React.useState(false);
+  const [keyPromptOpen, setKeyPromptOpen] = React.useState(false);
+  const [pendingOverride, setPendingOverride] = React.useState<ProviderOverride | null>(null);
   const abortRef = React.useRef<AbortController | null>(null);
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const { upload, uploading, progress, error } = useRagUpload();
   const dragDepth = React.useRef(0);
   const [dragActive, setDragActive] = React.useState(false);
+
+  // Compute the override live as the user types so the badge can be shown.
+  const currentOverride = React.useMemo(
+    () => parseProviderOverride(query, settings),
+    [query, settings],
+  );
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -88,13 +99,33 @@ export default function RagPage() {
     const q = query.trim();
     const convId = activeId;
     if (!q || queryLoading || !convId) return;
+
+    // Parse "@" provider override
+    const latestSettings = useAppStore.getState().settings;
+    const override = parseProviderOverride(q, latestSettings);
+
+    // If override requires key but none configured, show inline prompt
+    if (override && !override.hasKey) {
+      setKeyPromptOpen(true);
+      setPendingOverride(override);
+      return;
+    }
+
+    // Determine effective settings from override or defaults
+    const effectiveBackend = override?.backend ?? settings.backend;
+    const effectiveModel = override?.model || settings.model;
+    const effectiveApiKey = override?.hasKey
+      ? latestSettings.providerKeys[override.backend]
+      : settings.apiKey;
+    const effectiveText = override?.text ?? q;
+
     setQuery('');
     setQueryLoading(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      addMessage(convId, { role: 'user', content: q });
+      addMessage(convId, { role: 'user', content: effectiveText });
       addMessage(convId, { role: 'assistant', content: '', isStreaming: true });
       let accumulated = '';
       const stop = settings.stopSequences
@@ -112,8 +143,11 @@ export default function RagPage() {
         use_multi_agent?: boolean;
         use_hybrid_search?: boolean;
       } = {
-        query: q,
-        model: settings.model,
+        query: effectiveText,
+        model: effectiveModel || undefined,
+        backend: effectiveBackend,
+        api_key: effectiveApiKey ?? null,
+        api_base: settings.apiBase ?? null,
         session_id: settings.sessionId,
         temperature: settings.temperature,
         max_tokens: settings.maxTokens,
@@ -146,6 +180,32 @@ export default function RagPage() {
       abortRef.current = null;
     }
   };
+
+  // ── Provider override key prompt handlers ─────────────────────────────────
+  // handleSetKey is a plain function (not useCallback) so it always closes over
+  // the latest handleQuery and pendingOverride. After storing the key it
+  // re-invokes handleQuery, which re-parses the override — this time hasKey is
+  // true because setProviderKey updated the store synchronously.
+  const handleSetKey = (key: string) => {
+    if (pendingOverride) {
+      useAppStore.getState().setProviderKey(pendingOverride.backend, key);
+    }
+    setKeyPromptOpen(false);
+    setPendingOverride(null);
+    void handleQuery();
+  };
+
+  const handleKeyPromptCancel = React.useCallback(() => {
+    setKeyPromptOpen(false);
+    setPendingOverride(null);
+  }, []);
+
+  const handleKeyPromptFallback = React.useCallback(() => {
+    setKeyPromptOpen(false);
+    setPendingOverride(null);
+    // Fallback to default provider — just clear the input
+    setQuery('');
+  }, []);
 
   if (!conv || !activeId) {
     return (
@@ -222,6 +282,18 @@ export default function RagPage() {
           if (e.dataTransfer.files?.length) void upload(e.dataTransfer.files);
         }}
       >
+        {currentOverride && (
+          <ProviderOverrideBadge
+            override={currentOverride}
+            onRemove={() => setQuery('')}
+            onSetKey={() => {
+              if (!currentOverride.hasKey) {
+                setKeyPromptOpen(true);
+                setPendingOverride(currentOverride);
+              }
+            }}
+          />
+        )}
         <div className="flex items-end gap-2">
           <RagAttachButton
             onFiles={(files) => void upload(files)}
@@ -249,6 +321,15 @@ export default function RagPage() {
           </div>
         )}
       </div>
+
+      <ProviderKeyPrompt
+        open={keyPromptOpen}
+        provider={pendingOverride?.backend ?? 'ollama'}
+        model={pendingOverride?.model ?? ''}
+        onSetKey={handleSetKey}
+        onCancel={handleKeyPromptCancel}
+        onFallback={handleKeyPromptFallback}
+      />
     </div>
   );
 }

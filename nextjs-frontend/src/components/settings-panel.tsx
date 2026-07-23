@@ -104,6 +104,66 @@ const GENERATION_DEFAULTS = {
   stopSequences: '',
 } as const;
 
+/**
+ * Produce a masked fingerprint of an API key for display.
+ *
+ * - Keys shorter than 11 characters are fully masked as `••••••`.
+ * - Otherwise: first 7 chars + `••••••` + last 4 chars.
+ */
+function maskKey(key: string): string {
+  if (key.length < 11) {
+    return '••••••';
+  }
+  return `${key.slice(0, 7)}••••••${key.slice(-4)}`;
+}
+
+function ProviderKeyField({
+  label,
+  placeholder,
+  value,
+  onChange,
+}: {
+  label: string;
+  placeholder: string;
+  value: string | null;
+  onChange: (key: string) => void;
+}) {
+  const hasKey = !!value;
+  const masked = value ? maskKey(value) : '';
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">{label}</Label>
+        {hasKey && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={() => onChange('')}
+            aria-label={`Clear ${label} API key`}
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+            Clear
+          </Button>
+        )}
+      </div>
+      <Input
+        type="password"
+        placeholder={placeholder}
+        autoComplete="off"
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-8 text-sm font-mono"
+        aria-label={`${label} API key`}
+      />
+      {masked && (
+        <div className="text-xs font-mono text-muted-foreground break-all">{masked}</div>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPanel({
   open,
   onClose,
@@ -485,6 +545,48 @@ export function SettingsPanel({
                   className="h-8 text-sm"
                 />
               </div>
+            </Section>
+
+            <Separator />
+
+            <Section title="Provider Keys">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-md border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2
+                      className="h-4 w-4 text-emerald-600 dark:text-emerald-400"
+                      aria-hidden="true"
+                    />
+                    <span className="text-sm font-medium">Ollama</span>
+                  </div>
+                  <span className="text-xs text-emerald-700 dark:text-emerald-300">
+                    connected (local, no key needed)
+                  </span>
+                </div>
+
+                <ProviderKeyField
+                  label="OpenRouter"
+                  placeholder="sk-or-…"
+                  value={settings.providerKeys.openrouter}
+                  onChange={(key) =>
+                    setSettings({ providerKeys: { ...settings.providerKeys, openrouter: key } })
+                  }
+                />
+
+                <ProviderKeyField
+                  label="Nvidia NIM"
+                  placeholder="nvapi-…"
+                  value={settings.providerKeys.nvidia_nim}
+                  onChange={(key) =>
+                    setSettings({ providerKeys: { ...settings.providerKeys, nvidia_nim: key } })
+                  }
+                />
+              </div>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Keys are stored locally and never sent to the server. They are used per-request
+                when you switch providers via <code className="font-mono">@</code> syntax in chat
+                or RAG.
+              </p>
             </Section>
 
             <Separator />
