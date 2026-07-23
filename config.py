@@ -12,6 +12,18 @@ class Config:
     # Database configuration - handle containerized paths
     SQLALCHEMY_DATABASE_URI = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite+aiosqlite:///app/litemindui.db')
 
+    # ── Authentication (self-hosted Supabase GoTrue) ──
+    # GoTrue REST API base URL (standalone binary or Docker service).
+    GOTRUE_API_URL = os.getenv('GOTRUE_API_URL', 'http://localhost:9999')
+    # Shared HS256 secret GoTrue uses to sign JWTs; must match GOTRUE_JWT_SECRET
+    # in the GoTrue deployment. Empty by default -> JWT verification refuses to run.
+    GOTRUE_JWT_SECRET = os.getenv('GOTRUE_JWT_SECRET', '')
+    # "docker" (GoTrue/Postgres provided by compose) or "standalone" (local binary).
+    AUTH_MODE = os.getenv('AUTH_MODE', 'standalone')
+
+    # ── PostgreSQL (users + conversations) ──
+    DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/postgres')
+
     # Service URLs
     OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434')
 

@@ -76,6 +76,10 @@ backend = [
     "soundfile",
     # Required by transformers 5.x pipeline for device management
     "accelerate",
+
+    # Auth: Supabase GoTrue (JWT verify) + async Postgres conversation store
+    "python-jose[cryptography]>=3.3.0",
+    "asyncpg>=0.29.0",
 ]
 
 [tool.uv]
@@ -226,6 +230,10 @@ all = [
     "pipecat-ai",
     # Required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
     "aiortc",
+
+    # Auth: Supabase GoTrue (JWT verify) + async Postgres conversation store
+    "python-jose[cryptography]>=3.3.0",
+    "asyncpg>=0.29.0",
 ]
 
 # Configure PyTorch to use CPU-only version
