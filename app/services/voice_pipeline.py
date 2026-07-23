@@ -73,6 +73,7 @@ class VoiceSettings:
     max_tokens: int = 512
     voice: str | None = None
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
+    user_id: str | None = None  # Owning user (for session/transcript isolation)
 
 
 class BackendWhisperSTTService(SegmentedSTTService):

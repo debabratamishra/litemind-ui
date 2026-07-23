@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -28,6 +28,7 @@ from app.backend.api import auth as auth_api
 from app.backend.api import chat as chat_api
 from app.backend.api import conversations as conversations_api
 from app.backend.api import voice as voice_api
+from app.backend.api.auth_deps import User, get_current_user
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.core.config import DEFAULT_RAG_CONFIG
 from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
@@ -760,8 +761,8 @@ async def delete_rag_file(filename: str):
 
 
 @app.post("/api/rag/query")
-async def rag_query(request: RAGQueryRequestEnhanced):
-    """Query RAG system"""
+async def rag_query(request: RAGQueryRequestEnhanced, user: User = Depends(get_current_user)):
+    """Query RAG system (requires authentication)."""
     try:
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")

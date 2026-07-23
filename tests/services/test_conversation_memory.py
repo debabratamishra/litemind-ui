@@ -7,8 +7,14 @@ empty-history behaviour.
 
 The summarization path calls ``stream_completion`` (an LLM boundary). That
 boundary is mocked so no real network/LLM call is made.
+
+All session-scoped methods now take a ``user_id`` as their first argument for
+per-user isolation; these tests pin a single ``UID``.
 """
+
 from app.services import conversation_memory as cm
+
+UID = "test-user"
 
 
 # ── ID / factories ───────────────────────────────────────────────────────────
@@ -56,17 +62,17 @@ def test_estimate_tokens():
 # ── Session lifecycle ───────────────────────────────────────────────────────
 def test_get_or_create_session_caches():
     svc = cm.ConversationMemoryService()
-    s1 = svc.get_or_create_session("sess")
-    s2 = svc.get_or_create_session("sess")
+    s1 = svc.get_or_create_session(UID, "sess")
+    s2 = svc.get_or_create_session(UID, "sess")
     assert s1 is s2
-    assert s1.session_id == "sess"
+    assert s1.session_id == f"{UID}:sess"
 
 
 def test_add_message_updates_tokens():
     svc = cm.ConversationMemoryService()
-    msg = svc.add_message("sess", "user", "x" * 8000)  # 2000 tokens
+    msg = svc.add_message(UID, "sess", "user", "x" * 8000)  # 2000 tokens
     assert msg.token_count == 2000
-    session = svc.get_or_create_session("sess")
+    session = svc.get_or_create_session(UID, "sess")
     assert session.total_tokens == 2000
     assert len(session.messages) == 1
 
@@ -74,10 +80,10 @@ def test_add_message_updates_tokens():
 # ── Context assembly ────────────────────────────────────────────────────────
 def test_get_messages_for_context_no_summary():
     svc = cm.ConversationMemoryService()
-    svc.add_message("sess", "user", "question")
-    svc.add_message("sess", "assistant", "answer")
+    svc.add_message(UID, "sess", "user", "question")
+    svc.add_message(UID, "sess", "assistant", "answer")
 
-    ctx = svc.get_messages_for_context("sess")
+    ctx = svc.get_messages_for_context(UID, "sess")
     assert [m["role"] for m in ctx] == ["user", "assistant"]
     assert ctx[0]["content"] == "question"
     assert ctx[1]["content"] == "answer"
@@ -85,12 +91,12 @@ def test_get_messages_for_context_no_summary():
 
 def test_get_messages_for_context_includes_summary():
     svc = cm.ConversationMemoryService()
-    svc.add_message("sess", "user", "question")
-    session = svc.get_or_create_session("sess")
+    svc.add_message(UID, "sess", "user", "question")
+    session = svc.get_or_create_session(UID, "sess")
     session.summary = "Prior context summary"
     session.summary_tokens = 10
 
-    ctx = svc.get_messages_for_context("sess")
+    ctx = svc.get_messages_for_context(UID, "sess")
     assert ctx[0]["role"] == "system"
     assert "Prior context summary" in ctx[0]["content"]
     assert len(ctx) == 2  # summary + 1 user message
@@ -98,10 +104,10 @@ def test_get_messages_for_context_includes_summary():
 
 def test_get_messages_for_context_excludes_summary_markers():
     svc = cm.ConversationMemoryService()
-    svc.add_message("sess", "user", "real")
-    svc.add_message("sess", "assistant", "summary text", is_summary=True)
+    svc.add_message(UID, "sess", "user", "real")
+    svc.add_message(UID, "sess", "assistant", "summary text", is_summary=True)
 
-    ctx = svc.get_messages_for_context("sess")
+    ctx = svc.get_messages_for_context(UID, "sess")
     contents = [m["content"] for m in ctx]
     assert "real" in contents
     assert "summary text" not in contents
@@ -109,21 +115,21 @@ def test_get_messages_for_context_excludes_summary_markers():
 
 def test_get_context_token_count():
     svc = cm.ConversationMemoryService()
-    svc.add_message("sess", "user", "x" * 4000)  # 1000 tokens
-    session = svc.get_or_create_session("sess")
+    svc.add_message(UID, "sess", "user", "x" * 4000)  # 1000 tokens
+    session = svc.get_or_create_session(UID, "sess")
     session.summary_tokens = 10
 
-    assert svc.get_context_token_count("sess") == 1010
+    assert svc.get_context_token_count(UID, "sess") == 1010
 
 
 def test_prepare_context_for_llm_assembles_full_context():
     svc = cm.ConversationMemoryService()
-    svc.add_message("sess", "user", "history line")
-    session = svc.get_or_create_session("sess")
+    svc.add_message(UID, "sess", "user", "history line")
+    session = svc.get_or_create_session(UID, "sess")
     session.summary = "old context"
 
     messages, total = svc.prepare_context_for_llm(
-        "sess", "new user message", system_prompt="You are helpful"
+        UID, "sess", "new user message", system_prompt="You are helpful"
     )
 
     roles = [m["role"] for m in messages]
@@ -141,7 +147,7 @@ def test_prepare_context_for_llm_assembles_full_context():
 
 def test_prepare_context_for_llm_empty_history():
     svc = cm.ConversationMemoryService()
-    messages, total = svc.prepare_context_for_llm("fresh", "hello")
+    messages, total = svc.prepare_context_for_llm(UID, "fresh", "hello")
     # No system prompt, no summary -> only the new user message.
     assert messages == [{"role": "user", "content": "hello"}]
     assert total == svc.estimate_tokens("hello")
@@ -150,22 +156,22 @@ def test_prepare_context_for_llm_empty_history():
 # ── Summarization trigger ───────────────────────────────────────────────────
 def test_needs_summarization_below_threshold():
     svc = cm.ConversationMemoryService(max_context_tokens=24000, summarize_threshold=0.75)
-    svc.add_message("sess", "user", "x" * 100)  # 25 tokens
-    assert svc.needs_summarization("sess") is False
+    svc.add_message(UID, "sess", "user", "x" * 100)  # 25 tokens
+    assert svc.needs_summarization(UID, "sess") is False
 
 
 def test_needs_summarization_above_threshold():
     svc = cm.ConversationMemoryService(max_context_tokens=24000, summarize_threshold=0.75)
     # Threshold = 18000 tokens. 80000 chars -> 20000 tokens (>= 18000).
-    svc.add_message("sess", "user", "x" * 80000)
-    assert svc.needs_summarization("sess") is True
+    svc.add_message(UID, "sess", "user", "x" * 80000)
+    assert svc.needs_summarization(UID, "sess") is True
 
 
 def test_needs_summarization_exactly_at_threshold():
     # 18000 tokens exactly -> int(24000*0.75) = 18000 -> >= threshold True.
     svc = cm.ConversationMemoryService(max_context_tokens=24000, summarize_threshold=0.75)
-    svc.add_message("sess", "user", "x" * 72000)
-    assert svc.needs_summarization("sess") is True
+    svc.add_message(UID, "sess", "user", "x" * 72000)
+    assert svc.needs_summarization(UID, "sess") is True
 
 
 def test_default_constants():
@@ -184,20 +190,20 @@ async def test_summarize_if_needed_triggers_and_prunes(monkeypatch):
 
     # 6 large messages => well over threshold, plenty to summarize.
     for _ in range(6):
-        svc.add_message("sess", "user", "x" * 40000)  # 10000 tokens each
+        svc.add_message(UID, "sess", "user", "x" * 40000)  # 10000 tokens each
 
-    assert svc.needs_summarization("sess") is True
+    assert svc.needs_summarization(UID, "sess") is True
 
-    result = await svc.summarize_if_needed("sess")
+    result = await svc.summarize_if_needed(UID, "sess")
     assert result is True
 
-    session = svc.get_or_create_session("sess")
+    session = svc.get_or_create_session(UID, "sess")
     assert session.summary == "Summary of the conversation."
     # keep_recent = 4 -> the 2 oldest are summarized away.
     assert len(session.messages) == 4
     assert session.total_tokens == 4 * 10000
     # Summary tokens counted in context total.
-    assert svc.get_context_token_count("sess") == 40000 + session.summary_tokens
+    assert svc.get_context_token_count(UID, "sess") == 40000 + session.summary_tokens
 
 
 async def test_summarize_if_needed_noop_when_below_threshold(monkeypatch):
@@ -208,11 +214,11 @@ async def test_summarize_if_needed_noop_when_below_threshold(monkeypatch):
 
     monkeypatch.setattr(cm, "stream_completion", fake_stream)
 
-    svc.add_message("sess", "user", "x" * 100)  # far below threshold
+    svc.add_message(UID, "sess", "user", "x" * 100)  # far below threshold
 
-    result = await svc.summarize_if_needed("sess")
+    result = await svc.summarize_if_needed(UID, "sess")
     assert result is False
-    session = svc.get_or_create_session("sess")
+    session = svc.get_or_create_session(UID, "sess")
     assert session.summary is None
     assert len(session.messages) == 1
 
@@ -227,9 +233,9 @@ async def test_summarize_if_needed_too_few_messages(monkeypatch):
 
     # Over threshold but fewer than 4 messages -> nothing to summarize.
     for _ in range(3):
-        svc.add_message("sess", "user", "x" * 40000)  # 10000 tokens each
+        svc.add_message(UID, "sess", "user", "x" * 40000)  # 10000 tokens each
 
-    result = await svc.summarize_if_needed("sess")
+    result = await svc.summarize_if_needed(UID, "sess")
     assert result is False
 
 
@@ -243,11 +249,11 @@ async def test_summarize_if_needed_force(monkeypatch):
 
     # 6 messages over threshold; force should summarize regardless.
     for _ in range(6):
-        svc.add_message("sess", "user", "x" * 40000)
+        svc.add_message(UID, "sess", "user", "x" * 40000)
 
-    result = await svc.summarize_if_needed("sess", force=True)
+    result = await svc.summarize_if_needed(UID, "sess", force=True)
     assert result is True
-    assert svc.get_or_create_session("sess").summary == "Forced summary."
+    assert svc.get_or_create_session(UID, "sess").summary == "Forced summary."
 
 
 async def test_summarize_if_needed_handles_llm_failure(monkeypatch):
@@ -260,26 +266,26 @@ async def test_summarize_if_needed_handles_llm_failure(monkeypatch):
     monkeypatch.setattr(cm, "stream_completion", failing_stream)
 
     for _ in range(6):
-        svc.add_message("sess", "user", "x" * 40000)
+        svc.add_message(UID, "sess", "user", "x" * 40000)
 
     # LLM failure -> no summary, but does not raise; returns False.
-    result = await svc.summarize_if_needed("sess")
+    result = await svc.summarize_if_needed(UID, "sess")
     assert result is False
-    assert svc.get_or_create_session("sess").summary is None
+    assert svc.get_or_create_session(UID, "sess").summary is None
 
 
 # ── Session stats / clear ───────────────────────────────────────────────────
 def test_get_session_stats_and_clear():
     svc = cm.ConversationMemoryService()
-    svc.add_message("sess", "user", "x" * 4000)  # 1000 tokens
-    stats = svc.get_session_stats("sess")
+    svc.add_message(UID, "sess", "user", "x" * 4000)  # 1000 tokens
+    stats = svc.get_session_stats(UID, "sess")
     assert stats["message_count"] == 1
     assert stats["total_tokens"] == 1000
     assert stats["has_summary"] is False
 
-    assert svc.clear_session("sess") is True
+    assert svc.clear_session(UID, "sess") is True
     # Session removed.
-    assert svc.clear_session("sess") is False
+    assert svc.clear_session(UID, "sess") is False
 
 
 # ── Singleton ───────────────────────────────────────────────────────────────
