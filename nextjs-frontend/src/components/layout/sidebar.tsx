@@ -12,6 +12,8 @@ import {
   X,
   Plus,
   Trash2,
+  LogIn,
+  LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -39,7 +41,7 @@ function relativeTime(iso: string): string {
 export function Sidebar(): React.ReactElement {
   const pathname = usePathname();
   const router = useRouter();
-  const { conversations, activeId, createConversation, selectConversation, deleteConversation } =
+  const { conversations, activeId, createConversation, selectConversation, deleteConversation, user, isAuthenticated, logout } =
     useAppStore();
 
   const [mobileOpen, setMobileOpen] = React.useState(false);
@@ -218,6 +220,45 @@ export function Sidebar(): React.ReactElement {
             </div>
           </div>
         )}
+
+        <Separator className="shrink-0" />
+
+        {/* Auth section */}
+        <div className="px-3">
+          {isAuthenticated && user ? (
+            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-2">
+              <div
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                aria-hidden="true"
+              >
+                {(user.email?.[0] ?? '?').toUpperCase()}
+              </div>
+              <span className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground">
+                {user.email}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 gap-1 px-2 text-xs"
+                onClick={() => void logout()}
+                aria-label="Sign out"
+              >
+                <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                Sign out
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2"
+              size="sm"
+              onClick={() => router.push('/login')}
+            >
+              <LogIn className="h-4 w-4" aria-hidden="true" />
+              Sign in
+            </Button>
+          )}
+        </div>
 
         <Separator className="shrink-0" />
 

@@ -6,9 +6,10 @@ back over the WebRTC data channel (see app.services.voice_pipeline).
 """
 import logging
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
 
+from app.backend.api.auth_deps import User, get_current_user
 from app.services.voice_pipeline import VoiceSettings, run_voice_pipeline
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ async def run_voice_pipeline_safe(connection: SmallWebRTCConnection, settings: V
 
 
 @router.post("/api/voice/offer")
-async def offer(request: dict, background_tasks: BackgroundTasks):
+async def offer(request: dict, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     pc_id = request.get("pc_id")
     if not pc_id:
         return {"error": "pc_id required"}
@@ -70,6 +71,7 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
             system_instruction=request.get("system_instruction")
             or "You are a helpful voice assistant. Respond briefly and conversationally. "
             "Avoid emojis, bullet points, and any formatting that cannot be spoken aloud.",
+            user_id=user.id,
         )
         background_tasks.add_task(run_voice_pipeline_safe, connection, settings)
 

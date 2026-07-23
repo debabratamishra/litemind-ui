@@ -40,6 +40,14 @@ services:
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
       - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
       - NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-4}
+      # Authentication (GoTrue + Postgres)
+      - GOTRUE_API_URL=http://gotrue:9999
+      - AUTH_MODE=docker
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+      - GOTRUE_JWT_SECRET=${GOTRUE_JWT_SECRET:-}
+    depends_on:
+      - gotrue
+      - db
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -117,6 +125,60 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Supabase Auth (GoTrue) — self-hosted email/password authentication.
+  # The backend talks to it at http://gotrue:9999; the host can reach it at
+  # http://localhost:9999. In standalone (non-Docker) mode, run GoTrue via
+  # `make gotrue-up` instead and set AUTH_MODE=standalone in .env.
+  gotrue:
+    image: supabase/gotrue:v2.143.0
+    container_name: litemindui-gotrue
+    environment:
+      - GOTRUE_DB_DRIVER=postgres
+      - GOTRUE_DB_DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+      - GOTRUE_API_EXTERNAL_URL=http://localhost:9999
+      - GOTRUE_JWT_SECRET=${GOTRUE_JWT_SECRET:-}
+      - GOTRUE_SITE_URL=http://localhost:3000
+      - GOTRUE_URI_ALLOW_LIST=http://localhost:3000,http://localhost:8501
+      - GOTRUE_DISABLE_SIGNUP=false
+      - GOTRUE_SMTP_HOST=${SMTP_HOST:-}
+      - GOTRUE_SMTP_PORT=${SMTP_PORT:-587}
+      - GOTRUE_SMTP_USER=${SMTP_USER:-}
+      - GOTRUE_SMTP_PASS=${SMTP_PASS:-}
+      - GOTRUE_SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL:-admin@litemind.local}
+      # Auto-confirm signups so dev login works without a configured SMTP server.
+      - GOTRUE_MAILER_AUTOCONFIRM=true
+    ports:
+      - "9999:9999"
+    depends_on:
+      - db
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # PostgreSQL — stores GoTrue auth data plus LiteMindUI users/conversations.
+  db:
+    image: postgres:15-alpine
+    container_name: litemindui-db
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-postgres}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
 
 networks:
   default:

@@ -4,7 +4,6 @@ Conversation Database Service using SQLite.
 Provides persistent storage for conversation history with unique identifiers.
 Uses SQLite for lightweight, file-based storage that's perfect for local deployments.
 """
-import atexit
 import json
 import logging
 import sqlite3
@@ -22,7 +21,14 @@ DEFAULT_DB_PATH = Path("storage/conversations.db")
 
 
 def clear_database_file() -> None:
-    """Remove the conversation database file if it exists."""
+    """Remove the conversation database file if it exists.
+
+    NOTE: This is intentionally NOT invoked at import time or on interpreter
+    shutdown anymore. Previously it was called on startup and registered with
+    ``atexit``, which wiped all persisted conversations on every restart. It is
+    retained only for explicit reset endpoints/tests that genuinely want to
+    clear local SQLite storage.
+    """
     try:
         DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         if DEFAULT_DB_PATH.exists():
@@ -30,13 +36,6 @@ def clear_database_file() -> None:
             logger.info("Conversation database cleared")
     except Exception as exc:
         logger.warning(f"Failed to clear conversation database: {exc}")
-
-
-# Clear database on startup
-clear_database_file()
-
-# Clear database on interpreter shutdown
-atexit.register(clear_database_file)
 
 
 @dataclass
