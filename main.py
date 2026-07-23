@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from app.backend.api import auth as auth_api
 from app.backend.api import chat as chat_api
+from app.backend.api import conversations as conversations_api
 from app.backend.api import voice as voice_api
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.core.config import DEFAULT_RAG_CONFIG
@@ -336,6 +337,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(auth_api.router)
+app.include_router(conversations_api.router)
 app.include_router(chat_api.router)
 app.include_router(voice_api.router)
 
