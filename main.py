@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from app.backend.api import auth as auth_api
 from app.backend.api import chat as chat_api
 from app.backend.api import voice as voice_api
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
@@ -334,6 +335,7 @@ app.add_middleware(
 )
 
 # Include API routers
+app.include_router(auth_api.router)
 app.include_router(chat_api.router)
 app.include_router(voice_api.router)
 
