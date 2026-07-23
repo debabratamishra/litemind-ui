@@ -1809,6 +1809,7 @@ all = [
 ]
 backend = [
     { name = "accelerate" },
+    { name = "asyncpg" },
     { name = "beautifulsoup4" },
     { name = "camelot-py" },
     { name = "chromadb" },
@@ -1836,6 +1837,7 @@ backend = [
     { name = "pymupdf" },
     { name = "python-docx" },
     { name = "python-dotenv" },
+    { name = "python-jose", extra = ["cryptography"] },
     { name = "python-multipart" },
     { name = "python-pptx" },
     { name = "pyttsx3" },
@@ -1967,6 +1969,7 @@ all = [
 ]
 backend = [
     { name = "accelerate" },
+    { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "beautifulsoup4" },
     { name = "camelot-py", extras = ["cv"] },
     { name = "chromadb" },
@@ -1994,6 +1997,7 @@ backend = [
     { name = "pymupdf" },
     { name = "python-docx" },
     { name = "python-dotenv" },
+    { name = "python-jose", extras = ["cryptography"], specifier = ">=3.3.0" },
     { name = "python-multipart" },
     { name = "python-pptx" },
     { name = "pyttsx3" },
