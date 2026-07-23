@@ -1,6 +1,6 @@
 # LiteMindUI Docker Makefile
 
-.PHONY: help setup build up down logs clean health dev prod hub-up hub-down version tag-release test-docker-local create-docker-repos
+.PHONY: help setup build up down logs clean health dev prod hub-up hub-down version tag-release test-docker-local create-docker-repos gotrue-up gotrue-down
 
 COMPOSE_CMD ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif docker compose version >/dev/null 2>&1; then echo "docker compose"; fi)
 
@@ -23,6 +23,8 @@ help:
 	@echo "  tag-release - Create a new release tag"
 	@echo "  test-docker-local - Test Docker build and push locally"
 	@echo "  create-docker-repos - Create required Docker Hub repositories"
+	@echo "  gotrue-up - Start standalone GoTrue auth container (non-Docker/native mode)"
+	@echo "  gotrue-down - Stop and remove the standalone GoTrue container"
 
 # Setup directories and environment
 setup:
@@ -130,3 +132,37 @@ test-docker-local:
 create-docker-repos:
 	@echo "🐳 Creating Docker Hub repositories..."
 	@python3 scripts/create-docker-repos.py
+
+# ── Authentication (GoTrue) ───────────────────────────────────────
+# Two deployment modes:
+#   Docker mode     — `make up` runs the full stack including the `gotrue` and
+#                     `db` services from docker-compose.yml. Backend uses
+#                     AUTH_MODE=docker and reaches GoTrue at http://gotrue:9999.
+#   Standalone mode — backend runs natively (`uv run uvicorn ...`) with
+#                     AUTH_MODE=standalone and GOTRUE_API_URL=http://localhost:9999.
+#                     Postgres runs natively on localhost:5432; only GoTrue runs
+#                     in a container via `make gotrue-up`.
+# Set GOTRUE_JWT_SECRET and POSTGRES_PASSWORD in .env (see .env.example).
+
+# Start standalone GoTrue container (expects native Postgres on localhost:5432)
+gotrue-up:
+	@echo "🔐 Starting standalone GoTrue auth service..."
+	docker run -d --name litemind-gotrue \
+		-p 9999:9999 \
+		--add-host=host.docker.internal:host-gateway \
+		-e GOTRUE_API_EXTERNAL_URL=http://localhost:9999 \
+		-e GOTRUE_DB_DRIVER=postgres \
+		-e GOTRUE_DB_DATABASE_URL=postgresql://postgres:$${POSTGRES_PASSWORD:-postgres}@host.docker.internal:5432/postgres \
+		-e GOTRUE_JWT_SECRET=$${GOTRUE_JWT_SECRET} \
+		-e GOTRUE_SITE_URL=http://localhost:3000 \
+		-e GOTRUE_URI_ALLOW_LIST=http://localhost:3000,http://localhost:8501 \
+		-e GOTRUE_DISABLE_SIGNUP=false \
+		-e GOTRUE_MAILER_AUTOCONFIRM=true \
+		supabase/gotrue:v2.143.0
+	@echo "✅ GoTrue running at http://localhost:9999. Set AUTH_MODE=standalone in .env."
+
+# Stop and remove the standalone GoTrue container
+gotrue-down:
+	@echo "🛑 Stopping standalone GoTrue auth service..."
+	docker rm -f litemind-gotrue 2>/dev/null || true
+	@echo "✅ GoTrue stopped."
