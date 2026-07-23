@@ -16,6 +16,10 @@ import type { ChatMessage } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useVoiceInput } from '@/hooks/use-voice-input';
 import { useRealtimeVoice } from '@/hooks/use-realtime-voice';
+import { parseProviderOverride } from '@/hooks/use-provider-override';
+import { ProviderOverrideBadge } from '@/components/provider-override-badge';
+import { ProviderKeyPrompt } from '@/components/provider-key-prompt';
+import type { ProviderOverride } from '@/lib/types';
 
 const DISPLAY_MODES = [
   { mode: 'rendered', label: 'Rendered', Icon: Sparkles },
@@ -43,9 +47,17 @@ export default function ChatPage() {
   const [input, setInput] = React.useState('');
   const [isStreaming, setIsStreaming] = React.useState(false);
   const [voiceOn, setVoiceOn] = React.useState(false);
+  const [keyPromptOpen, setKeyPromptOpen] = React.useState(false);
+  const [pendingOverride, setPendingOverride] = React.useState<ProviderOverride | null>(null);
   const abortRef = React.useRef<AbortController | null>(null);
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+
+  // Compute the override live as the user types so the badge can be shown.
+  const currentOverride = React.useMemo(
+    () => parseProviderOverride(input, settings),
+    [input, settings],
+  );
 
   const { state: voiceState, isSupported: voiceSupported, start: startVoice, stop: stopVoice } = useVoiceInput(
     (transcript) => { setInput(transcript); setVoiceOn(false); setTimeout(() => handleSend(transcript), 50); }
@@ -104,11 +116,30 @@ export default function ChatPage() {
     const text = (overrideText ?? input).trim();
     const convId = activeId;
     if (!text || isStreaming || !convId) return;
+
+    // Parse "@" provider override
+    const override = parseProviderOverride(text, settings);
+
+    // If override requires key but none configured, show inline prompt
+    if (override && !override.hasKey) {
+      setKeyPromptOpen(true);
+      setPendingOverride(override);
+      return;
+    }
+
     const webSearch = useAppStore.getState().conversations.find((c) => c.id === convId)?.webSearch ?? false;
+
+    // Determine effective settings from override or defaults
+    const effectiveBackend = override?.backend ?? settings.backend;
+    const effectiveModel = override?.model || settings.model;
+    const effectiveApiKey = override?.hasKey
+      ? settings.providerKeys[override.backend]
+      : settings.apiKey;
+    const effectiveText = override?.text ?? text;
 
     setInput('');
     setIsStreaming(true);
-    addMessage(convId, { role: 'user', content: text });
+    addMessage(convId, { role: 'user', content: effectiveText });
     addMessage(convId, { role: 'assistant', content: '', isStreaming: true });
 
     const controller = new AbortController();
@@ -126,8 +157,8 @@ export default function ChatPage() {
 
       const stream = webSearch
         ? streamWebSearch({
-            message: text, model: settings.model || undefined, backend: settings.backend,
-            api_key: settings.apiKey ?? null, api_base: settings.apiBase ?? null,
+            message: effectiveText, model: effectiveModel || undefined, backend: effectiveBackend,
+            api_key: effectiveApiKey ?? null, api_base: settings.apiBase ?? null,
             session_id: settings.sessionId, temperature: settings.temperature, max_tokens: settings.maxTokens,
             top_p: settings.topP, frequency_penalty: settings.frequencyPenalty,
             repetition_penalty: settings.repetitionPenalty, top_k: settings.topK, min_p: settings.minP,
@@ -136,8 +167,8 @@ export default function ChatPage() {
             conversation_history: history.length ? history : null, use_web_search: true,
           }, controller.signal)
         : streamChat({
-            message: text, model: settings.model || undefined, backend: settings.backend,
-            api_key: settings.apiKey ?? null, api_base: settings.apiBase ?? null,
+            message: effectiveText, model: effectiveModel || undefined, backend: effectiveBackend,
+            api_key: effectiveApiKey ?? null, api_base: settings.apiBase ?? null,
             temperature: settings.temperature, max_tokens: settings.maxTokens, top_p: settings.topP,
             frequency_penalty: settings.frequencyPenalty, repetition_penalty: settings.repetitionPenalty,
             top_k: settings.topK, min_p: settings.minP, seed: settings.seed,
@@ -158,6 +189,27 @@ export default function ChatPage() {
       setTimeout(() => textareaRef.current?.focus(), 50);
     }
   }, [input, isStreaming, activeId, settings, addMessage, updateLastMessage]);
+
+  // ── Provider override key prompt handlers ─────────────────────────────────
+  const handleSetKey = React.useCallback((key: string) => {
+    if (pendingOverride) {
+      useAppStore.getState().setProviderKey(pendingOverride.backend, key);
+    }
+    setKeyPromptOpen(false);
+    setPendingOverride(null);
+  }, [pendingOverride]);
+
+  const handleKeyPromptCancel = React.useCallback(() => {
+    setKeyPromptOpen(false);
+    setPendingOverride(null);
+  }, []);
+
+  const handleKeyPromptFallback = React.useCallback(() => {
+    setKeyPromptOpen(false);
+    setPendingOverride(null);
+    // Fallback to default provider — just clear the input
+    setInput('');
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSend(); }
@@ -245,6 +297,18 @@ export default function ChatPage() {
             <span>{realtimeState === 'speaking' ? 'Assistant is speaking' : 'Listening…'}</span>
           </div>
         )}
+        {currentOverride && (
+          <ProviderOverrideBadge
+            override={currentOverride}
+            onRemove={() => setInput('')}
+            onSetKey={() => {
+              if (!currentOverride.hasKey) {
+                setKeyPromptOpen(true);
+                setPendingOverride(currentOverride);
+              }
+            }}
+          />
+        )}
         <div className="flex items-end gap-2">
           <Textarea
             ref={textareaRef}
@@ -292,6 +356,15 @@ export default function ChatPage() {
         </div>
         <p className="mt-1.5 text-center text-[11px] text-muted-foreground">Enter to send · Shift+Enter for newline · Escape to cancel</p>
       </div>
+
+      <ProviderKeyPrompt
+        open={keyPromptOpen}
+        provider={pendingOverride?.backend ?? 'ollama'}
+        model={pendingOverride?.model ?? ''}
+        onSetKey={handleSetKey}
+        onCancel={handleKeyPromptCancel}
+        onFallback={handleKeyPromptFallback}
+      />
     </div>
   );
 }

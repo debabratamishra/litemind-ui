@@ -43,6 +43,9 @@ export interface ChatStreamRequest {
 export interface RAGQueryRequest {
   query: string;
   model?: string;
+  backend?: string;
+  api_key?: string | null;
+  api_base?: string | null;
   session_id?: string;
   temperature?: number;
   max_tokens?: number;
@@ -151,6 +154,9 @@ export async function* streamRagQuery(
   const body = {
     query: request.query,
     model: request.model,
+    backend: request.backend,
+    api_key: request.api_key,
+    api_base: request.api_base,
     session_id: request.session_id,
     temperature: request.temperature,
     max_tokens: request.max_tokens,
