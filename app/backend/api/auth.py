@@ -64,10 +64,11 @@ def _map_gotrue_error(e: GoTrueError, *, registering: bool = False) -> HTTPExcep
 def register(
     payload: CredentialsRequest,
     response: Response,
+    name: str = "",
     service: GoTrueAuthService = Depends(get_auth_service),
 ) -> dict[str, Any]:
     try:
-        result = service.register(payload.email, payload.password)
+        result = service.register(payload.email, payload.password, name)
     except GoTrueError as e:
         raise _map_gotrue_error(e, registering=True) from e
     token = result.get("access_token")
@@ -119,4 +120,4 @@ def logout(
 
 @router.get("/me")
 def me(user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return {"id": user.id, "email": user.email}
+    return {"id": user.id, "email": user.email, "name": user.name}
