@@ -1,0 +1,70 @@
+# Auth infrastructure: PostgreSQL + Supabase GoTrue.
+# Single source of truth for BOTH deployment modes:
+#   Docker mode     — layered with the main file:
+#                     docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d
+#   Standalone mode — run alone (backend runs natively):
+#                     docker compose -f docker-compose.auth.yml up -d   (or `make gotrue-up`)
+# Compose reads ${VARS} from .env in this directory.
+
+services:
+  # PostgreSQL — stores GoTrue auth data plus LiteMindUI users/conversations.
+  db:
+    image: postgres:15-alpine
+    container_name: litemindui-db
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-postgres}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/db/init-auth-schema.sql:/docker-entrypoint-initdb.d/10-init-auth-schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Supabase Auth (GoTrue) — self-hosted email/password authentication.
+  # Backend (docker mode) reaches it at http://gotrue:9999; the host (standalone
+  # mode) at http://localhost:9999.
+  gotrue:
+    image: supabase/gotrue:v2.143.0
+    container_name: litemindui-gotrue
+    environment:
+      - PORT=9999
+      - GOTRUE_DB_DRIVER=postgres
+      - GOTRUE_DB_DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres?options=-csearch_path=auth
+      - GOTRUE_DB_SCHEMA=auth
+      - API_EXTERNAL_URL=http://localhost:9999
+      - GOTRUE_JWT_SECRET=${GOTRUE_JWT_SECRET:-}
+      - GOTRUE_SITE_URL=http://localhost:3000
+      - GOTRUE_URI_ALLOW_LIST=http://localhost:3000,http://localhost:8501
+      - GOTRUE_DISABLE_SIGNUP=false
+      - GOTRUE_SMTP_HOST=${SMTP_HOST:-}
+      - GOTRUE_SMTP_PORT=${SMTP_PORT:-587}
+      - GOTRUE_SMTP_USER=${SMTP_USER:-}
+      - GOTRUE_SMTP_PASS=${SMTP_PASS:-}
+      - GOTRUE_SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL:-admin@litemind.local}
+      # Auto-confirm signups so dev login works without a configured SMTP server.
+      - GOTRUE_MAILER_AUTOCONFIRM=true
+    ports:
+      - "9999:9999"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
