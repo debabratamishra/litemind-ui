@@ -44,9 +44,12 @@ class GoTrueAuthService:
         )
         return self._token_payload(response)
 
-    def register(self, email: str, password: str) -> dict[str, Any]:
+    def register(self, email: str, password: str, name: str = "") -> dict[str, Any]:
         """Create a new user. Returns GoTrue signup payload."""
-        response = self._request("POST", "/signup", json={"email": email, "password": password})
+        body = {"email": email, "password": password}
+        if name:
+            body["data"] = {"name": name}
+        response = self._request("POST", "/signup", json=body)
         return self._token_payload(response)
 
     def logout(self, token: str) -> bool:
