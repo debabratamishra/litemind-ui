@@ -4,6 +4,10 @@ import type { NextRequest } from 'next/server';
  * Server-side streaming proxy used by the Next.js route handlers. It forwards a
  * POST (with its JSON body) to the backend and pipes the upstream response body
  * straight back to the client, preserving the streaming semantics.
+ *
+ * This runs exclusively in the Next.js server runtime, where NEXT_PUBLIC_API_URL
+ * resolves to an internal Docker hostname (e.g. http://backend:8000) that is
+ * reachable from the container but NOT from the browser.
  */
 
 const BACKEND_BASE =

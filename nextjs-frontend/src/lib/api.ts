@@ -3,16 +3,20 @@ import type { ChatMessage, Model, RagFile, RagStatusResponse } from '@/lib/types
 /**
  * Frontend API client for the FastAPI backend.
  *
- * Streaming endpoints:
- *   - POST /api/chat/stream    → SSE (`data: {"chunk": "..."}` frames)
- *   - POST /api/chat/web-search → plain text
- *   - POST /api/rag/query      → plain text (with a leading citation frame)
+ * Client-side fetch calls use relative paths so requests always stay
+ * same-origin and are routed correctly by the Next.js layer:
+ *   - Rewrites (next.config.ts) proxy non-streaming /api/* calls to the backend
+ *   - App Router route handlers (src/app/api/**) proxy streaming calls with
+ *     chunk-by-chunk forwarding via backend-proxy.ts
  *
- * The base URL comes from NEXT_PUBLIC_API_URL (default http://localhost:8000),
- * matching the backend default in CLAUDE.md.
+ * The NEXT_PUBLIC_API_URL env var is used server-side only
+ * (next.config.ts rewrites, backend-proxy.ts) — it must NOT be embedded
+ * in client-side fetch URLs, because in Docker mode it resolves to an
+ * internal container hostname (e.g. http://backend:8000) that the browser
+ * cannot reach.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const API_BASE = ''
 
 // ─── Request shapes ──────────────────────────────────────────────────────────
 
