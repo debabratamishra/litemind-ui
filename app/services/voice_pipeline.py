@@ -76,8 +76,6 @@ class VoiceSettings:
     voice: str | None = None
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
     user_id: str | None = None  # Owning user (for session/transcript isolation)
-
-
 async def apply_memory_to_voice_settings(settings: VoiceSettings) -> None:
     """Fold the user's persistent memory into the voice system instruction."""
     if not settings.user_id:

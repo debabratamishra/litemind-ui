@@ -93,7 +93,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 // Import after mocks are set up
-import RagPage from '@/app/rag/page';
+import RagPage from '@/app/(main)/rag/page';
 
 describe('RagPage — provider override integration', () => {
   beforeEach(() => {

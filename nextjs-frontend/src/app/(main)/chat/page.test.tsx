@@ -103,7 +103,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 // Import after mocks are set up
-import ChatPage from '@/app/chat/page';
+import ChatPage from '@/app/(main)/chat/page';
 
 describe('ChatPage — provider override integration', () => {
   beforeEach(() => {
