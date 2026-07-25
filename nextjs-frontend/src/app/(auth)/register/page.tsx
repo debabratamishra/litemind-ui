@@ -16,6 +16,7 @@ export default function RegisterPage(): React.ReactElement {
   const isAuthenticated = useAppStore((s) => s.isAuthenticated);
   const register = useAppStore((s) => s.register);
 
+  const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [confirm, setConfirm] = React.useState('');
@@ -45,7 +46,7 @@ export default function RegisterPage(): React.ReactElement {
 
     setLoading(true);
     try {
-      await register(email, password);
+      await register(email, password, name);
       router.replace('/chat');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed. Please try again.');
@@ -75,6 +76,18 @@ export default function RegisterPage(): React.ReactElement {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="name">First name</Label>
+          <Input
+            id="name"
+            type="text"
+            autoComplete="given-name"
+            placeholder="Your first name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
           />
         </div>
 

@@ -39,4 +39,8 @@ def get_current_user(
     sub = claims.get("sub")
     if not sub:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing subject")
-    return User(id=sub, email=claims.get("email"))
+    return User(
+        id=sub,
+        email=claims.get("email"),
+        name=(claims.get("user_metadata") or {}).get("name"),
+    )

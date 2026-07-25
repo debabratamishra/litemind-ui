@@ -231,3 +231,5 @@ export const selectActiveConversation = (state: AppState): Conversation | undefi
 export const selectActiveId = (state: AppState): string | null => state.activeId;
 
 export const selectSettings = (state: AppState): AppSettings => state.settings;
+
+export const selectUser = (state: AppState): AuthUser | null => state.user;
