@@ -248,6 +248,7 @@ export async function uploadRagFile(file: File): Promise<unknown> {
 export interface AuthUserResponse {
   id: string;
   email: string | null;
+  name: string | null;
 }
 
 export interface AuthResponse {
@@ -286,8 +287,10 @@ export const authApi = {
   async login(email: string, password: string, remember?: boolean): Promise<AuthResponse> {
     return authRequest('/api/auth/login', { email, password, remember });
   },
-  async register(email: string, password: string): Promise<AuthResponse> {
-    return authRequest('/api/auth/register', { email, password });
+  async register(email: string, password: string, name?: string): Promise<AuthResponse> {
+    const body: { email: string; password: string; name?: string } = { email, password };
+    if (name) body.name = name;
+    return authRequest('/api/auth/register', body);
   },
   async logout(): Promise<void> {
     await fetch(`${API_BASE}/api/auth/logout`, {
