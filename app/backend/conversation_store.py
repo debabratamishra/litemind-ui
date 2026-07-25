@@ -21,7 +21,7 @@ from typing import List, Optional
 
 import asyncpg
 
-from config import Config
+from app.backend.core.config import Config
 
 logger = logging.getLogger(__name__)
 

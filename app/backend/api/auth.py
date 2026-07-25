@@ -51,6 +51,8 @@ def _map_gotrue_error(e: GoTrueError, *, registering: bool = False) -> HTTPExcep
         return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Auth service unavailable")
     if registering and ("already" in message.lower() or e.status_code in (409, 422)):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
+    if registering and e.status_code == 400:
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
     if e.status_code in (400, 401, 403):
         return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     if e.status_code >= 500:

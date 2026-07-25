@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 import httpx
 
-from config import Config
+from app.backend.core.config import Config
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
 

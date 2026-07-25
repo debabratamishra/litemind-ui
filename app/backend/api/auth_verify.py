@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from jose import JWTError, jwt
 
-from config import Config
+from app.backend.core.config import Config
 
 
 def verify_access_token(token: str, secret: str | None = None) -> dict:
