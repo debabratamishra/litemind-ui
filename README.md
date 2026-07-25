@@ -83,11 +83,11 @@ LiteMindUI requires every user to register or sign in before using the app. Auth
 
 Mode is selected by `AUTH_MODE` in `.env`:
 
-- **Docker (recommended with `make up`):** `docker-compose.yml` already includes the `gotrue` and `db` (PostgreSQL) services. Set `GOTRUE_JWT_SECRET` (a long random string) and `POSTGRES_PASSWORD` in `.env`, then `make up`. The backend reaches GoTrue at `http://gotrue:9999` and Postgres at `db:5432` inside the compose network.
+- **Docker (recommended with `make up`):** auth infrastructure (`gotrue` + `db` PostgreSQL) lives in `docker-compose.auth.yml`, which `make up` layers automatically with `docker-compose.yml`. Set `GOTRUE_JWT_SECRET` (a long random string, e.g. `openssl rand -hex 32`) and `POSTGRES_PASSWORD` in `.env`, then `make up`. The backend reaches GoTrue at `http://gotrue:9999` and Postgres at `db:5432` inside the compose network.
 - **Standalone (native `uv run`):** run GoTrue as a container while the backend and Postgres run natively on the host:
   ```bash
-  make gotrue-up     # starts the GoTrue container pointed at your local Postgres
-  make gotrue-down   # stops and removes it
+  make gotrue-up     # starts Postgres + GoTrue containers
+  make gotrue-down   # stops and removes them
   ```
 
 ### Required environment variables
