@@ -21,6 +21,7 @@ security = HTTPBearer(auto_error=False)
 class User(BaseModel):
     id: str
     email: Optional[str] = None
+    name: Optional[str] = None
 
 
 def get_current_user(
