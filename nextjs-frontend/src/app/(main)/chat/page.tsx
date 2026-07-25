@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import MessageBubble from '@/components/message-bubble';
 import VoiceActivityIndicator from '@/components/voice-activity';
-import { useAppStore, selectActiveConversation, selectActiveId, selectSettings } from '@/lib/store';
+import { useAppStore, selectActiveConversation, selectActiveId, selectSettings, selectUser } from '@/lib/store';
 import { streamChat, streamWebSearch } from '@/lib/api';
 import type { ChatMessage } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -38,6 +38,7 @@ export default function ChatPage() {
   const conv = useAppStore(selectActiveConversation);
   const activeId = useAppStore(selectActiveId);
   const settings = useAppStore(selectSettings);
+  const user = useAppStore(selectUser);
   const { addMessage, updateLastMessage, setWebSearch, clearConversation, createConversation } = useAppStore();
 
   const [input, setInput] = React.useState('');
@@ -167,13 +168,15 @@ export default function ChatPage() {
     if (action === 'send_message' && payload) void handleSend(payload);
   }, [handleSend]);
 
+  const greeting = user?.name ? `Hey ${user.name}, How can I help you today?` : 'How can I help you today?';
+
   if (!conv || !activeId) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
           <Bot className="h-7 w-7 text-primary" aria-hidden="true" />
         </div>
-        <h2 className="text-xl font-semibold">How can I help you today?</h2>
+        <h2 className="text-xl font-semibold">{greeting}</h2>
         <Button onClick={() => createConversation('chat')} className="gap-2">
           <Plus className="h-4 w-4" aria-hidden="true" /> New conversation
         </Button>
@@ -215,7 +218,7 @@ export default function ChatPage() {
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
                 <Bot className="h-7 w-7 text-primary" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold">How can I help you today?</h2>
+              <h2 className="text-xl font-semibold">{greeting}</h2>
               <p className="max-w-sm text-sm text-muted-foreground">Ask me anything — I can answer, help you write, analyse documents, or search the web.</p>
             </div>
           ) : (

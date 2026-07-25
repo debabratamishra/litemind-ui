@@ -138,15 +138,21 @@ class ConversationMemoryService:
         # Conservative estimate: ~4 characters per token
         return max(1, len(text) // CHARS_PER_TOKEN)
 
-    def get_or_create_session(self, session_id: str) -> ConversationContext:
-        """Get existing session or create a new one."""
-        if session_id not in self._sessions:
-            self._sessions[session_id] = ConversationContext(session_id=session_id)
-            logger.info(f"Created new conversation session: {session_id}")
-        return self._sessions[session_id]
+    def get_or_create_session(self, user_id: str, session_id: str) -> ConversationContext:
+        """Get existing session or create a new one.
+
+        Sessions are namespaced by ``user_id`` so that one user's in-memory
+        context can never collide with or leak into another user's.
+        """
+        scoped_id = f"{user_id}:{session_id}"
+        if scoped_id not in self._sessions:
+            self._sessions[scoped_id] = ConversationContext(session_id=scoped_id)
+            logger.info(f"Created new conversation session: {scoped_id}")
+        return self._sessions[scoped_id]
 
     def add_message(
         self,
+        user_id: str,
         session_id: str,
         role: str,
         content: str,
@@ -156,6 +162,7 @@ class ConversationMemoryService:
         Add a message to the conversation history.
 
         Args:
+            user_id: Owner of the session (for isolation)
             session_id: The session identifier
             role: Message role (user, assistant, system)
             content: Message content
@@ -164,7 +171,7 @@ class ConversationMemoryService:
         Returns:
             The created Message object
         """
-        session = self.get_or_create_session(session_id)
+        session = self.get_or_create_session(user_id, session_id)
 
         token_count = self.estimate_tokens(content)
         message = Message(
@@ -187,6 +194,7 @@ class ConversationMemoryService:
 
     def get_messages_for_context(
         self,
+        user_id: str,
         session_id: str,
         include_summary: bool = True
     ) -> List[Dict[str, str]]:
@@ -197,13 +205,14 @@ class ConversationMemoryService:
         including any conversation summary if available.
 
         Args:
+            user_id: Owner of the session (for isolation)
             session_id: The session identifier
             include_summary: Whether to include the summary in context
 
         Returns:
             List of message dicts with 'role' and 'content' keys
         """
-        session = self.get_or_create_session(session_id)
+        session = self.get_or_create_session(user_id, session_id)
         messages = []
 
         # Add summary as system context if available
@@ -223,20 +232,21 @@ class ConversationMemoryService:
 
         return messages
 
-    def get_context_token_count(self, session_id: str) -> int:
+    def get_context_token_count(self, user_id: str, session_id: str) -> int:
         """Get the current token count for a session."""
-        session = self.get_or_create_session(session_id)
+        session = self.get_or_create_session(user_id, session_id)
         return session.total_tokens + session.summary_tokens
 
-    def needs_summarization(self, session_id: str) -> bool:
+    def needs_summarization(self, user_id: str, session_id: str) -> bool:
         """Check if the session needs summarization based on token count."""
-        session = self.get_or_create_session(session_id)
+        session = self.get_or_create_session(user_id, session_id)
         threshold_tokens = int(self.max_context_tokens * self.summarize_threshold)
         current_tokens = session.total_tokens + session.summary_tokens
         return current_tokens >= threshold_tokens
 
     async def summarize_if_needed(
         self,
+        user_id: str,
         session_id: str,
         force: bool = False
     ) -> bool:
@@ -250,16 +260,17 @@ class ConversationMemoryService:
         4. Stores the summary for future context
 
         Args:
+            user_id: Owner of the session (for isolation)
             session_id: The session identifier
             force: Force summarization regardless of token count
 
         Returns:
             True if summarization was performed, False otherwise
         """
-        if not force and not self.needs_summarization(session_id):
+        if not force and not self.needs_summarization(user_id, session_id):
             return False
 
-        session = self.get_or_create_session(session_id)
+        session = self.get_or_create_session(user_id, session_id)
 
         if len(session.messages) < 4:
             # Not enough messages to summarize
@@ -379,25 +390,27 @@ Summary:"""
             logger.error(f"Error generating summary: {e}")
             return None
 
-    def clear_session(self, session_id: str) -> bool:
+    def clear_session(self, user_id: str, session_id: str) -> bool:
         """
         Clear all messages and summary for a session.
 
         Args:
+            user_id: Owner of the session (for isolation)
             session_id: The session identifier
 
         Returns:
             True if session was cleared, False if it didn't exist
         """
-        if session_id in self._sessions:
-            del self._sessions[session_id]
-            logger.info(f"Cleared session: {session_id}")
+        scoped_id = f"{user_id}:{session_id}"
+        if scoped_id in self._sessions:
+            del self._sessions[scoped_id]
+            logger.info(f"Cleared session: {scoped_id}")
             return True
         return False
 
-    def get_session_stats(self, session_id: str) -> Dict[str, Any]:
+    def get_session_stats(self, user_id: str, session_id: str) -> Dict[str, Any]:
         """Get statistics about a session."""
-        session = self.get_or_create_session(session_id)
+        session = self.get_or_create_session(user_id, session_id)
         return {
             "session_id": session_id,
             "message_count": len(session.messages),
@@ -410,6 +423,7 @@ Summary:"""
 
     def prepare_context_for_llm(
         self,
+        user_id: str,
         session_id: str,
         new_message: str,
         system_prompt: Optional[str] = None
@@ -424,6 +438,7 @@ Summary:"""
         4. Returns formatted messages ready for LLM
 
         Args:
+            user_id: Owner of the session (for isolation)
             session_id: The session identifier
             new_message: The new user message to add
             system_prompt: Optional system prompt to include
@@ -431,7 +446,7 @@ Summary:"""
         Returns:
             Tuple of (formatted messages list, total token count)
         """
-        session = self.get_or_create_session(session_id)
+        session = self.get_or_create_session(user_id, session_id)
         messages = []
         total_tokens = 0
 

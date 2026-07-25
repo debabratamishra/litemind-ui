@@ -40,6 +40,16 @@ services:
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
       - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
       - NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-4}
+      # Authentication (GoTrue + Postgres)
+      - GOTRUE_API_URL=http://gotrue:9999
+      - AUTH_MODE=docker
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+      - GOTRUE_JWT_SECRET=${GOTRUE_JWT_SECRET:-}
+    # gotrue and db are defined in docker-compose.auth.yml — always launch with:
+    #   docker compose -f docker-compose.yml -f docker-compose.auth.yml ...
+    depends_on:
+      - gotrue
+      - db
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

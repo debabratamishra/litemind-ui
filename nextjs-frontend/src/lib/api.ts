@@ -3,16 +3,20 @@ import type { ChatMessage, Model, RagFile, RagStatusResponse } from '@/lib/types
 /**
  * Frontend API client for the FastAPI backend.
  *
- * Streaming endpoints:
- *   - POST /api/chat/stream    → SSE (`data: {"chunk": "..."}` frames)
- *   - POST /api/chat/web-search → plain text
- *   - POST /api/rag/query      → plain text (with a leading citation frame)
+ * Client-side fetch calls use relative paths so requests always stay
+ * same-origin and are routed correctly by the Next.js layer:
+ *   - Rewrites (next.config.ts) proxy non-streaming /api/* calls to the backend
+ *   - App Router route handlers (src/app/api/**) proxy streaming calls with
+ *     chunk-by-chunk forwarding via backend-proxy.ts
  *
- * The base URL comes from NEXT_PUBLIC_API_URL (default http://localhost:8000),
- * matching the backend default in CLAUDE.md.
+ * The NEXT_PUBLIC_API_URL env var is used server-side only
+ * (next.config.ts rewrites, backend-proxy.ts) — it must NOT be embedded
+ * in client-side fetch URLs, because in Docker mode it resolves to an
+ * internal container hostname (e.g. http://backend:8000) that the browser
+ * cannot reach.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const API_BASE = ''
 
 // ─── Request shapes ──────────────────────────────────────────────────────────
 
@@ -116,6 +120,7 @@ async function postJSON(path: string, body: unknown, signal?: AbortSignal): Prom
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
+    credentials: 'include',
     cache: 'no-store',
   });
   return res;
@@ -172,13 +177,13 @@ export async function* streamRagQuery(
 // ─── REST endpoints ─────────────────────────────────────────────────────────────
 
 export async function getRagFiles(): Promise<{ files: RagFile[] }> {
-  const res = await fetch(`${API_BASE}/api/rag/files`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/api/rag/files`, { credentials: 'include', cache: 'no-store' });
   if (!res.ok) throw new Error(await errorText(res));
   return (await res.json()) as { files: RagFile[] };
 }
 
 export async function getRagStatus(): Promise<RagStatusResponse> {
-  const res = await fetch(`${API_BASE}/api/rag/status`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/api/rag/status`, { credentials: 'include', cache: 'no-store' });
   if (!res.ok) throw new Error(await errorText(res));
   return (await res.json()) as RagStatusResponse;
 }
@@ -186,7 +191,7 @@ export async function getRagStatus(): Promise<RagStatusResponse> {
 export async function deleteRagFile(filename: string): Promise<void> {
   const res = await fetch(
     `${API_BASE}/api/rag/files/${encodeURIComponent(filename)}`,
-    { method: 'DELETE', cache: 'no-store' },
+    { method: 'DELETE', credentials: 'include', cache: 'no-store' },
   );
   if (!res.ok) throw new Error(await errorText(res));
 }
@@ -195,6 +200,7 @@ export async function resetRag(): Promise<{ status: string; message: string; fil
   const res = await fetch(`${API_BASE}/api/rag/reset`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(await errorText(res));
@@ -205,7 +211,7 @@ export async function getEnhancedModels(): Promise<{
   local_models: Model[];
   cloud_models: Model[];
 }> {
-  const res = await fetch(`${API_BASE}/models/enhanced`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/models/enhanced`, { credentials: 'include', cache: 'no-store' });
   if (!res.ok) throw new Error(await errorText(res));
   return (await res.json()) as { local_models: Model[]; cloud_models: Model[] };
 }
@@ -230,11 +236,78 @@ export async function uploadRagFile(file: File): Promise<unknown> {
   const res = await fetch(`${API_BASE}/api/rag/upload`, {
     method: 'POST',
     body: form,
+    credentials: 'include',
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(await errorText(res));
   return (await res.json()) as unknown;
 }
+
+// ─── Auth ──────────────────────────────────────────────────────────────────
+
+export interface AuthUserResponse {
+  id: string;
+  email: string | null;
+  name: string | null;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type?: string;
+  user: AuthUserResponse;
+}
+
+async function authRequest(path: string, body: unknown): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      message = data.detail ?? data.msg ?? data.message ?? message;
+    } catch {
+      /* keep status text */
+    }
+    throw new Error(message);
+  }
+  return (await res.json()) as AuthResponse;
+}
+
+/**
+ * Auth client. Web auth relies on the httpOnly `access_token` cookie (sent via
+ * `credentials: 'include'`); `access_token` in the response body is kept in
+ * memory for CLI/desktop Bearer parity.
+ */
+export const authApi = {
+  async login(email: string, password: string, remember?: boolean): Promise<AuthResponse> {
+    return authRequest('/api/auth/login', { email, password, remember });
+  },
+  async register(email: string, password: string, name?: string): Promise<AuthResponse> {
+    const body: { email: string; password: string; name?: string } = { email, password };
+    if (name) body.name = name;
+    return authRequest('/api/auth/register', body);
+  },
+  async logout(): Promise<void> {
+    await fetch(`${API_BASE}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+    });
+  },
+  async me(): Promise<AuthUserResponse> {
+    const res = await fetch(`${API_BASE}/api/auth/me`, {
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error('Not authenticated');
+    return (await res.json()) as AuthUserResponse;
+  },
+};
 
 // ─── Error extraction ───────────────────────────────────────────────────────────
 

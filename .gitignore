@@ -69,6 +69,8 @@ Thumbs.db
 
 # UV - Note: uv.lock should be committed for reproducible builds
 # .python-version should be committed too
+.uv-cache/
+.remember/
 
 #Scripts
 scripts/test-docker-publish.py

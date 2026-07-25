@@ -3,7 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/theme-provider';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { Sidebar } from '@/components/layout/sidebar';
+import { AuthProvider } from '@/app/auth-provider';
 
 // ─── Font ─────────────────────────────────────────────────────────────────────
 
@@ -49,20 +49,9 @@ export default function RootLayout({
         <ThemeProvider>
           {/* delay=300 gives tooltips a 300ms hover delay before showing */}
           <TooltipProvider delay={300}>
-            {/* Full-height flex container: sidebar + main content */}
-            <div className="flex h-full">
-              {/* ── Sidebar (desktop: static; mobile: overlay) ── */}
-              <Sidebar />
-
-              {/* ── Main content area ── */}
-              <main
-                className="flex flex-1 flex-col overflow-auto"
-                id="main-content"
-                tabIndex={-1}
-              >
-                {children}
-              </main>
-            </div>
+            {/* AuthProvider rehydrates the session on mount; route groups
+                decide what to render (sidebar shell vs. auth pages). */}
+            <AuthProvider>{children}</AuthProvider>
           </TooltipProvider>
         </ThemeProvider>
       </body>

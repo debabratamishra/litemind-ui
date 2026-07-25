@@ -70,13 +70,42 @@ npm run build && npm start   # production server
 | API docs | `http://localhost:8000/docs` |
 | Health check | `http://localhost:8000/health` |
 
-## Frontend features
+## Authentication
 
-The Next.js frontend is a full TypeScript application built on:
+LiteMindUI requires every user to register or sign in before using the app. Auth is powered by self-hosted **Supabase Auth (GoTrue)** — an open-source, JWT-based identity server you run yourself (no third-party account required).
 
-- **Next.js 16 App Router** with server components and streaming
-- **Tailwind CSS + shadcn/ui** — production-ready component library
-- **Dark / light theme** — persisted preference with one-click toggle
+- **Login methods:** email + password.
+- **Session (hybrid):** on login the backend sets an HTTP-only `access_token` cookie for the browser **and** returns the JWT in the response body for CLI/desktop clients (e.g. `litemind-cli`, `litemind-desktop`). The web client keeps the token in memory only (never `localStorage`) and revalidates via `GET /api/auth/me` on page load.
+- **Per-user isolation:** every chat session, persisted conversation, and RAG context is namespaced by the authenticated user's id, so one user can never read or mutate another user's data.
+- **Multiple clients:** the same backend auth API is shared by the Next.js web UI, the CLI, and future desktop apps.
+
+### Running GoTrue (the auth server)
+
+Mode is selected by `AUTH_MODE` in `.env`:
+
+- **Docker (recommended with `make up`):** auth infrastructure (`gotrue` + `db` PostgreSQL) lives in `docker-compose.auth.yml`, which `make up` layers automatically with `docker-compose.yml`. Set `GOTRUE_JWT_SECRET` (a long random string, e.g. `openssl rand -hex 32`) and `POSTGRES_PASSWORD` in `.env`, then `make up`. The backend reaches GoTrue at `http://gotrue:9999` and Postgres at `db:5432` inside the compose network. The browser talks to the backend exclusively through the Next.js frontend server via same-origin requests — the internal `backend` hostname is never exposed to the browser.
+- **Standalone (native `uv run`):** run GoTrue as a container while the backend and Postgres run natively on the host:
+  ```bash
+  make gotrue-up     # starts Postgres + GoTrue containers
+  make gotrue-down   # stops and removes them
+  ```
+
+### Required environment variables
+
+Copy `.env.example` → `.env` and set at minimum:
+
+| Variable | Purpose |
+| --- | --- |
+| `GOTRUE_API_URL` | GoTrue REST base URL (default `http://localhost:9999`) |
+| `GOTRUE_JWT_SECRET` | HS256 secret GoTrue signs JWTs with — **must match** the value GoTrue runs with. Leave blank to disable JWT verification. |
+| `AUTH_MODE` | `docker` or `standalone` |
+| `DATABASE_URL` | PostgreSQL connection string for users + conversations |
+| `POSTGRES_PASSWORD` / `POSTGRES_USER` / `POSTGRES_DB` | Postgres credentials |
+
+On first run, register an account at `/register`, then sign in at `/login`. SMTP variables (`SMTP_*`) are optional and only needed later for email verification / password reset.
+
+## Features
+
 - **Streaming responses** — SSE for chat, plain-text streams for RAG and web search
 - **Generative UI** — AI responses can embed charts (bar/line/pie), tables, metrics, progress bars, and interactive buttons using fenced `ui:*` blocks
 - **Voice input** — Web Speech API microphone capture with live transcription, auto-submits on recognition
@@ -144,11 +173,3 @@ uv run pytest --cov=app --cov-report=html
 cd nextjs-frontend
 npm run test
 ```
-
-## Notes
-
-- Ollama should be reachable at `http://localhost:11434` for native runs and `http://host.docker.internal:11434` from containers unless you override `OLLAMA_API_URL`.
-- The frontend communicates with the FastAPI backend. Set `NEXT_PUBLIC_API_URL` to override the backend address (default `http://localhost:8000`).
-- RAG embeddings can use direct Ollama/HuggingFace integrations or hosted LiteLLM providers such as OpenRouter and Nvidia NIM.
-- For production-like deployments, prefer the compose workflows over ad hoc process startup.
-- The Next.js frontend is the recommended interface; the backend is accessed over HTTP via `NEXT_PUBLIC_API_URL`.

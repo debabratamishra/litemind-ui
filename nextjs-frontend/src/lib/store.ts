@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import type { AppSettings, ConversationMode, RagFile } from '@/lib/types';
+import { authApi } from '@/lib/api';
 
 /**
  * Global client store (Zustand). Holds conversations, the active conversation
@@ -24,7 +25,27 @@ export interface Conversation {
   updatedAt: string;
 }
 
-interface AppState {
+export interface AuthUser {
+  id: string;
+  email: string | null;
+  name: string | null;
+}
+
+interface AuthSlice {
+  user: AuthUser | null;
+  /** In-memory only (never localStorage) — used for CLI/desktop Bearer parity. */
+  accessToken: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  login: (email: string, password: string, remember?: boolean) => Promise<void>;
+  register: (email: string, password: string, name?: string) => Promise<void>;
+  logout: () => Promise<void>;
+  fetchCurrentUser: () => Promise<void>;
+}
+
+type AppState = AppStoreState & AuthSlice;
+
+interface AppStoreState {
   conversations: Conversation[];
   activeId: string | null;
   settings: AppSettings;
@@ -98,6 +119,53 @@ export const useAppStore = create<AppState>((set) => ({
   settings: DEFAULT_SETTINGS,
   ragFiles: [],
 
+  // ─── Auth slice ────────────────────────────────────────────────────────────
+  user: null,
+  accessToken: null,
+  isAuthenticated: false,
+  isLoading: true,
+
+  login: async (email, password, remember) => {
+    const res = await authApi.login(email, password, remember);
+    set({
+      user: res.user,
+      accessToken: res.access_token,
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    await useAppStore.getState().fetchCurrentUser();
+  },
+
+  register: async (email, password, name) => {
+    const res = await authApi.register(email, password, name);
+    set({
+      user: { ...res.user, name: res.user.name ?? null },
+      accessToken: res.access_token,
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    await useAppStore.getState().fetchCurrentUser();
+  },
+
+  logout: async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      // Even if the server call fails, clear local session state.
+    }
+    set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
+  },
+
+  fetchCurrentUser: async () => {
+    set({ isLoading: true });
+    try {
+      const user = await authApi.me();
+      set({ user, accessToken: null, isAuthenticated: true, isLoading: false });
+    } catch {
+      set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
+    }
+  },
+
   addMessage: (convId, message) =>
     set((state) =>
       patchConversation(state, convId, (conv) => ({
@@ -165,3 +233,5 @@ export const selectActiveConversation = (state: AppState): Conversation | undefi
 export const selectActiveId = (state: AppState): string | null => state.activeId;
 
 export const selectSettings = (state: AppState): AppSettings => state.settings;
+
+export const selectUser = (state: AppState): AuthUser | null => state.user;
