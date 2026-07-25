@@ -104,13 +104,8 @@ Copy `.env.example` → `.env` and set at minimum:
 
 On first run, register an account at `/register`, then sign in at `/login`. SMTP variables (`SMTP_*`) are optional and only needed later for email verification / password reset.
 
-## Frontend features
+## Features
 
-The Next.js frontend is a full TypeScript application built on:
-
-- **Next.js 16 App Router** with server components and streaming
-- **Tailwind CSS + shadcn/ui** — production-ready component library
-- **Dark / light theme** — persisted preference with one-click toggle
 - **Streaming responses** — SSE for chat, plain-text streams for RAG and web search
 - **Generative UI** — AI responses can embed charts (bar/line/pie), tables, metrics, progress bars, and interactive buttons using fenced `ui:*` blocks
 - **Voice input** — Web Speech API microphone capture with live transcription, auto-submits on recognition
@@ -178,10 +173,3 @@ uv run pytest --cov=app --cov-report=html
 cd nextjs-frontend
 npm run test
 ```
-
-## Notes
-
-- Ollama should be reachable at `http://localhost:11434` for native runs and `http://host.docker.internal:11434` from containers unless you override `OLLAMA_API_URL`.
-- The frontend communicates with the FastAPI backend through the Next.js server (same-origin requests). The Next.js rewrite proxy forwards `/api/*` and `/models/*` requests to the backend; streaming endpoints have their own server-side route handlers. The `NEXT_PUBLIC_API_URL` value is used server-side only — it must never be reachable from the browser.
-- RAG embeddings can use direct Ollama/HuggingFace integrations or hosted LiteLLM providers such as OpenRouter and Nvidia NIM.
-- For production-like deployments, prefer the compose workflows over ad hoc process startup.
