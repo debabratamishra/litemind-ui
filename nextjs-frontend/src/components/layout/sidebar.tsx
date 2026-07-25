@@ -14,10 +14,12 @@ import {
   Trash2,
   LogIn,
   LogOut,
+  User,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { SettingsPanel } from '@/components/settings-panel';
 import { useAppStore } from '@/lib/store';
@@ -226,27 +228,39 @@ export function Sidebar(): React.ReactElement {
         {/* Auth section */}
         <div className="px-3">
           {isAuthenticated && user ? (
-            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-2">
-              <div
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
-                aria-hidden="true"
-              >
-                {(user.email?.[0] ?? '?').toUpperCase()}
-              </div>
-              <span className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground">
-                {user.email}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 gap-1 px-2 text-xs"
-                onClick={() => void logout()}
-                aria-label="Sign out"
-              >
-                <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-                Sign out
-              </Button>
-            </div>
+            <Popover>
+              <PopoverTrigger asChild>
+                <div className="cursor-pointer">
+                  <div
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary hover:ring-2 hover:ring-primary/30 transition-all"
+                    aria-hidden="true"
+                  >
+                    {(user.name?.[0] ?? user.email?.[0] ?? '?').toUpperCase()}
+                  </div>
+                </div>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-3" align="end" side="top">
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <User className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                    <span className="text-sm font-medium text-sidebar-foreground">
+                      {user.name || user.email || 'User'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                  <Separator />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-2 text-destructive border-destructive/20 hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => void logout()}
+                  >
+                    <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                    Sign out
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
           ) : (
             <Button
               variant="outline"
