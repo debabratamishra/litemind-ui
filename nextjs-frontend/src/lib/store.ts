@@ -28,6 +28,7 @@ export interface Conversation {
 export interface AuthUser {
   id: string;
   email: string | null;
+  name: string | null;
 }
 
 interface AuthSlice {
@@ -37,7 +38,7 @@ interface AuthSlice {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string, remember?: boolean) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => Promise<void>;
   fetchCurrentUser: () => Promise<void>;
 }
@@ -134,10 +135,10 @@ export const useAppStore = create<AppState>((set) => ({
     });
   },
 
-  register: async (email, password) => {
-    const res = await authApi.register(email, password);
+  register: async (email, password, name) => {
+    const res = await authApi.register(email, password, name);
     set({
-      user: res.user,
+      user: { ...res.user, name: res.user.name ?? null },
       accessToken: res.access_token,
       isAuthenticated: true,
       isLoading: false,
