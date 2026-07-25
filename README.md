@@ -83,7 +83,7 @@ LiteMindUI requires every user to register or sign in before using the app. Auth
 
 Mode is selected by `AUTH_MODE` in `.env`:
 
-- **Docker (recommended with `make up`):** auth infrastructure (`gotrue` + `db` PostgreSQL) lives in `docker-compose.auth.yml`, which `make up` layers automatically with `docker-compose.yml`. Set `GOTRUE_JWT_SECRET` (a long random string, e.g. `openssl rand -hex 32`) and `POSTGRES_PASSWORD` in `.env`, then `make up`. The backend reaches GoTrue at `http://gotrue:9999` and Postgres at `db:5432` inside the compose network.
+- **Docker (recommended with `make up`):** auth infrastructure (`gotrue` + `db` PostgreSQL) lives in `docker-compose.auth.yml`, which `make up` layers automatically with `docker-compose.yml`. Set `GOTRUE_JWT_SECRET` (a long random string, e.g. `openssl rand -hex 32`) and `POSTGRES_PASSWORD` in `.env`, then `make up`. The backend reaches GoTrue at `http://gotrue:9999` and Postgres at `db:5432` inside the compose network. The browser talks to the backend exclusively through the Next.js frontend server via same-origin requests — the internal `backend` hostname is never exposed to the browser.
 - **Standalone (native `uv run`):** run GoTrue as a container while the backend and Postgres run natively on the host:
   ```bash
   make gotrue-up     # starts Postgres + GoTrue containers
@@ -182,7 +182,6 @@ npm run test
 ## Notes
 
 - Ollama should be reachable at `http://localhost:11434` for native runs and `http://host.docker.internal:11434` from containers unless you override `OLLAMA_API_URL`.
-- The frontend communicates with the FastAPI backend. Set `NEXT_PUBLIC_API_URL` to override the backend address (default `http://localhost:8000`).
+- The frontend communicates with the FastAPI backend through the Next.js server (same-origin requests). The Next.js rewrite proxy forwards `/api/*` and `/models/*` requests to the backend; streaming endpoints have their own server-side route handlers. The `NEXT_PUBLIC_API_URL` value is used server-side only — it must never be reachable from the browser.
 - RAG embeddings can use direct Ollama/HuggingFace integrations or hosted LiteLLM providers such as OpenRouter and Nvidia NIM.
 - For production-like deployments, prefer the compose workflows over ad hoc process startup.
-- The Next.js frontend is the recommended interface; the backend is accessed over HTTP via `NEXT_PUBLIC_API_URL`.
