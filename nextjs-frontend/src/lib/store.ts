@@ -133,6 +133,7 @@ export const useAppStore = create<AppState>((set) => ({
       isAuthenticated: true,
       isLoading: false,
     });
+    await useAppStore.getState().fetchCurrentUser();
   },
 
   register: async (email, password, name) => {
@@ -143,6 +144,7 @@ export const useAppStore = create<AppState>((set) => ({
       isAuthenticated: true,
       isLoading: false,
     });
+    await useAppStore.getState().fetchCurrentUser();
   },
 
   logout: async () => {
