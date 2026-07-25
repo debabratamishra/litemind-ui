@@ -33,6 +33,7 @@ class CredentialsRequest(BaseModel):
     email: str
     password: str
     remember: bool = False
+    name: str = ""
 
 
 def _set_session_cookie(response: Response, token: str, remember: bool = False) -> None:
@@ -64,11 +65,10 @@ def _map_gotrue_error(e: GoTrueError, *, registering: bool = False) -> HTTPExcep
 def register(
     payload: CredentialsRequest,
     response: Response,
-    name: str = "",
     service: GoTrueAuthService = Depends(get_auth_service),
 ) -> dict[str, Any]:
     try:
-        result = service.register(payload.email, payload.password, name)
+        result = service.register(payload.email, payload.password, payload.name)
     except GoTrueError as e:
         raise _map_gotrue_error(e, registering=True) from e
     token = result.get("access_token")
