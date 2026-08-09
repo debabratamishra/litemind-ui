@@ -517,12 +517,13 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
 
             # Sanitize filename to prevent path traversal
             safe_filename = sanitize_filename(up.filename or "")
-        except ValueError as e:
+        except ValueError:
+            logger.exception("Filename validation failed for upload: %s", up.filename)
             results.append(
                 {
                     "filename": up.filename,
                     "status": "error",
-                    "message": f"Invalid filename: {str(e)}",
+                    "message": "Invalid filename",
                     "chunks_created": 0,
                 }
             )
@@ -547,12 +548,13 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             upload_resolved = UPLOAD_FOLDER.resolve()
             if not str(dest_resolved).startswith(str(upload_resolved)):
                 raise ValueError("Path traversal attempt detected")
-        except (ValueError, OSError, RuntimeError) as e:
+        except (ValueError, OSError, RuntimeError):
+            logger.exception("Security validation failed for upload path: %s", up.filename)
             results.append(
                 {
                     "filename": up.filename,
                     "status": "error",
-                    "message": f"Security error: {str(e)}",
+                    "message": "Security validation failed",
                     "chunks_created": 0,
                 }
             )
