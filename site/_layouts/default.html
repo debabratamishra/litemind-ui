@@ -93,6 +93,47 @@
         sync();
       });
     })();
+
+    // Subtle mouse parallax for hero section
+    (function () {
+      const hero = document.querySelector('.hero');
+      if (!hero) return;
+
+      let mouseX = 0;
+      let mouseY = 0;
+      let heroX = 0;
+      let heroY = 0;
+
+      const updateMousePosition = (e) => {
+        const rect = hero.getBoundingClientRect();
+        mouseX = e.clientX - rect.left - rect.width / 2;
+        mouseY = e.clientY - rect.top - rect.height / 2;
+      };
+
+      const animate = () => {
+        // Smoothly follow mouse with damping
+        heroX += (mouseX - heroX) * 0.05;
+        heroY += (mouseY - heroY) * 0.05;
+
+        // Apply subtle movement to hero background
+        hero.style.backgroundPosition = `${heroX * 0.1}px ${heroY * 0.1}px`;
+
+        requestAnimationFrame(animate);
+      };
+
+      document.addEventListener('mousemove', updateMousePosition);
+      requestAnimationFrame(animate);
+
+      // Also handle touch devices
+      document.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) {
+          const touch = e.touches[0];
+          const rect = hero.getBoundingClientRect();
+          mouseX = touch.clientX - rect.left - rect.width / 2;
+          mouseY = touch.clientY - rect.top - rect.height / 2;
+        }
+      }, { passive: true });
+    })();
   </script>
 
 </body>

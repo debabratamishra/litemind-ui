@@ -109,6 +109,16 @@ description: >-
       Skill</strong>. Do not route it through the skill layer.
     </p>
 
+    <h3>Authentication system <span style="font-weight:400;font-size:.9rem;color:var(--muted)">(<code>app/backend/api/auth*</code>)</span></h3>
+    <p>
+      LiteMindUI uses a hybrid authentication system powered by GoTrue (Supabase Auth).
+      On login/register, the backend sets an HTTP-only <code>access_token</code> cookie for
+      browsers and returns the JWT in the response body for CLI/desktop clients. Protected
+      routes validate the token via cookie or <code>Authorization</code> header. Every chat
+      session, conversation, and RAG context is namespaced by the authenticated user's ID,
+      ensuring per-user data isolation.
+    </p>
+
     <h2>How a request travels</h2>
     <p>
       A chat message is a good example of the moving parts. The browser POSTs to
@@ -130,11 +140,12 @@ description: >-
 
     <h2>Extending LiteMindUI</h2>
     <p>
-      The skill layer is the main extension point. To add a capability, write a class
-      that implements <code>supports()</code>, <code>validate()</code>, and
-      <code>stream()</code>, then register it with the relevant registry. The API
-      routes never change, so new features stay isolated and testable. Voice is the one
-      intentional exception: it runs as its own Pipecat pipeline, not through a skill.
+      The skill layer is the main extension point for chat and RAG functionality. To add a
+      capability, write a class that implements <code>supports()</code>, <code>validate()</code>,
+      and <code>stream()</code>, then register it with the relevant registry. The API routes
+      never change, so new features stay isolated and testable. Voice and authentication are
+      intentional exceptions: voice runs as its own Pipecat pipeline, while authentication is
+      implemented via dedicated API routes with dependency-based route protection.
     </p>
 
     <h2>LLM provider backends</h2>
