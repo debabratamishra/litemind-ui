@@ -4,7 +4,7 @@ API request and response models
 
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
@@ -223,3 +223,15 @@ class MemoryStatsResponse(BaseModel):
     has_summary: bool
     max_context_tokens: int
     usage_percentage: float
+
+
+class MemoryContentRequest(BaseModel):
+    content: str = Field(..., min_length=1, description="Memory text (trimmed server-side)")
+
+
+class MemoryRecordResponse(BaseModel):
+    id: str
+    content: str
+    source: str
+    created_at: str
+    updated_at: str

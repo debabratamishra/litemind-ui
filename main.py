@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from app.backend.api import auth as auth_api
 from app.backend.api import chat as chat_api
 from app.backend.api import conversations as conversations_api
+from app.backend.api import memory as memory_api
 from app.backend.api import voice as voice_api
 from app.backend.api.auth_deps import User, get_current_user
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
@@ -341,6 +342,7 @@ app.include_router(auth_api.router)
 app.include_router(conversations_api.router)
 app.include_router(chat_api.router)
 app.include_router(voice_api.router)
+app.include_router(memory_api.router)
 
 # Templates
 try:
