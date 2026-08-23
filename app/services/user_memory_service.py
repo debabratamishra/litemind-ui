@@ -10,9 +10,13 @@ user-visible response.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
+
+from app.backend.user_memory_store import get_user_memory_store
+from app.services.llm_gateway import complete_text
 
 logger = logging.getLogger(__name__)
 
@@ -80,3 +84,125 @@ def parse_memory_ops(raw: str) -> List[Dict[str, Any]]:
         if len(ops) >= MAX_MEMORY_OPS_PER_TURN:
             break
     return ops
+
+
+_EXTRACTION_SYSTEM_PROMPT = """You maintain long-term memory for a personal assistant. \
+Given a conversation exchange and the user's existing memories, decide what durable facts about the \
+user should be stored, updated, or removed.
+
+Return ONLY a JSON array. Each element is exactly one of:
+{"op": "add", "content": "<new memory, one concise sentence>"}
+{"op": "update", "id": "<existing memory id>", "content": "<corrected memory>"}
+{"op": "delete", "id": "<existing memory id that is now wrong or obsolete>"}
+
+Rules:
+- Store only durable facts: the user's identity, stable preferences, ongoing projects or goals, \
+corrections to existing memories, and explicit requests to remember something.
+- Never store secrets, credentials, API keys, passwords, or transient task details.
+- Prefer updating an existing memory over adding a near-duplicate.
+- At most 3 operations. Return [] when nothing durable was shared."""
+
+
+def _build_extraction_messages(
+    user_message: str, assistant_message: str, existing: List[Any]
+) -> List[Dict[str, str]]:
+    existing_lines = "\n".join(
+        f'- id={getattr(m, "id", "?")}: {getattr(m, "content", "")}' for m in existing
+    )
+    return [
+        {"role": "system", "content": _EXTRACTION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"Existing memories:\n{existing_lines or '(none)'}\n\n"
+                f"User said:\n{user_message}\n\n"
+                f"Assistant replied:\n{assistant_message}"
+            ),
+        },
+    ]
+
+
+async def extract_memory_ops(
+    user_message: str,
+    assistant_message: str,
+    existing: List[Any],
+    *,
+    backend: Optional[str] = None,
+    model: Optional[str] = None,
+    api_base: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Ask the LLM which memories to add/update/delete; [] on any failure."""
+    if not user_message.strip():
+        return []
+    messages = _build_extraction_messages(user_message, assistant_message, existing)
+    try:
+        raw = await asyncio.wait_for(
+            complete_text(
+                messages,
+                backend=backend,
+                model=model,
+                api_base=api_base,
+                api_key=api_key,
+                max_tokens=300,
+            ),
+            timeout=MEMORY_EXTRACTION_TIMEOUT_SECONDS,
+        )
+    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001 — extraction must never raise
+        logger.warning("Memory extraction failed/skipped: %s", exc)
+        return []
+    return parse_memory_ops(raw)
+
+
+async def apply_memory_ops(store: Any, user_id: str, ops: List[Dict[str, Any]]) -> None:
+    """Apply validated ops to the store; unknown ids are ignored by the store."""
+    for op in ops:
+        if op["op"] == "add":
+            await store.add_memory(user_id, op["content"], source="auto")
+        elif op["op"] == "update":
+            await store.update_memory(user_id, op["id"], op["content"])
+        elif op["op"] == "delete":
+            await store.delete_memory(user_id, op["id"])
+
+
+async def run_memory_update(
+    user_id: str,
+    user_message: str,
+    assistant_message: str,
+    *,
+    backend: Optional[str] = None,
+    model: Optional[str] = None,
+    api_base: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> None:
+    """Extract and apply memory ops for one completed exchange. Never raises."""
+    try:
+        store = get_user_memory_store()
+        existing = await store.list_memories(user_id)
+        ops = await extract_memory_ops(
+            user_message,
+            assistant_message,
+            existing,
+            backend=backend,
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+        )
+        await apply_memory_ops(store, user_id, ops)
+        if ops:
+            logger.info("User memory updated for user %s (%d ops)", user_id, len(ops))
+    except Exception as exc:  # noqa: BLE001 — fire-and-forget task must be self-contained
+        logger.warning("User memory update failed for user %s: %s", user_id, exc)
+
+
+async def load_memory_block(user_id: Optional[str]) -> str:
+    """Load and format the user's memories for prompt injection ("" on failure)."""
+    if not user_id:
+        return ""
+    try:
+        store = get_user_memory_store()
+        memories = await store.list_memories(user_id)
+        return build_memory_block(memories)
+    except Exception as exc:  # noqa: BLE001 — degraded response beats failed response
+        logger.warning("Failed to load user memory for user %s: %s", user_id, exc)
+        return ""
