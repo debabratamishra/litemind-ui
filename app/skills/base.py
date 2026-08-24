@@ -42,5 +42,5 @@ class StreamingRAGSkill(Protocol):
     def supports(self, request: Any) -> bool:
         """Return True when this skill should handle the request."""
 
-    def stream(self, request: Any, rag_service: Any) -> AsyncIterator[str]:
+    def stream(self, request: Any, rag_service: Any, memory_block: str | None = None) -> AsyncIterator[str]:
         """Yield streamed response chunks for the request."""

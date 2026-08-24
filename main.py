@@ -775,9 +775,13 @@ async def rag_query(request: RAGQueryRequestEnhanced, user: User = Depends(get_c
         if skill is None:
             raise HTTPException(status_code=400, detail="No compatible RAG skill found for request")
 
+        from app.services.user_memory_service import load_memory_block
+
+        memory_block = await load_memory_block(user.id)
+
         async def event_generator():
             logger.info("Routing RAG query through skill '%s'", skill.name)
-            async for chunk in skill.stream(request, rag_service):
+            async for chunk in skill.stream(request, rag_service, memory_block=memory_block):
                 yield chunk + "\n"
 
         return StreamingResponse(event_generator(), media_type="text/plain")
