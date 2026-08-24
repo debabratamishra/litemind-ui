@@ -1,11 +1,17 @@
 """Chat wiring: memory block injection + post-exchange extraction trigger."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import app.backend.api.chat as chat_api
 from app.backend.models.api_models import ChatRequestEnhanced
+
+
+async def aiter(items):
+    """Wrap a plain list as an async iterator (shadows the builtin, which needs an async iterable)."""
+    for item in items:
+        yield item
 
 
 def _request(**overrides):
@@ -71,3 +77,33 @@ async def test_handle_chat_request_without_user_skips_memory_load():
          patch.object(chat_api, "complete_text", new=AsyncMock(return_value="ok")):
         await chat_api._handle_chat_request(_request())
     mock_load.assert_not_called()
+
+
+# ── RAG injection ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_rag_query_injects_memory_block():
+    """query(..., memory_block=...) must place the block before conversation history."""
+    from app.services import rag_service as rag_module
+    from app.services.rag_service import RAGService
+
+    svc = RAGService.__new__(RAGService)  # retrieval + prompt seams are patched below
+
+    block = {"role": "system", "content": "About the user:\n- Likes tea"}
+    with patch.object(svc, "get_retrieval_records", return_value=[]), \
+         patch.object(svc, "build_grounded_user_prompt", return_value="grounded"), \
+         patch.object(rag_module, "stream_completion", new=MagicMock(return_value=aiter(["answer"]))):
+        chunks = [
+            c
+            async for c in svc.query(
+                "what is x",
+                system_prompt="You are helpful.",
+                messages=[{"role": "user", "content": "hi"}],
+                memory_block="About the user:\n- Likes tea",
+            )
+        ]
+        sent = rag_module.stream_completion.call_args.args[0]
+
+    assert "answer" in chunks
+    assert block in sent
+    assert sent.index(block) < sent.index({"role": "user", "content": "hi"})

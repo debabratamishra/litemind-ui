@@ -1558,6 +1558,7 @@ class RAGService:
             seed: Optional[int] = None,
             stop: Optional[list] = None,
             is_voice_mode: bool = False,
+            memory_block: Optional[str] = None,
         ):
             """Answer a query using semantic or hybrid retrieval and stream model tokens.
 
@@ -1620,6 +1621,10 @@ class RAGService:
                 llm_messages.append(
                     {"role": "system", "content": f"Summary of previous conversation:\n{conversation_summary}"}
                 )
+
+            # Persistent user memory (may be empty)
+            if memory_block:
+                llm_messages.append({"role": "system", "content": memory_block})
 
             # Add conversation history
             llm_messages.extend(messages)
