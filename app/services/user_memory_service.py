@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Optional
 
 from app.backend.user_memory_store import get_user_memory_store
@@ -50,6 +51,10 @@ def _valid_op(item: Any) -> Optional[Dict[str, Any]]:
         memory_id = item.get("id")
         if not isinstance(memory_id, str) or not memory_id:
             return None
+        try:
+            uuid.UUID(memory_id)
+        except ValueError:
+            return None  # store would raise on a mangled id; drop just this op
         if op == "delete":
             return {"op": "delete", "id": memory_id}
         content = item.get("content")
@@ -155,14 +160,21 @@ async def extract_memory_ops(
 
 
 async def apply_memory_ops(store: Any, user_id: str, ops: List[Dict[str, Any]]) -> None:
-    """Apply validated ops to the store; unknown ids are ignored by the store."""
+    """Apply validated ops to the store; unknown ids are ignored by the store.
+
+    Each op is isolated so one failure (transient DB error, race-deleted id)
+    cannot abort the remaining ops in the batch.
+    """
     for op in ops:
-        if op["op"] == "add":
-            await store.add_memory(user_id, op["content"], source="auto")
-        elif op["op"] == "update":
-            await store.update_memory(user_id, op["id"], op["content"])
-        elif op["op"] == "delete":
-            await store.delete_memory(user_id, op["id"])
+        try:
+            if op["op"] == "add":
+                await store.add_memory(user_id, op["content"], source="auto")
+            elif op["op"] == "update":
+                await store.update_memory(user_id, op["id"], op["content"])
+            elif op["op"] == "delete":
+                await store.delete_memory(user_id, op["id"])
+        except Exception as exc:
+            logger.warning("Memory op %s failed (skipped): %s", op["op"], exc)
 
 
 async def run_memory_update(

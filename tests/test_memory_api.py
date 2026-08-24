@@ -99,6 +99,10 @@ def test_memory_add_rejects_blank_content(client):
     assert client.post("/api/memory", json={"content": "   "}).status_code == 422
 
 
+def test_memory_add_rejects_overlong_content(client):
+    assert client.post("/api/memory", json={"content": "x" * 501}).status_code == 422
+
+
 def test_memory_update_unknown_id_404(client):
     assert client.put(f"/api/memory/{uuid.uuid4()}", json={"content": "x"}).status_code == 404
 

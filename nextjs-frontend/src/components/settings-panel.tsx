@@ -136,7 +136,8 @@ export function MemorySettings() {
     if (!content) return;
     try {
       const created = await addMemory(content);
-      setMemories((ms) => [...ms, created]);
+      // Backend lists newest-first; prepend so the new entry renders at the top.
+      setMemories((ms) => [created, ...ms]);
       setDraft('');
       setError(null);
     } catch {

@@ -129,7 +129,7 @@ Session-based multi-turn context. Summarises older messages when token count exc
 Per-user durable memory in Postgres (`user_memories`, FK to `users` with ON DELETE CASCADE).
 After each chat/voice exchange a fire-and-forget task asks the LLM gateway (request's own
 backend/model) for JSON ops (add/update/delete, ≤3/turn) and applies them; extraction failure
-never affects the response. On every chat/RAG/voice request the backend loads the user's
+never affects the response. On every chat/RAG/voice request (except multi-agent RAG mode) the backend loads the user's
 memories and prepends an "About the user" system block (cap 50). Explicit "remember that…"
 requests are handled by the same extraction prompt. Manual management: `/api/memory` CRUD +
 Settings → Memory panel. Distinct from session-scoped `conversation_memory.py`.
