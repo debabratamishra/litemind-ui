@@ -2,6 +2,7 @@
 Chat API endpoints with conversation memory support
 """
 
+import asyncio
 import json
 import logging
 from typing import Dict, List, Optional
@@ -23,6 +24,7 @@ from app.backend.models.api_models import (  # noqa: E402
 )
 from app.services.conversation_memory import get_memory_service  # noqa: E402
 from app.services.llm_gateway import complete_text, stream_completion  # noqa: E402
+from app.services.user_memory_service import load_memory_block, run_memory_update  # noqa: E402
 from app.services.web_search_service import WebSearchService  # noqa: E402
 from app.skills import chat_skill_registry  # noqa: E402
 
@@ -156,18 +158,25 @@ GENERATIVE_UI_SYSTEM_PROMPT = (
 )
 
 
-def _build_messages_with_history(request: ChatRequestEnhanced) -> List[Dict[str, str]]:
+def _build_messages_with_history(
+    request: ChatRequestEnhanced, memory_block: Optional[str] = None
+) -> List[Dict[str, str]]:
     """
     Build the messages list including conversation history and summary.
     Also applies voice mode optimizations if is_voice_mode is True.
 
     Args:
         request: The chat request with optional history/summary
+        memory_block: Pre-formatted persistent user-memory block (may be empty)
 
     Returns:
         List of messages ready for LLM
     """
     messages = []
+
+    # Persistent user memory comes first so later system prompts can refine it
+    if memory_block:
+        messages.append({"role": "system", "content": memory_block})
 
     # Add voice mode system prompt if voice mode is active
     if request.is_voice_mode:
@@ -249,7 +258,7 @@ async def chat_endpoint(request: ChatRequestEnhanced, user: User = Depends(get_c
     logger.info(f"Chat request - User: {user.id}, Backend: {request.backend}, Model: {request.model}")
 
     try:
-        return await _handle_chat_request(request)
+        return await _handle_chat_request(request, user_id=user.id)
 
     except Exception:
         logger.exception("Chat endpoint error")
@@ -263,7 +272,7 @@ async def chat_stream(request: ChatRequestEnhanced, user: User = Depends(get_cur
 
     async def event_generator():
         try:
-            async for chunk in _stream_chat_response(request):
+            async for chunk in _stream_chat_response(request, user_id=user.id):
                 payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
 
@@ -275,10 +284,10 @@ async def chat_stream(request: ChatRequestEnhanced, user: User = Depends(get_cur
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
+async def _handle_chat_request(request: ChatRequestEnhanced, user_id: Optional[str] = None) -> ChatResponse:
     """Handle a chat request with conversation history."""
-    # Build messages with conversation history
-    messages = _build_messages_with_history(request)
+    memory_block = await load_memory_block(user_id) if user_id else ""
+    messages = _build_messages_with_history(request, memory_block=memory_block)
 
     # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
     if request.is_voice_mode:
@@ -305,13 +314,27 @@ async def _handle_chat_request(request: ChatRequestEnhanced) -> ChatResponse:
         stop=request.stop,
     )
 
+    # Fire-and-forget memory update if user_id is provided
+    if user_id is not None:
+        asyncio.create_task(
+            run_memory_update(
+                user_id,
+                request.message,
+                response_text,
+                backend=request.backend,
+                model=request.model,
+                api_base=request.api_base,
+                api_key=request.api_key,
+            )
+        )
+
     return ChatResponse(response=response_text, model=request.model if request.model is not None else "default")
 
 
-async def _stream_chat_response(request: ChatRequestEnhanced):
+async def _stream_chat_response(request: ChatRequestEnhanced, user_id: Optional[str] = None):
     """Stream chat responses with conversation history."""
-    # Build messages with conversation history
-    messages = _build_messages_with_history(request)
+    memory_block = await load_memory_block(user_id) if user_id else ""
+    messages = _build_messages_with_history(request, memory_block=memory_block)
 
     # Adjust max_tokens: voice mode → short; GenUI mode → at least GENUI_MIN_MAX_TOKENS
     if request.is_voice_mode:
