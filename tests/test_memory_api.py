@@ -65,10 +65,18 @@ def client(monkeypatch):
 
 
 def test_memory_requires_auth():
-    from main import app
+    # Fresh app instead of main.app: other test modules install module-level
+    # dependency_overrides on the shared main.app that never clean up, which
+    # would authenticate this request and turn the 401 into a store error.
+    # Router mounting on main.app is covered by the fixture-based tests below.
+    from fastapi import FastAPI
 
-    with TestClient(app) as c:
-        assert c.get("/api/memory").status_code == 401
+    from app.backend.api.memory import router
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    assert client.get("/api/memory").status_code == 401
 
 
 def test_memory_crud_roundtrip(client):
