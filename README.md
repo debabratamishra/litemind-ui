@@ -112,6 +112,7 @@ On first run, register an account at `/register`, then sign in at `/login`. SMTP
 - **Markdown rendering** — syntax-highlighted code blocks, GFM tables, and more via `react-markdown`
 - **RAG / Knowledge Base** — drag-and-drop file upload, duplicate detection, multi-agent and hybrid search options
 - **Web Search** — SerpAPI-grounded responses with inline streaming results
+- **Persistent personalization** — LiteMindUI remembers durable facts you share (preferences, projects, corrections) across sessions and providers, injects them into every new chat/RAG/voice conversation, and lets you manage them in Settings → Memory.
 - **Settings page** — model catalogue (local + cloud), backend configuration (Ollama, OpenRouter, Nvidia NIM), generation parameter tuning
 
 ## Repository layout
