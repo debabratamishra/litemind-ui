@@ -38,8 +38,9 @@ def test_parse_memory_ops_valid_json():
 
 
 def test_parse_memory_ops_strips_code_fence():
-    raw = '```json\n[{"op": "delete", "id": "abc"}]\n```'
-    assert parse_memory_ops(raw) == [{"op": "delete", "id": "abc"}]
+    memory_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    raw = '```json\n[{"op": "delete", "id": "%s"}]\n```' % memory_id
+    assert parse_memory_ops(raw) == [{"op": "delete", "id": memory_id}]
 
 
 def test_parse_memory_ops_invalid_json_returns_empty():
@@ -66,6 +67,22 @@ def test_parse_memory_ops_rejects_bad_shapes():
 def test_parse_memory_ops_caps_at_three():
     raw = "[" + ",".join(f'{{"op": "add", "content": "c{i}"}}' for i in range(10)) + "]"
     assert len(parse_memory_ops(raw)) == MAX_MEMORY_OPS_PER_TURN
+
+
+VALID_MEMORY_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+
+
+def test_parse_memory_ops_drops_mangled_uuid_but_keeps_siblings():
+    """A mangled UUID on one op must not abort the whole batch (local models do this)."""
+    raw = (
+        '[{"op": "delete", "id": "not-a-uuid"},'
+        f'{{"op": "add", "content": "Kept"}},'
+        f'{{"op": "update", "id": "{VALID_MEMORY_ID}", "content": "Edited"}}]'
+    )
+    assert parse_memory_ops(raw) == [
+        {"op": "add", "content": "Kept"},
+        {"op": "update", "id": VALID_MEMORY_ID, "content": "Edited"},
+    ]
 
 
 def test_parse_memory_ops_truncates_overlong_content():
@@ -132,6 +149,36 @@ async def test_apply_memory_ops_dispatches_to_store():
     assert store.added == [("user-1", "New fact", "auto")]
     assert store.updated == [("user-1", "m1", "Edited")]
     assert store.deleted == [("user-1", "m2")]
+
+
+@pytest.mark.asyncio
+async def test_apply_memory_ops_continues_past_a_failing_op(caplog):
+    """One failing store call must not drop the ops after it."""
+
+    class FlakyStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self._update_calls = 0
+
+        async def update_memory(self, user_id, memory_id, content):
+            self._update_calls += 1
+            if self._update_calls == 1:
+                raise RuntimeError("transient db error")
+            return await super().update_memory(user_id, memory_id, content)
+
+    store = FlakyStore()
+    with caplog.at_level("WARNING"):
+        await apply_memory_ops(
+            store, "user-1",
+            [
+                {"op": "update", "id": "m1", "content": "Fails once"},
+                {"op": "delete", "id": "m2"},
+            ],
+        )
+    assert store._update_calls == 1
+    assert store.updated == []
+    assert store.deleted == [("user-1", "m2")]
+    assert any("Memory op update failed" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio

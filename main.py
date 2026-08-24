@@ -34,6 +34,7 @@ from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.core.config import DEFAULT_RAG_CONFIG
 from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
 from app.backend.core.ollama_models import build_enhanced_model_payload
+from app.backend.user_memory_store import get_user_memory_store
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
@@ -180,6 +181,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"RAG service initialization failed: {e}")
         rag_service = None
+
+    # Ensure the user-memory table exists (idempotent); degrade gracefully
+    try:
+        await get_user_memory_store().init_schema()
+        logger.info("User memory store ready")
+    except Exception as e:
+        logger.warning(f"User memory schema init skipped: {e}")
 
     # Restore configuration
     if rag_service is None:

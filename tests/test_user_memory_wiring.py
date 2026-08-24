@@ -5,13 +5,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import app.backend.api.chat as chat_api
-from app.backend.models.api_models import ChatRequestEnhanced
+from app.backend.models.api_models import ChatRequestEnhanced, RAGQueryRequestEnhanced
 
 
 async def aiter(items):
     """Wrap a plain list as an async iterator (shadows the builtin, which needs an async iterable)."""
     for item in items:
         yield item
+
+
+async def _empty(*_args, **_kwargs):
+    """Async generator yielding nothing (for mocking streaming calls)."""
+    return
+    yield
 
 
 def _request(**overrides):
@@ -55,10 +61,8 @@ async def test_stream_skips_block_when_empty():
     assert chunk == "Hi"
     # Check that the first argument to stream_completion does not contain a system block for persistent memory
     sent_messages = mock_stream.messages
-    # If there is a system message, it should not be the persistent memory block
-    if sent_messages[0]["role"] == "system":
-        assert "persistent memory" not in sent_messages[0]["content"]
-    # Otherwise, the first message is not a system message (should be the user message)
+    system_blocks = [m for m in sent_messages if m["role"] == "system"]
+    assert all("persistent memory" not in m["content"] for m in system_blocks)
 
 
 @pytest.mark.asyncio
@@ -107,6 +111,25 @@ async def test_rag_query_injects_memory_block():
     assert "answer" in chunks
     assert block in sent
     assert sent.index(block) < sent.index({"role": "user", "content": "hi"})
+
+
+@pytest.mark.asyncio
+async def test_standard_rag_skill_forwards_memory_block_to_query():
+    """StandardRAGSkill.stream must pass memory_block into rag_service.query."""
+    from app.skills.rag import StandardRAGSkill
+
+    mock_rag_service = MagicMock()
+    mock_rag_service.query.side_effect = _empty
+
+    request = RAGQueryRequestEnhanced(query="what is x")
+    skill = StandardRAGSkill()
+    chunks = [
+        c
+        async for c in skill.stream(request, mock_rag_service, memory_block="About the user:\n- Likes tea")
+    ]
+
+    assert chunks == []
+    assert mock_rag_service.query.call_args.kwargs["memory_block"] == "About the user:\n- Likes tea"
 
 
 # ── Voice pipeline ──────────────────────────────────────────────────────────

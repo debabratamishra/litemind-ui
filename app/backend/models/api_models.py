@@ -226,7 +226,12 @@ class MemoryStatsResponse(BaseModel):
 
 
 class MemoryContentRequest(BaseModel):
-    content: str = Field(..., min_length=1, description="Memory text (trimmed server-side)")
+    content: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Memory text (1-500 chars, trimmed server-side)",
+    )
 
 
 class MemoryRecordResponse(BaseModel):
