@@ -107,3 +107,29 @@ async def test_rag_query_injects_memory_block():
     assert "answer" in chunks
     assert block in sent
     assert sent.index(block) < sent.index({"role": "user", "content": "hi"})
+
+
+# ── Voice pipeline ──────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_voice_pipeline_prepends_memory_to_system_instruction():
+    from app.services.voice_pipeline import VoiceSettings
+
+    settings = VoiceSettings(user_id="u-1", system_instruction="You are a helpful voice assistant.")
+    with patch("app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="About the user:\n- Likes tea")):
+        from app.services.voice_pipeline import apply_memory_to_voice_settings
+
+        await apply_memory_to_voice_settings(settings)
+    assert settings.system_instruction.startswith("You are a helpful voice assistant.")
+    assert "Likes tea" in settings.system_instruction
+
+
+@pytest.mark.asyncio
+async def test_voice_pipeline_skips_memory_without_user():
+    from app.services.voice_pipeline import VoiceSettings, apply_memory_to_voice_settings
+
+    settings = VoiceSettings(user_id=None, system_instruction="base")
+    with patch("app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="X")) as m:
+        await apply_memory_to_voice_settings(settings)
+    m.assert_not_called()
+    assert settings.system_instruction == "base"
