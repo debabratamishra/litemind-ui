@@ -1,0 +1,16 @@
+---
+import type { CardData } from '../data/home';
+interface Props {
+  cards: CardData[];
+}
+const { cards } = Astro.props;
+---
+<div class="cards">
+  {cards.map((card) => (
+    <div class="card">
+      <div class="icon">{card.icon}</div>
+      <h3>{card.title}</h3>
+      <p>{card.body}</p>
+    </div>
+  ))}
+</div>
