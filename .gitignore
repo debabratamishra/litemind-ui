@@ -78,3 +78,10 @@ scripts/test-docker-publish.py
 #Harness
 .claude
 .superpowers
+# Astro site
+site/node_modules/
+site/dist/
+site/.astro/
+
+# Ignore docs/superpowers (plans and specs)
+docs/superpowers/

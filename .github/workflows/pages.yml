@@ -35,16 +35,23 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Build with Jekyll
-        uses: actions/jekyll-build-pages@v1
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          source: site
-          destination: ./_site
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build with Astro
+        uses: withastro/action@v3
+        with:
+          path: site
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./_site
+          path: site/dist
 
   deploy:
     needs: build
