@@ -274,13 +274,13 @@ export default function ThemeToggle() {
   return (
     <button
       id="theme-toggle"
-      class="theme-toggle"
+      className="theme-toggle"
       type="button"
       aria-label="Switch between light and dark theme"
       aria-pressed={theme === 'dark'}
       title="Switch theme"
     >
-      <span class="t-icon" aria-hidden="true">
+      <span className="t-icon" aria-hidden="true">
         {theme === 'dark' ? '☀️' : '🌙'}
       </span>
     </button>
