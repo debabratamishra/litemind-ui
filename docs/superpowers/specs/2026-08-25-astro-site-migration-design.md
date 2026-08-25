@@ -77,6 +77,32 @@ site/
 - Workflow path filter updated to also fire on `.github/workflows/pages.yml` changes (already does).
 - Node version pinned via action default; lockfile ensures reproducible builds.
 
+## Professional visual-element QA
+
+Derived from harness design skills (`design-taste-frontend`, `high-end-visual-design`, `frontend-design`). Mode: **Redesign–Preserve** — the site's own design language is the standard, judged for fidelity and professionalism, not redesigned.
+
+**Locked brand tokens (must survive the migration untouched):**
+- Accent system: indigo + teal, one accent family across every section, both themes (Color Consistency Lock)
+- Shape system: radius scale `14px` cards / `10px` small / pill buttons+nav+toggle, applied consistently (Shape Consistency Lock)
+- Signature element: the "Ethereal Glass" hero (OLED backdrop, purple/emerald radial orbs, gradient headline) — the one place the site spends its boldness; all other sections stay quiet around it
+- System font stack, emoji icon tiles, footer/nav structure, all visible copy
+
+**Quality-floor checks applied to the migrated build:**
+
+| Check | Standard |
+|---|---|
+| Theme integrity | One theme per page state; dark/light each complete and consistent; no half-migrated tokens |
+| Contrast | WCAG AA for all text/buttons/callouts in BOTH themes (incl. `.callout` teal-on-teal, `.btn-solid` in dark) |
+| Motion | New: gate the hero orb `float` animation and mouse parallax behind `prefers-reduced-motion` (today they ignore it); transitions stay transform/opacity only |
+| Focus | `:focus-visible` outlines preserved on links/buttons after componentisation |
+| Hero discipline | Eyebrow + H1 (≤2 lines) + lead + CTA pair, fits first viewport at desktop and 375px |
+| Copy tells | Zero em-dashes anywhere rendered; no decorative status dots; single copy register; no version labels/scroll cues |
+| Asset reality | Demo GIF renders at native paths; favicon resolves at both `/favicon.svg` and `/assets/favicon.svg` |
+
+**Process:** after build, screenshot both pages in light and dark at 1280px and 375px, compare against the live https://debabratamishra.github.io/litemind-ui/, and walk the table above before declaring done. Any intentional divergence gets listed here first.
+
+Note: `vercel-react-best-practices` was consulted and skipped deliberately — the React surface is one ~30-line theme-toggle island with no data-fetching or server-component concerns.
+
 ## Verification
 
 1. `cd site && npm run build && npm run astro check` clean.
@@ -84,6 +110,7 @@ site/
 3. URL parity: `dist/` yields `index.html` at root and `developer/index.html`; asset paths resolve under `/litemind-ui/assets/`.
 4. Visual check in browser against https://debabratamishra.github.io/litemind-ui/ at desktop + 375px mobile, light and dark themes: nav, hero orbs/gradient text, cards, steps numbering, tables, tree colors, footer.
 5. Theme toggle round-trips and persists across reload; no flash of wrong theme.
+6. Visual QA table in "Professional visual-element QA" fully passes, including `prefers-reduced-motion` collapsing the orb float and parallax to static.
 6. Workflow dry-run logic reviewed locally (`npm run build` mirrors what the action runs).
 
 ## Risks
