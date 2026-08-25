@@ -18,7 +18,7 @@ backend = [
     "python-dotenv",
     "psutil",
     "litellm",
-    
+
     # Core FastAPI
     "fastapi",
     "uvicorn",
@@ -93,7 +93,7 @@ backend = [
     "python-dotenv",
     "psutil",
     "litellm",
-    
+
     # Core FastAPI
     "fastapi",
     "uvicorn",
@@ -179,7 +179,7 @@ all = [
     "python-dotenv",
     "psutil",
     "litellm",
-    
+
     # Core FastAPI
     "fastapi",
     "uvicorn",
