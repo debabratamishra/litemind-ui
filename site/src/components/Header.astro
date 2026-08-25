@@ -1,0 +1,23 @@
+---
+import ThemeToggle from './ThemeToggle';
+import { u } from '../lib/urls';
+
+const pathname = Astro.url.pathname;
+const onHome = pathname === u('/') || pathname === u('');
+const onDev = pathname.startsWith(u('/developer'));
+---
+
+<header class="site-nav">
+  <div class="container">
+    <a class="brand" href={u('/')}>
+      <span class="logo">L</span>
+      <span>LiteMindUI</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href={u('/')} class={onHome ? 'active' : undefined}>Home</a>
+      <a href={u('/developer/')} class={onDev ? 'active' : undefined}>Developer</a>
+      <a class="github" href="https://github.com/debabratamishra/litemind-ui" target="_blank" rel="noopener">GitHub ↗</a>
+      <ThemeToggle client:load />
+    </nav>
+  </div>
+</header>

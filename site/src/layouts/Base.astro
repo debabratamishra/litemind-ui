@@ -1,0 +1,51 @@
+---
+import '../styles/global.css';
+import { u } from '../lib/urls';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+
+interface Props {
+  title?: string;
+  description?: string;
+  frontmatter?: { title?: string; description?: string };
+}
+const fm = Astro.props.frontmatter ?? Astro.props;
+const title = fm.title ?? 'LiteMindUI';
+const description =
+  fm.description ??
+  'LiteMindUI is a private, local-first AI workspace for chat, document Q&A, web search, and realtime voice. Your data stays with you.';
+const ogUrl = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} | LiteMindUI</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={ogUrl} />
+    <link rel="icon" href={u('/assets/favicon.svg')} type="image/svg+xml" />
+    <script is:inline>
+      (function () {
+        try {
+          var t = localStorage.getItem('lm-theme');
+          if (!t) {
+            t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <Header />
+    <main>
+      <slot />
+    </main>
+    <Footer />
+  </body>
+</html>
