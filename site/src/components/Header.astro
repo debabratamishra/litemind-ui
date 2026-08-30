@@ -11,13 +11,66 @@ const onDev = pathname.startsWith(u('/developer'));
   <div class="container">
     <a class="brand" href={u('/')}>
       <span class="logo">L</span>
-      <span>LiteMindUI</span>
+      <span class="brand-text">LiteMindUI</span>
     </a>
-    <nav class="nav-links" aria-label="Primary">
+
+    <button
+      class="nav-toggle"
+      id="nav-toggle"
+      type="button"
+      aria-label="Open menu"
+      aria-expanded="false"
+      aria-controls="nav-panel"
+    >
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+
+    <nav
+      class="nav-links"
+      id="nav-panel"
+      role="navigation"
+      aria-label="Primary"
+    >
       <a href={u('/')} class={onHome ? 'active' : undefined}>Home</a>
-      <a href={u('/developer/')} class={onDev ? 'active' : undefined}>Developer</a>
-      <a class="github" href="https://github.com/debabratamishra/litemind-ui" target="_blank" rel="noopener">GitHub ↗</a>
+      <a href={u('/developer/')}>Developer</a>
+      <a class="github" href="https://github.com/debabratamishra/litemind-ui" target="_blank" rel="noopener">GitHub</a>
       <ThemeToggle client:load />
     </nav>
   </div>
 </header>
+
+<script is:inline>
+  (function () {
+    const toggle = document.getElementById('nav-toggle');
+    const panel = document.getElementById('nav-panel');
+    if (!toggle || !panel) return;
+
+    function open() {
+      toggle.classList.add('open');
+      toggle.setAttribute('aria-expanded', 'true');
+      toggle.setAttribute('aria-label', 'Close menu');
+      panel.classList.add('open');
+      document.body.classList.add('nav-open');
+    }
+    function close() {
+      toggle.classList.remove('open');
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-label', 'Open menu');
+      panel.classList.remove('open');
+      document.body.classList.remove('nav-open');
+    }
+    toggle.addEventListener('click', () => {
+      panel.classList.contains('open') ? close() : open();
+    });
+    // Close on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && panel.classList.contains('open')) close();
+    });
+    // Close when a link is activated
+    panel.addEventListener('click', (e) => {
+      if (e.target.tagName === 'A') close();
+    });
+  })();
+</script>

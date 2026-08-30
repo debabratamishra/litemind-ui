@@ -27,6 +27,11 @@
   --nav-bg: rgba(255, 255, 255, .85);
   --hero-bg-x: 0%;
   --hero-bg-y: 0%;
+  /* Code blocks — theme-aware so they never render a hard dark block on light */
+  --code-bg: #0f172a;
+  --code-ink: #e2e8f0;
+  --code-comment: #94a3b8;
+  --code-key: #7dd3fc;
 
   /* Ethereal Glass theme variables */
   --ethereal-black: #050505;
@@ -57,6 +62,20 @@
   --ethereal-purple: rgba(139, 92, 246, 0.2);
   --ethereal-emerald: rgba(16, 185, 129, 0.2);
   --ethereal-glow: rgba(139, 92, 246, 0.4);
+  /* Code blocks stay dark in dark mode */
+  --code-bg: #0f172a;
+  --code-ink: #e2e8f0;
+  --code-comment: #94a3b8;
+  --code-key: #7dd3fc;
+}
+
+/* Light theme: code blocks use a light background with dark text so they
+   match the page instead of rendering a hard dark panel. */
+[data-theme="light"] {
+  --code-bg: #f8fafc;
+  --code-ink: #1e293b;
+  --code-comment: #64748b;
+  --code-key: #4338ca;
 }
 
 * { box-sizing: border-box; }
@@ -99,6 +118,8 @@ img { max-width: 100%; height: auto; }
   align-items: center;
   justify-content: space-between;
   height: 64px;
+  gap: 12px;
+  min-width: 0;
 }
 .brand {
   display: flex;
@@ -107,6 +128,7 @@ img { max-width: 100%; height: auto; }
   font-weight: 700;
   font-size: 1.05rem;
   color: var(--ink);
+  min-width: 0;
 }
 .brand:hover { text-decoration: none; }
 .brand .logo {
@@ -118,11 +140,53 @@ img { max-width: 100%; height: auto; }
   background: linear-gradient(135deg, var(--indigo), var(--teal));
   color: #fff;
   font-weight: 800;
+  flex-shrink: 0;
 }
+.brand-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Hamburger — replaces the inline links on small viewports */
+.nav-toggle {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 200ms ease, border-color 200ms ease;
+}
+.nav-toggle:hover { background: var(--bg-tint); }
+.nav-toggle:focus-visible {
+  outline: 3px solid var(--teal);
+  outline-offset: 2px;
+}
+.nav-toggle span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  margin: 0 auto;
+  background: var(--ink);
+  border-radius: 2px;
+  transition: transform 250ms ease, opacity 200ms ease;
+}
+.nav-toggle.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.nav-toggle.open span:nth-child(2) { opacity: 0; }
+.nav-toggle.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+/* Mobile: stack into a slide-down panel below the bar */
 .nav-links {
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-shrink: 0;
 }
 .nav-links a {
   color: var(--ink-soft);
@@ -130,6 +194,7 @@ img { max-width: 100%; height: auto; }
   padding: 8px 14px;
   border-radius: 999px;
   font-size: .95rem;
+  white-space: nowrap;
 }
 .nav-links a:hover { background: var(--bg-tint); text-decoration: none; }
 .nav-links a.active { background: var(--indigo); color: #fff; }
@@ -140,7 +205,6 @@ img { max-width: 100%; height: auto; }
 
 /* ---------- Theme toggle (premium) ---------- */
 .theme-toggle {
-  position: relative;
   display: grid;
   place-items: center;
   width: 44px;
@@ -153,6 +217,7 @@ img { max-width: 100%; height: auto; }
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
+  flex-shrink: 0;
   transition:
     background-color var(--transition-speed, 500ms) ease-[cubic-bezier(0.32,0.72,0,1)],
     border-color var(--transition-speed, 500ms) ease-[cubic-bezier(0.32,0.72,0,1)],
@@ -472,8 +537,8 @@ code {
   border-radius: 6px;
 }
 pre {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--code-bg);
+  color: var(--code-ink);
   padding: 18px 20px;
   border-radius: var(--radius-sm);
   overflow-x: auto;
@@ -497,8 +562,8 @@ pre code {
 
 /* ---------- Directory tree ---------- */
 .tree {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--code-bg);
+  color: var(--code-ink);
   padding: 18px 22px;
   border-radius: var(--radius-sm);
   font-family: var(--mono);
@@ -507,8 +572,8 @@ pre code {
   overflow-x: auto;
   white-space: pre;
 }
-.tree .c { color: #94a3b8; }
-.tree .k { color: #7dd3fc; }
+.tree .c { color: var(--code-comment); }
+.tree .k { color: var(--code-key); }
 
 /* ---------- Demo media ---------- */
 .demo {
@@ -557,12 +622,56 @@ pre code {
   color: #94a3b8;
 }
 
-/* ---------- Responsive ---------- */
+/* ---------- Mobile nav (hamburger + slide-down panel) ---------- */
+@media (max-width: 720px) {
+  .nav-toggle {
+    display: flex;
+    flex-shrink: 0;
+  }
+  /* Hide the inline links when collapsed so nothing overflows the bar */
+  .nav-links {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    background: var(--nav-bg);
+    backdrop-filter: saturate(180%) blur(10px);
+    border-bottom: 1px solid var(--line);
+    padding: 8px 16px 16px;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 300ms ease, opacity 250ms ease;
+    z-index: 40;
+  }
+  .nav-links.open {
+    max-height: 480px;
+    opacity: 1;
+  }
+  .nav-links a {
+    display: block;
+    width: 100%;
+    padding: 12px 8px;
+    text-align: left;
+    font-size: 1rem;
+    border-radius: 10px;
+    white-space: normal;
+  }
+  .nav-links a:hover { background: var(--bg-tint); }
+  .nav-links .github { margin-top: 4px; }
+  .nav-links .theme-toggle { display: grid; margin: 8px auto 0; }
+
+  /* Keep the page from scrolling horizontally while the panel is open */
+  body.nav-open { overflow: hidden; }
+}
+
 @media (max-width: 640px) {
   body { font-size: 16px; }
   .hero { padding: 60px 0 66px; }
   .site-nav .container { height: 56px; }
-  .nav-links a { padding: 7px 10px; font-size: .88rem; }
   section.block { padding: 48px 0; }
 }
 
