@@ -8,6 +8,7 @@ Events -> WebRTC data channel (SmallWebRTCConnection.send_app_message)
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ from pipecat.workers.runner import WorkerRunner
 from app.services.llm_gateway import stream_completion
 from app.services.speech_service import get_speech_service
 from app.services.tts_service import get_tts_service
+from app.services.user_memory_service import load_memory_block, run_memory_update
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,15 @@ class VoiceSettings:
     voice: str | None = None
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
     user_id: str | None = None  # Owning user (for session/transcript isolation)
+
+
+async def apply_memory_to_voice_settings(settings: VoiceSettings) -> None:
+    """Fold the user's persistent memory into the voice system instruction."""
+    if not settings.user_id:
+        return
+    block = await load_memory_block(settings.user_id)
+    if block:
+        settings.system_instruction = f"{settings.system_instruction}\n\n{block}"
 
 
 class BackendWhisperSTTService(SegmentedSTTService):
@@ -163,6 +174,10 @@ class BackendLLMService(BaseOpenAILLMService):
             {"role": m.get("role", "user"), "content": m.get("content", "")}
             for m in raw_messages
         ]
+        last_user = next(
+            (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
+        )
+        reply_parts: list[str] = []
         async for delta in stream_completion(
             messages,
             backend=self._voice_settings.backend,
@@ -173,7 +188,22 @@ class BackendLLMService(BaseOpenAILLMService):
             max_tokens=self._voice_settings.max_tokens,
         ):
             if delta:
+                reply_parts.append(delta)
                 await self.push_frame(LLMTextFrame(text=delta))
+
+        # Fire-and-forget memory extraction for this voice turn
+        if self._voice_settings.user_id and last_user and reply_parts:
+            asyncio.create_task(
+                run_memory_update(
+                    self._voice_settings.user_id,
+                    last_user,
+                    "".join(reply_parts),
+                    backend=self._voice_settings.backend,
+                    model=self._voice_settings.model,
+                    api_base=self._voice_settings.api_base,
+                    api_key=self._voice_settings.api_key,
+                )
+            )
 
 
 class UserTranscriptEmitter(FrameProcessor):
@@ -252,6 +282,7 @@ def build_voice_pipeline(connection: SmallWebRTCConnection, settings: VoiceSetti
 
 
 async def run_voice_pipeline(connection: SmallWebRTCConnection, settings: VoiceSettings):
+    await apply_memory_to_voice_settings(settings)
     pipeline, transport = build_voice_pipeline(connection, settings)
     worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=False))
     runner = WorkerRunner(handle_sigint=False)

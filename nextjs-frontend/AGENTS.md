@@ -50,6 +50,9 @@ public/             Static assets
 
 ### Rules
 - Business logic belongs in `src/lib/` or `src/hooks/`, not in components.
+- User memory management lives in `src/components/settings-panel.tsx` (`MemorySettings`) and
+  `src/lib/api.ts` (`getMemories`/`addMemory`/`updateMemory`/`deleteMemory`/`clearMemories`),
+  backed by `/api/memory` (cookie-authenticated, like the rest of the API client).
 - shadcn/ui primitives in `src/components/ui/` are auto-generated — **do not hand-edit** them.
   Re-generate with `npx shadcn add <component>` if you need changes.
 - New pages go in `src/app/<route>/page.tsx`.

@@ -193,6 +193,8 @@ PR labels `patch` (default), `minor`, `major` control the bump type.
 - Sanitise all file names and paths using `app/backend/api/security_utils.py`
   (`sanitize_filename`, `validate_file_size`) for any upload handling.
 - Use parameterised queries. Never concatenate user input into SQL or shell commands.
+- Any new persisted data must be scoped by `user_id` (see `conversation_store.py` and
+  `user_memory_store.py`); never add user-keyed tables without the FK + user filter.
 - Do not log secrets, API keys, or sensitive user data.
 - Do not add new CORS origins without explicit approval.
 - The `SECRET_KEY` default in `.env.example` is a placeholder — remind users to rotate it.

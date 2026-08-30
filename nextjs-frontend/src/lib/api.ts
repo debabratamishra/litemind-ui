@@ -1,4 +1,4 @@
-import type { ChatMessage, Model, RagFile, RagStatusResponse } from '@/lib/types';
+import type { ChatMessage, Model, RagFile, RagStatusResponse, MemoryRecord } from '@/lib/types';
 
 /**
  * Frontend API client for the FastAPI backend.
@@ -308,6 +308,52 @@ export const authApi = {
     return (await res.json()) as AuthUserResponse;
   },
 };
+
+// ─── User memory (personalization) ───────────────────────────────────────
+
+export async function getMemories(): Promise<MemoryRecord[]> {
+  const res = await fetch(`${API_BASE}/api/memory`, { credentials: 'include', cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to load memories: ${res.status}`);
+  return res.json();
+}
+
+export async function addMemory(content: string): Promise<MemoryRecord> {
+  const res = await fetch(`${API_BASE}/api/memory`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`Failed to add memory: ${res.status}`);
+  return res.json();
+}
+
+export async function updateMemory(id: string, content: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/memory/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`Failed to update memory: ${res.status}`);
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/memory/${id}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`Failed to delete memory: ${res.status}`);
+}
+
+export async function clearMemories(): Promise<{ deleted: number }> {
+  const res = await fetch(`${API_BASE}/api/memory/clear`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`Failed to clear memories: ${res.status}`);
+  return res.json();
+}
 
 // ─── Error extraction ───────────────────────────────────────────────────────────
 

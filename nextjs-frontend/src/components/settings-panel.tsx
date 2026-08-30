@@ -23,9 +23,17 @@ import {
 } from '@/components/ui/select';
 import { KnowledgeBaseSection } from '@/components/knowledge-base';
 import { useAppStore } from '@/lib/store';
-import { getEnhancedModels, checkSerpStatus } from '@/lib/api';
+import {
+  getEnhancedModels,
+  checkSerpStatus,
+  getMemories,
+  addMemory,
+  updateMemory,
+  deleteMemory,
+  clearMemories,
+} from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { Model, BackendType } from '@/lib/types';
+import type { Model, BackendType, MemoryRecord } from '@/lib/types';
 
 function Section({
   title,
@@ -103,6 +111,122 @@ const GENERATION_DEFAULTS = {
   seed: null,
   stopSequences: '',
 } as const;
+
+export function MemorySettings() {
+  const [memories, setMemories] = React.useState<MemoryRecord[]>([]);
+  const [draft, setDraft] = React.useState('');
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    getMemories()
+      .then((ms) => {
+        if (!cancelled) setMemories(ms);
+      })
+      .catch(() => {
+        if (!cancelled) setError('Could not load memories');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onAdd = async () => {
+    const content = draft.trim();
+    if (!content) return;
+    try {
+      const created = await addMemory(content);
+      // Backend lists newest-first; prepend so the new entry renders at the top.
+      setMemories((ms) => [created, ...ms]);
+      setDraft('');
+      setError(null);
+    } catch {
+      setError('Could not add memory');
+    }
+  };
+
+  const onDelete = async (id: string) => {
+    try {
+      await deleteMemory(id);
+      setMemories((ms) => ms.filter((m) => m.id !== id));
+      setError(null);
+    } catch {
+      setError('Could not delete memory');
+    }
+  };
+
+  const onClearAll = async () => {
+    if (!confirm('Delete all saved memories?')) return;
+    try {
+      await clearMemories();
+      setMemories([]);
+      setError(null);
+    } catch {
+      setError('Could not clear memories');
+    }
+  };
+
+  const onEdit = async (id: string, content: string) => {
+    const next = prompt('Edit memory', content);
+    if (next === null || !next.trim() || next === content) return;
+    try {
+      await updateMemory(id, next.trim());
+      setMemories((ms) => ms.map((m) => (m.id === id ? { ...m, content: next.trim() } : m)));
+      setError(null);
+    } catch {
+      setError('Could not update memory');
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      {memories.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Nothing remembered yet. Facts you share in chat are saved here automatically.
+        </p>
+      ) : (
+        <ul className="space-y-1">
+          {memories.map((m) => (
+            <li
+              key={m.id}
+              className="flex items-start justify-between gap-2 rounded border px-2 py-1.5 text-sm"
+            >
+              <span>{m.content}</span>
+              <span className="flex shrink-0 gap-1">
+                <Button variant="ghost" size="sm" onClick={() => onEdit(m.id, m.content)}>
+                  Edit
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => onDelete(m.id)}>
+                  Delete
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex gap-2">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Add a memory…"
+          aria-label="Add a memory"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void onAdd();
+          }}
+        />
+        <Button size="sm" onClick={() => void onAdd()}>
+          Add
+        </Button>
+      </div>
+      {memories.length > 0 && (
+        <Button variant="outline" size="sm" onClick={() => void onClearAll()}>
+          Clear all
+        </Button>
+      )}
+    </div>
+  );
+}
 
 export function SettingsPanel({
   open,
@@ -491,6 +615,12 @@ export function SettingsPanel({
 
             <Section title="Knowledge Base">
               <KnowledgeBaseSection />
+            </Section>
+
+            <Separator />
+
+            <Section title="Memory">
+              <MemorySettings />
             </Section>
           </div>
         </ScrollArea>

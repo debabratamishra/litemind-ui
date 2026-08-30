@@ -68,15 +68,18 @@ The frontend calls the backend exclusively over HTTP. They share no Python impor
 app/
   backend/
     api/          Route handlers: chat.py, rag.py, models.py, health.py, security_utils.py, voice.py (WebRTC SDP signaling)
+      memory.py   /api/memory CRUD (user-level persistent memory)
     core/         Backend-specific config, embedding helpers, BackendConfig, DEFAULT_RAG_CONFIG
     models/       Pydantic request/response models
+    user_memory_store.py  Postgres user-memory persistence (user_memories table)
   core/           Shared utilities: environment detection, RAG formats, text markup
   services/       Backend business logic
     llm_gateway.py          Unified LLM transport (LiteLLM + Ollama direct client)
     rag_service.py          ChromaDB + BM25 hybrid retrieval, ingestion, answer composition
     rag_multi_agent.py      CrewAI multi-agent RAG orchestrator
     conversation_memory.py  Multi-turn memory with auto-summarisation
-    conversation_db.py      SQLite conversation persistence
+    conversation_db.py      Legacy SQLite persistence (canonical store: PostgreSQL via app/backend/conversation_store.py)
+    user_memory_service.py  Persistent user memory: prompt block, LLM extraction, orchestration
     web_search_service.py   SerpAPI REST client
     web_search_crew.py      CrewAI web-search orchestrator
     speech_service.py       STT via Whisper (transformers)
@@ -120,7 +123,16 @@ Chat and RAG requests route through `ChatSkillRegistry` / `RAGSkillRegistry`. Ea
 ChromaDB vector store + BM25 keyword retrieval (hybrid search). Configurable embedding providers (sentence-transformers, Ollama, OpenRouter, Nvidia NIM). Documents: format detection → extraction → chunking → embedding → indexing.
 
 **Conversation Memory** (`app/services/conversation_memory.py`)
-Session-based multi-turn context. Summarises older messages when token count exceeds 75 % of the 24 K context limit. Persisted in SQLite.
+Session-based multi-turn context. Summarises older messages when token count exceeds 75 % of the 24 K context limit. Persisted in PostgreSQL via `app/backend/conversation_store.py` (`Config.DATABASE_URL`); `conversation_db.py` is legacy.
+
+### Persistent user memory (`app/backend/user_memory_store.py`, `app/services/user_memory_service.py`)
+Per-user durable memory in Postgres (`user_memories`, FK to `users` with ON DELETE CASCADE).
+After each chat/voice exchange a fire-and-forget task asks the LLM gateway (request's own
+backend/model) for JSON ops (add/update/delete, ≤3/turn) and applies them; extraction failure
+never affects the response. On every chat/RAG/voice request (except multi-agent RAG mode) the backend loads the user's
+memories and prepends an "About the user" system block (cap 50). Explicit "remember that…"
+requests are handled by the same extraction prompt. Manual management: `/api/memory` CRUD +
+Settings → Memory panel. Distinct from session-scoped `conversation_memory.py`.
 
 **Generative UI** (`app/backend/api/chat.py`)
 When `enable_generative_ui` is set, the LLM emits `` `ui:component_name` `` fenced blocks. The Next.js frontend renders these as charts, tables, metrics, progress bars, and iframe apps.
