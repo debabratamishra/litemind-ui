@@ -131,7 +131,7 @@ description: "The technical backbone of LiteMindUI: architecture, processes and 
 <ul>
   <li><strong>Hot reload.</strong> The backend runs with <code>uvicorn --reload</code> and the frontend with <code>npm run dev</code>; both rebuild on save.</li>
   <li><strong>Start with a small local model.</strong> <code>gemma3:1b</code> through Ollama keeps everything on your machine while you build.</li>
-  <li><strong>Read the logs.</strong> Set <code>LOG_LEVEL=DEBUG</code> to see report routing, skill selection, and RAG retrieval scores.</li>
+  <li><strong>Read the logs.</strong> Set <code>LOG_LEVEL=DEBUG</code> to see request routing, skill selection, and RAG retrieval scores.</li>
   <li><strong>Containers are optional.</strong> <code>make dev</code> gives you the same stack with hot-reload if you would rather not manage Python and Node versions yourself.</li>
 </ul>
 

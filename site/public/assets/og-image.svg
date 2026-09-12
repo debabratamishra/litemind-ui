@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">LiteMindUI</title>
+  <desc id="desc">Private, local-first AI workspace</desc>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f4ed"/>
+      <stop offset="1" stop-color="#e9e1d3"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#paper)"/>
+  <path d="M0 0H1200V630H0Z" fill="#17463a" opacity=".055"/>
+  <rect x="72" y="72" width="430" height="486" rx="34" fill="#17463a"/>
+  <rect x="103" y="108" width="80" height="80" rx="22" fill="#f4c5a5"/>
+  <text x="143" y="164" fill="#17463a" font-family="Georgia, serif" font-size="54" font-weight="600" text-anchor="middle">L</text>
+  <text x="104" y="260" fill="#f7f4ed" font-family="Georgia, serif" font-size="58" font-weight="600">LiteMindUI</text>
+  <text x="104" y="320" fill="#b7dccd" font-family="Arial, sans-serif" font-size="25">Private AI work,</text>
+  <text x="104" y="356" fill="#b7dccd" font-family="Arial, sans-serif" font-size="25">on your terms.</text>
+  <rect x="104" y="410" width="238" height="48" rx="24" fill="#f4c5a5"/>
+  <text x="223" y="442" fill="#17463a" font-family="Arial, sans-serif" font-size="20" font-weight="700" text-anchor="middle">Open the workspace</text>
+  <text x="570" y="154" fill="#1d2420" font-family="Georgia, serif" font-size="76" font-weight="600">AI work that stays</text>
+  <text x="570" y="238" fill="#17463a" font-family="Georgia, serif" font-size="76" font-weight="600">in your hands.</text>
+  <text x="572" y="315" fill="#536059" font-family="Arial, sans-serif" font-size="27">Chat · Document Q&amp;A · Web search · Voice</text>
+  <text x="572" y="365" fill="#7a817b" font-family="Arial, sans-serif" font-size="23">Local-first. Open source. Self-hosted.</text>
+  <rect x="570" y="424" width="16" height="16" rx="8" fill="#b4633a"/>
+  <text x="598" y="439" fill="#536059" font-family="Arial, sans-serif" font-size="22">github.com/debabratamishra/litemind-ui</text>
+</svg>

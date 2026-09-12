@@ -1,34 +1,41 @@
 ---
 import { u } from '../lib/urls';
 const year = new Date().getFullYear();
+const repoUrl = 'https://github.com/debabratamishra/litemind-ui';
 ---
 
 <footer class="site-footer">
-  <div class="container">
-    <div>
-      <div class="brand"><span class="logo">L</span><span>LiteMindUI</span></div>
-      <p style="max-width:320px;color:#94a3b8;font-size:.92rem;margin:12px 0 0;">
-        A private, local-first AI workspace. Chat, ask your documents,
-        search the web, and talk out loud, with your data staying with you.
-      </p>
+  <div class="container footer-grid">
+    <div class="footer-brand">
+      <a class="brand" href={u('/')} aria-label="LiteMindUI home">
+        <span class="logo" aria-hidden="true"><span>L</span></span>
+        <span>LiteMindUI</span>
+      </a>
+      <p>A local-first AI workspace you can run, inspect, and adapt. Chat, retrieve from documents, search the web, and use voice from one interface.</p>
     </div>
-    <div class="footer-cols">
-      <div class="footer-col">
-        <h4>Project</h4>
-        <a href={u('/')}>Home</a>
-        <a href={u('/developer/')}>Developer guide</a>
-        <a href="https://github.com/debabratamishra/litemind-ui" target="_blank" rel="noopener">Source code</a>
+    <div class="footer-links">
+      <div>
+        <h2>Product</h2>
+        <a href={u('/')}>Overview</a>
+        <a href={`${u('/#workspace')}`}>Workspace</a>
+        <a href={`${u('/#faq')}`}>Deployment questions</a>
       </div>
-      <div class="footer-col">
-        <h4>Resources</h4>
-        <a href="https://github.com/debabratamishra/litemind-ui#readme" target="_blank" rel="noopener">README</a>
-        <a href="https://github.com/debabratamishra/litemind-ui/blob/main/docs/api-contract.md" target="_blank" rel="noopener">API contract</a>
-        <a href="https://github.com/debabratamishra/litemind-ui/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+      <div>
+        <h2>Build</h2>
+        <a href={u('/developer/')}>Developer guide</a>
+        <a href={`${repoUrl}/blob/main/docs/api-contract.md`} target="_blank" rel="noopener">API contract</a>
+        <a href={`${repoUrl}/releases`} target="_blank" rel="noopener">Releases</a>
+      </div>
+      <div>
+        <h2>Project</h2>
+        <a href={repoUrl} target="_blank" rel="noopener">Source code</a>
+        <a href={`${repoUrl}/blob/main/LICENSE`} target="_blank" rel="noopener">License</a>
+        <a href="mailto:debabrata.mishra641@gmail.com?subject=LiteMindUI%20enterprise%20support">Enterprise support</a>
       </div>
     </div>
   </div>
   <div class="container footer-bottom">
-    <span>© {year} LiteMindUI. Free and open source.</span>
-    <span>Built with Astro &amp; GitHub Pages.</span>
+    <span>© {year} LiteMindUI</span>
+    <span>Free and open source · Built with Astro</span>
   </div>
 </footer>

@@ -1,6 +1,18 @@
-// Data model for the home page content
+export type IconName =
+  | 'chat'
+  | 'document'
+  | 'globe'
+  | 'voice'
+  | 'local'
+  | 'ownership'
+  | 'browser'
+  | 'open'
+  | 'server'
+  | 'access'
+  | 'integration';
+
 export interface CardData {
-  icon: string;
+  icon: IconName;
   title: string;
   body: string;
 }
@@ -8,98 +20,119 @@ export interface CardData {
 export interface StepData {
   title: string;
   body: string;
+  command?: string;
 }
 
 export interface EnterpriseTileData {
-  icon: string;
+  icon: IconName;
   title: string;
   body: string;
 }
 
-// Feature cards (first section after hero)
+export interface FaqData {
+  question: string;
+  answer: string;
+}
+
 export const features: CardData[] = [
   {
-    icon: '💬',
-    title: 'Chat',
-    body: 'Have a conversation. Ask questions, brainstorm ideas, or get help writing an email, a story, or a plan.'
+    icon: 'chat',
+    title: 'Chat and create',
+    body: 'Ask questions, draft content, plan work, and get streaming responses in one browser workspace.'
   },
   {
-    icon: '📄',
+    icon: 'document',
     title: 'Ask your documents',
-    body: 'Drop in your PDFs, notes, or reports and ask questions about them. Ask "What did we decide in the meeting notes?" and it will tell you.'
+    body: 'Upload PDFs, notes, reports, and spreadsheets. Hybrid search combines semantic and keyword retrieval before answering.'
   },
   {
-    icon: '🌐',
+    icon: 'globe',
     title: 'Search the web',
-    body: 'Let it look things up online and bring back a clear, sourced answer instead of a wall of links.'
+    body: 'Add live web results when an answer needs current information, with sources kept beside the response.'
   },
   {
-    icon: '🎙️',
-    title: 'Talk out loud',
-    body: 'Turn on voice mode and just speak. It listens, thinks, and replies with a natural voice, like a phone call with your assistant.'
+    icon: 'voice',
+    title: 'Work by voice',
+    body: 'Use microphone input or the realtime WebRTC voice pipeline for hands-free conversations.'
   }
 ];
 
-// Benefit cards (second section)
 export const benefits: CardData[] = [
   {
-    icon: '🔒',
-    title: 'Private by design',
-    body: 'Your files and conversations can stay entirely on your own computer. Nothing leaves your machine unless you choose to use a cloud service.'
+    icon: 'local',
+    title: 'Local first, cloud optional',
+    body: 'Run Ollama on your machine. OpenRouter and Nvidia NIM remain available when you choose a hosted model.'
   },
   {
-    icon: '🖥️',
-    title: 'Works offline',
-    body: 'With a local AI model, LiteMindUI keeps working even without the internet. No connection? No problem.'
+    icon: 'ownership',
+    title: 'Clear data boundaries',
+    body: 'Self-hosted authentication and per-user isolation keep conversations, sessions, and RAG contexts separated.'
   },
   {
-    icon: '🤝',
-    title: 'Friendly for everyone',
-    body: 'You do not need to be a programmer. If you can open a web page, you can use it.'
+    icon: 'browser',
+    title: 'A familiar interface',
+    body: 'Once the stack is running, use LiteMindUI from any modern browser at http://localhost:3000.'
   },
   {
-    icon: '🌱',
-    title: 'Open source',
-    body: 'The code is free and open for anyone to read, improve, and trust. No lock-in, no surprises.'
+    icon: 'open',
+    title: 'Open for inspection',
+    body: 'Read the source, run it yourself, and adapt the FastAPI backend or Next.js frontend to your needs.'
   }
 ];
 
-// Steps for "How do I get started?"
 export const steps: StepData[] = [
   {
-    title: 'Get a copy',
-    body: 'Download or clone the project from GitHub to your computer. It is free.'
+    title: 'Run the installer',
+    body: 'Pull the prebuilt images and start the Docker stack.',
+    command: 'curl -fsSL https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/install.sh | bash'
   },
   {
-    title: 'Run it',
-    body: 'One command starts everything (Docker does the heavy lifting). No manual setup needed.'
+    title: 'Open your workspace',
+    body: 'Visit http://localhost:3000, create an account, and sign in.'
   },
   {
-    title: 'Open & chat',
-    body: 'Open the address it shows you in your browser, and start talking to your AI. That\'s it.'
+    title: 'Choose a model',
+    body: 'Connect Ollama for local inference or configure a hosted provider.'
   }
 ];
 
-// Enterprise section tiles
 export const enterpriseTiles: EnterpriseTileData[] = [
   {
-    icon: '🛡️',
-    title: 'Private, on-prem deployment',
-    body: 'Run entirely inside your own network, with no data leaving your perimeter and no third-party APIs required.'
+    icon: 'server',
+    title: 'Private deployment',
+    body: 'Run the application inside your network and keep model, document, and identity services under your control.'
   },
   {
-    icon: '🔐',
-    title: 'SSO & access control',
-    body: 'Connect your identity provider and decide exactly who can see what, down to workspace and document level.'
+    icon: 'access',
+    title: 'Identity and access',
+    body: 'Adapt the self-hosted authentication layer and per-user data isolation to your access model.'
   },
   {
-    icon: '📈',
-    title: 'SLAs & priority support',
-    body: 'Guaranteed response times and a direct line to me when something business-critical is on the line.'
-  },
-  {
-    icon: '🧩',
+    icon: 'integration',
     title: 'Custom integrations',
-    body: 'Wire up your internal tools, private models, and data sources, plus features built to your spec.'
+    body: 'Connect internal tools, private models, document stores, and business-specific workflows.'
+  }
+];
+
+export const faqs: FaqData[] = [
+  {
+    question: 'Which operating systems are supported?',
+    answer: 'LiteMindUI runs through Docker on systems that support the provided Compose setup. The browser interface works in current Chrome, Edge, Firefox, and Safari releases.'
+  },
+  {
+    question: 'Can it run without the internet?',
+    answer: 'Yes, after dependencies and a local model are available. Offline use requires Ollama or another local inference service; web search and hosted models need network access.'
+  },
+  {
+    question: 'Where is my data stored?',
+    answer: 'Your deployment controls storage. The canonical conversation and user-memory stores use PostgreSQL, while document and ingestion paths are configured on the host.'
+  },
+  {
+    question: 'Do I need an OpenRouter or Nvidia account?',
+    answer: 'No. Ollama provides the local model path. Hosted providers are optional and require their own API credentials.'
+  },
+  {
+    question: 'Is LiteMindUI ready for a company rollout?',
+    answer: 'The open-source project provides the base application, self-hosted authentication, and per-user isolation. Production deployments should be reviewed against your security, support, and compliance requirements.'
   }
 ];

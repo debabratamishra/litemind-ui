@@ -8,9 +8,9 @@ const onDev = pathname.startsWith(u('/developer'));
 ---
 
 <header class="site-nav">
-  <div class="container">
-    <a class="brand" href={u('/')}>
-      <span class="logo">L</span>
+  <div class="container nav-inner">
+    <a class="brand" href={u('/')} aria-label="LiteMindUI home">
+      <span class="logo" aria-hidden="true"><span>L</span></span>
       <span class="brand-text">LiteMindUI</span>
     </a>
 
@@ -22,22 +22,16 @@ const onDev = pathname.startsWith(u('/developer'));
       aria-expanded="false"
       aria-controls="nav-panel"
     >
-      <span></span>
-      <span></span>
-      <span></span>
+      <span></span><span></span><span></span>
     </button>
 
-    <nav
-      class="nav-links"
-      id="nav-panel"
-      role="navigation"
-      aria-label="Primary"
-    >
-      <a href={u('/')} class={onHome ? 'active' : undefined}>Home</a>
-      <a href={u('/developer/')}>Developer</a>
-      <a class="github" href="https://github.com/debabratamishra/litemind-ui" target="_blank" rel="noopener">GitHub</a>
-      <ThemeToggle client:load />
+    <nav class="nav-links" id="nav-panel" aria-label="Primary">
+      <a href={u('/')} class={onHome ? 'active' : undefined} aria-current={onHome ? 'page' : undefined}>Overview</a>
+      <a href={u('/developer/')} class={onDev ? 'active' : undefined} aria-current={onDev ? 'page' : undefined}>Develop</a>
+      <a class="nav-install" href="https://github.com/debabratamishra/litemind-ui#quick-start" target="_blank" rel="noopener">Install <span aria-hidden="true">↗</span></a>
+      <a class="github" href="https://github.com/debabratamishra/litemind-ui" target="_blank" rel="noopener" aria-label="LiteMindUI on GitHub">GitHub</a>
     </nav>
+    <ThemeToggle client:load />
   </div>
 </header>
 
@@ -61,14 +55,13 @@ const onDev = pathname.startsWith(u('/developer'));
       panel.classList.remove('open');
       document.body.classList.remove('nav-open');
     }
-    toggle.addEventListener('click', () => {
-      panel.classList.contains('open') ? close() : open();
-    });
-    // Close on Escape
+    toggle.addEventListener('click', () => panel.classList.contains('open') ? close() : open());
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && panel.classList.contains('open')) close();
     });
-    // Close when a link is activated
+    document.addEventListener('pointerdown', (e) => {
+      if (panel.classList.contains('open') && !panel.contains(e.target) && !toggle.contains(e.target)) close();
+    });
     panel.addEventListener('click', (e) => {
       if (e.target.tagName === 'A') close();
     });

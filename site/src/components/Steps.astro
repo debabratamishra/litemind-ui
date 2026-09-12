@@ -1,18 +1,22 @@
 ---
 import type { StepData } from '../data/home';
+
 interface Props {
   steps: StepData[];
 }
+
 const { steps } = Astro.props;
 ---
-<div class="steps">
-  {steps.map((step, idx) => (
-    // @ts-ignore
-    <div class="step" key={idx}>
-      {/* @ts-ignore */}
-      <div class="num"></div>
-      <h3>{step.title}</h3>
-      <p>{step.body}</p>
-    </div>
+
+<ol class="steps">
+  {steps.map((step, index) => (
+    <li class="step">
+      <span class="num" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+      <div>
+        <h3>{step.title}</h3>
+        <p>{step.body}</p>
+        {step.command && <code class="step-command">{step.command}</code>}
+      </div>
+    </li>
   ))}
-</div>
+</ol>

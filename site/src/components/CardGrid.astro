@@ -1,16 +1,21 @@
 ---
+import Icon from './Icon.astro';
 import type { CardData } from '../data/home';
+
 interface Props {
   cards: CardData[];
+  className?: string;
 }
-const { cards } = Astro.props;
+
+const { cards, className = '' } = Astro.props;
 ---
-<div class="cards">
+
+<div class={`cards ${className}`.trim()}>
   {cards.map((card) => (
-    <div class="card">
-      <div class="icon">{card.icon}</div>
+    <article class="card">
+      <div class="icon" aria-hidden="true"><Icon name={card.icon} /></div>
       <h3>{card.title}</h3>
       <p>{card.body}</p>
-    </div>
+    </article>
   ))}
 </div>
