@@ -160,7 +160,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({ isLoading: true });
     try {
       const user = await authApi.me();
-      set({ user, accessToken: null, isAuthenticated: true, isLoading: false });
+      set({ user, isAuthenticated: true, isLoading: false });
     } catch {
       set({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
     }
