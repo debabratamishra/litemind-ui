@@ -54,12 +54,13 @@ export default function ChatPage() {
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
-  const { state: voiceState, isSupported: voiceSupported, start: startVoice, stop: stopVoice, reset: resetVoice } = useVoiceInput(
   // Compute the override live as the user types so the badge can be shown.
   const currentOverride = React.useMemo(
     () => parseProviderOverride(input, settings),
     [input, settings],
   );
+
+  const { state: voiceState, isSupported: voiceSupported, start: startVoice, stop: stopVoice, reset: resetVoice } = useVoiceInput(
     (transcript) => { setInput(transcript); setVoiceOn(false); setTimeout(() => handleSend(transcript), 50); }
   );
 

@@ -85,6 +85,15 @@ async def apply_memory_to_voice_settings(settings: VoiceSettings) -> None:
         settings.system_instruction = f"{settings.system_instruction}\n\n{block}"
 
 
+async def apply_memory_to_voice_settings(settings: VoiceSettings) -> None:
+    """Fold the user's persistent memory into the voice system instruction."""
+    if not settings.user_id:
+        return
+    block = await load_memory_block(settings.user_id)
+    if block:
+        settings.system_instruction = f"{settings.system_instruction}\n\n{block}"
+
+
 class BackendWhisperSTTService(SegmentedSTTService):
     """Delegates to the existing Whisper speech_service.
 

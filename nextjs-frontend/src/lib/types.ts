@@ -94,3 +94,13 @@ export interface ProviderOverride {
   text: string;
   hasKey: boolean;
 }
+
+/** A persisted per-user memory record (GET/POST /api/memory). */
+export interface MemoryRecord {
+  id: string;
+  content: string;
+  source: 'auto' | 'manual';
+  created_at: string;
+  updated_at: string;
+}
+}
