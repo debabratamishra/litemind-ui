@@ -5,10 +5,16 @@ vi.stubGlobal('fetch', fetchMock);
 
 import { proxyStreamingPost } from '@/lib/backend-proxy';
 
-function fakeRequest(body: string, contentType = 'application/json') {
+function fakeRequest(body: string, contentType = 'application/json', cookie?: string) {
   return {
     text: async () => body,
-    headers: { get: (h: string) => (h.toLowerCase() === 'content-type' ? contentType : null) },
+    headers: {
+      get: (h: string) => {
+        if (h.toLowerCase() === 'content-type') return contentType;
+        if (h.toLowerCase() === 'cookie') return cookie ?? null;
+        return null;
+      },
+    },
   } as unknown as import('next/server').NextRequest;
 }
 
@@ -46,6 +52,17 @@ describe('proxyStreamingPost', () => {
     await proxyStreamingPost(fakeRequest('x', 'text/plain'), '/api/rag/query');
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers['Content-Type']).toBe('text/plain');
+  });
+
+  it('forwards the browser session cookie', async () => {
+    fetchMock.mockResolvedValue(upstreamResponse('text/event-stream'));
+    await proxyStreamingPost(
+      fakeRequest('{"message":"hi"}', 'application/json', 'access_token=session-token'),
+      '/api/chat/stream',
+    );
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers.Cookie).toBe('access_token=session-token');
   });
 
   it('uses defaultContentType from opts when upstream has none', async () => {

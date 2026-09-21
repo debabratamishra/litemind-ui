@@ -27,10 +27,14 @@ export async function proxyStreamingPost(
   const target = `${BACKEND_BASE}${backendPath}`;
   const body = await req.text();
   const contentType = req.headers.get('content-type') ?? 'application/json';
+  const cookie = req.headers.get('cookie');
 
   const upstream = await fetch(target, {
     method: 'POST',
-    headers: { 'Content-Type': contentType },
+    headers: {
+      'Content-Type': contentType,
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
     body,
     cache: 'no-store',
   });
