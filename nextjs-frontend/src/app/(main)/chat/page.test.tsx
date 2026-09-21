@@ -75,6 +75,7 @@ vi.mock('@/lib/store', () => {
       state.conversations.find((c) => c.id === state.activeId),
     selectActiveId: (state: typeof mockState) => state.activeId,
     selectSettings: (state: typeof mockState) => state.settings,
+    selectUser: (state: typeof mockState) => state.user,
   };
 });
 

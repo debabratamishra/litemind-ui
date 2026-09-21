@@ -463,10 +463,6 @@ function ProviderKeyField({
     </div>
   );
 }
-      )}
-    </div>
-  );
-}
 
 export function SettingsPanel({
   open,
