@@ -371,4 +371,146 @@ describe('useVoiceInput', () => {
     expect(result.current.transcript).toBe('world');
     expect(result.current.state).toBe('processing');
   });
+
+  // ── Safari multi-turn and abort-error scenarios ───────────────────────────
+
+  it('can be started again after a completed turn (multi-turn)', () => {
+    const onResult = vi.fn();
+    const { result } = renderHook(() => useVoiceInput(onResult));
+
+    // ── Turn 1 ──
+    act(() => { result.current.start(); });
+    expect(result.current.state).toBe('listening');
+
+    // Final result arrives
+    act(() => {
+      mockRecognition.onresult?.({
+        resultIndex: 0,
+        results: { length: 1, 0: { isFinal: true, 0: { transcript: 'First turn', confidence: 0.9 } } },
+      });
+    });
+    expect(result.current.state).toBe('processing');
+    expect(onResult).toHaveBeenCalledWith('First turn');
+
+    // Recognition ends
+    act(() => { mockRecognition.onend?.(); });
+    // state stays 'processing' (not listening at end)
+    expect(result.current.state).toBe('processing');
+
+    // ── Turn 2 — start() should succeed without throwing ──
+    // A fresh mockRecognition is needed because start() creates a new instance.
+    const firstInstance = mockRecognition;
+    // Re-install mock so the constructor returns a fresh object
+    mockRecognition = {
+      ...mockRecognition,
+      onstart: null, onresult: null, onerror: null, onend: null,
+      start: vi.fn().mockImplementation(() => { mockRecognition.onstart?.(); }),
+      stop: vi.fn(),
+      abort: vi.fn(),
+    };
+    (window as any).SpeechRecognition = vi.fn().mockImplementation(() => mockRecognition);
+    (window as any).webkitSpeechRecognition = vi.fn().mockImplementation(() => mockRecognition);
+
+    act(() => { result.current.start(); });
+    expect(result.current.state).toBe('listening');
+    expect(result.current.transcript).toBe('');
+
+    act(() => {
+      mockRecognition.onresult?.({
+        resultIndex: 0,
+        results: { length: 1, 0: { isFinal: true, 0: { transcript: 'Second turn', confidence: 0.9 } } },
+      });
+    });
+    expect(onResult).toHaveBeenCalledWith('Second turn');
+    expect(onResult).toHaveBeenCalledTimes(2);
+
+    // The first instance's handlers were detached before abort() was called
+    expect(firstInstance.onend).toBeNull();
+    expect(firstInstance.onerror).toBeNull();
+  });
+
+  it('ignores Safari abort error fired after a natural recognition end', () => {
+    const { result } = renderHook(() => useVoiceInput());
+
+    act(() => { result.current.start(); });
+
+    // Final result → state becomes 'processing'
+    act(() => {
+      mockRecognition.onresult?.({
+        resultIndex: 0,
+        results: { length: 1, 0: { isFinal: true, 0: { transcript: 'Hello Safari', confidence: 0.9 } } },
+      });
+    });
+    expect(result.current.state).toBe('processing');
+
+    // Safari fires onerror with 'aborted' after a natural session end
+    act(() => { mockRecognition.onerror?.({ error: 'aborted', message: '' }); });
+    // Must stay 'processing', not flip to 'error'
+    expect(result.current.state).toBe('processing');
+    expect(result.current.error).toBeNull();
+
+    // Same for the 'abort' variant
+    act(() => { mockRecognition.onerror?.({ error: 'abort', message: '' }); });
+    expect(result.current.state).toBe('processing');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('abort error during listening (not after final result) is also ignored', () => {
+    // Some Safari versions fire abort when you call stop() manually.
+    // We should not show an error in that case either.
+    const { result } = renderHook(() => useVoiceInput());
+
+    act(() => { result.current.start(); });
+    expect(result.current.state).toBe('listening');
+
+    act(() => { mockRecognition.onerror?.({ error: 'aborted', message: '' }); });
+    // Should not transition to 'error'
+    expect(result.current.state).toBe('listening');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('start() aborts and detaches the previous instance before creating a new one', () => {
+    const { result } = renderHook(() => useVoiceInput());
+
+    act(() => { result.current.start(); });
+    const firstInstance = mockRecognition;
+    const abortSpy = vi.spyOn(firstInstance, 'abort');
+
+    // Wire up a second mock instance
+    mockRecognition = {
+      ...firstInstance,
+      onstart: null, onresult: null, onerror: null, onend: null,
+      start: vi.fn().mockImplementation(() => { mockRecognition.onstart?.(); }),
+      stop: vi.fn(),
+      abort: vi.fn(),
+    };
+    (window as any).SpeechRecognition = vi.fn().mockImplementation(() => mockRecognition);
+    (window as any).webkitSpeechRecognition = vi.fn().mockImplementation(() => mockRecognition);
+
+    act(() => { result.current.start(); });
+
+    // Old instance must have been aborted and its handlers nulled
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(firstInstance.onend).toBeNull();
+    expect(firstInstance.onerror).toBeNull();
+    expect(firstInstance.onresult).toBeNull();
+    expect(firstInstance.onstart).toBeNull();
+    // New session is listening
+    expect(result.current.state).toBe('listening');
+  });
+
+  it('reset() nulls the ref so orphaned onend does not fire', () => {
+    const { result } = renderHook(() => useVoiceInput());
+
+    act(() => { result.current.start(); });
+    const instance = mockRecognition;
+
+    act(() => { result.current.reset(); });
+    expect(result.current.state).toBe('idle');
+
+    // Simulate the browser firing onend after the abort — should be a no-op
+    // because reset() detached the handler before calling abort()
+    act(() => { instance.onend?.(); });
+    expect(result.current.state).toBe('idle');
+  });
 });

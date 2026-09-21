@@ -48,9 +48,20 @@ export default function ChatPage() {
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
-  const { state: voiceState, isSupported: voiceSupported, start: startVoice, stop: stopVoice } = useVoiceInput(
+  const { state: voiceState, isSupported: voiceSupported, start: startVoice, stop: stopVoice, reset: resetVoice } = useVoiceInput(
     (transcript) => { setInput(transcript); setVoiceOn(false); setTimeout(() => handleSend(transcript), 50); }
   );
+
+  // Reset voice state to idle once the assistant finishes streaming its reply.
+  // Without this the hook stays stuck in 'processing' forever and the mic
+  // button remains permanently disabled after the first dictation turn.
+  const prevStreamingRef = React.useRef(isStreaming);
+  React.useEffect(() => {
+    if (prevStreamingRef.current && !isStreaming) {
+      resetVoice();
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming, resetVoice]);
 
   // ── Realtime voice mode (independent of the browser-dictation Mic above) ──
   const assistantActiveRef = React.useRef(false);

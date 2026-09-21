@@ -27,12 +27,14 @@ from pydantic import BaseModel
 from app.backend.api import auth as auth_api
 from app.backend.api import chat as chat_api
 from app.backend.api import conversations as conversations_api
+from app.backend.api import memory as memory_api
 from app.backend.api import voice as voice_api
 from app.backend.api.auth_deps import User, get_current_user
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
 from app.backend.core.config import DEFAULT_RAG_CONFIG
 from app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
 from app.backend.core.ollama_models import build_enhanced_model_payload
+from app.backend.user_memory_store import get_user_memory_store
 from app.services.ollama import stream_ollama
 from app.services.rag_service import RAGService
 from app.services.speech_service import get_speech_service, preload_stt_model
@@ -179,6 +181,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"RAG service initialization failed: {e}")
         rag_service = None
+
+    # Ensure the user-memory table exists (idempotent); degrade gracefully
+    try:
+        await get_user_memory_store().init_schema()
+        logger.info("User memory store ready")
+    except Exception as e:
+        logger.warning(f"User memory schema init skipped: {e}")
 
     # Restore configuration
     if rag_service is None:
@@ -341,6 +350,7 @@ app.include_router(auth_api.router)
 app.include_router(conversations_api.router)
 app.include_router(chat_api.router)
 app.include_router(voice_api.router)
+app.include_router(memory_api.router)
 
 # Templates
 try:
@@ -773,9 +783,13 @@ async def rag_query(request: RAGQueryRequestEnhanced, user: User = Depends(get_c
         if skill is None:
             raise HTTPException(status_code=400, detail="No compatible RAG skill found for request")
 
+        from app.services.user_memory_service import load_memory_block
+
+        memory_block = await load_memory_block(user.id)
+
         async def event_generator():
             logger.info("Routing RAG query through skill '%s'", skill.name)
-            async for chunk in skill.stream(request, rag_service):
+            async for chunk in skill.stream(request, rag_service, memory_block=memory_block):
                 yield chunk + "\n"
 
         return StreamingResponse(event_generator(), media_type="text/plain")

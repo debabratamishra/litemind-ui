@@ -17,7 +17,7 @@ class FakeAuth:
     def login(self, e, p):
         return {"access_token": TOKEN, "token_type": "bearer", "user": {"id": "u1", "email": e}}
 
-    def register(self, e, p):
+    def register(self, e, p, name=""):
         return {"access_token": TOKEN, "token_type": "bearer", "user": {"id": "u1", "email": e}}
 
     def logout(self, t):
@@ -84,7 +84,7 @@ class InvalidCredsAuth(FakeAuth):
 
 
 class EmailTakenAuth(FakeAuth):
-    def register(self, e, p):
+    def register(self, e, p, name=""):
         raise GoTrueError("User already registered", status_code=422)
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Optional
 
 from app.services.rag_multi_agent import CrewAIRAGOrchestrator, multi_agent_rag_available
 
@@ -25,7 +25,9 @@ class StandardRAGSkill:
     def supports(self, request: Any) -> bool:
         return not bool(getattr(request, "use_multi_agent", False))
 
-    async def stream(self, request: Any, rag_service: Any) -> AsyncIterator[str]:
+    async def stream(
+        self, request: Any, rag_service: Any, memory_block: Optional[str] = None
+    ) -> AsyncIterator[str]:
         async for chunk in rag_service.query(
             request.query,
             request.system_prompt,
@@ -34,6 +36,7 @@ class StandardRAGSkill:
             request.use_hybrid_search,
             request.model,
             conversation_summary=request.conversation_summary,
+            memory_block=memory_block,
             backend=request.backend,
             api_base=request.api_base,
             api_key=request.api_key,
@@ -62,12 +65,14 @@ class MultiAgentRAGSkill:
     def supports(self, request: Any) -> bool:
         return bool(getattr(request, "use_multi_agent", False))
 
-    async def stream(self, request: Any, rag_service: Any) -> AsyncIterator[str]:
+    async def stream(
+        self, request: Any, rag_service: Any, memory_block: Optional[str] = None
+    ) -> AsyncIterator[str]:
         available, detail = multi_agent_rag_available()
         if not available:
             logger.warning("Multi-agent RAG unavailable, falling back to standard RAG: %s", detail)
             yield self._fallback_message(detail)
-            async for chunk in self._fallback_skill.stream(request, rag_service):
+            async for chunk in self._fallback_skill.stream(request, rag_service, memory_block=memory_block):
                 yield chunk
             return
 
@@ -83,7 +88,7 @@ class MultiAgentRAGSkill:
             detail = str(exc)
             logger.warning("Multi-agent RAG initialization failed, falling back: %s", detail)
             yield self._fallback_message(detail)
-            async for chunk in self._fallback_skill.stream(request, rag_service):
+            async for chunk in self._fallback_skill.stream(request, rag_service, memory_block=memory_block):
                 yield chunk
             return
 

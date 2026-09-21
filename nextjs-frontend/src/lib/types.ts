@@ -72,3 +72,12 @@ export interface AppSettings {
   enableGenerativeUI: boolean;
   genUIDisplayMode: 'rendered' | 'code';
 }
+
+/** A persisted per-user memory record (GET/POST /api/memory). */
+export interface MemoryRecord {
+  id: string;
+  content: string;
+  source: 'auto' | 'manual';
+  created_at: string;
+  updated_at: string;
+}

@@ -99,11 +99,17 @@ export function useVoiceInput(
   }, []);
 
   const reset = useCallback(() => {
-    stop();
+    // Abort (not stop) so the onend handler fires without side-effects,
+    // then immediately null-out the ref so the onend handler below is a no-op.
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null;
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
     setTranscript('');
     setError(null);
     setState('idle');
-  }, [stop]);
+  }, []);
 
   const start = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -117,6 +123,23 @@ export function useVoiceInput(
       return;
     }
 
+    // Safari (webkitSpeechRecognition) throws InvalidStateError if you call
+    // start() while a previous instance is still alive. Always abort the old
+    // one and detach its handlers before creating a new session.
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null;
+      recognitionRef.current.onerror = null;
+      recognitionRef.current.onresult = null;
+      recognitionRef.current.onstart = null;
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
+
+    // Reset to a clean slate for this turn
+    setTranscript('');
+    setError(null);
+    setState('idle');
+
     const recognition = new SpeechRecognitionClass();
     recognition.lang = 'en-US';
     recognition.interimResults = true;
@@ -125,8 +148,6 @@ export function useVoiceInput(
 
     recognition.onstart = () => {
       setState('listening');
-      setError(null);
-      setTranscript('');
     };
 
     recognition.onresult = (event: ISpeechRecognitionEvent) => {
@@ -153,6 +174,13 @@ export function useVoiceInput(
     };
 
     recognition.onerror = (event: ISpeechRecognitionErrorEvent) => {
+      // Safari fires an 'aborted' error when the recognition session ends
+      // naturally after receiving a final result (it internally calls abort()
+      // after stop()). This is not a real error — ignore it so that the state
+      // set by onresult ('processing') is preserved and the turn completes
+      // cleanly. The same applies to the generic 'abort' error code.
+      if (event.error === 'aborted' || event.error === 'abort') return;
+
       const msg =
         event.error === 'no-speech'
           ? 'No speech detected. Try again.'
@@ -164,6 +192,11 @@ export function useVoiceInput(
     };
 
     recognition.onend = () => {
+      // Transition back to idle only if we are still in listening state
+      // (i.e. the session ended without a final result — timeout, silence, etc.).
+      // If state is 'processing' the turn already succeeded; leave it alone so
+      // the caller can observe the completed transcript.
+      // If state is 'error' an onerror handler already ran; leave that too.
       setState((prev) => (prev === 'listening' ? 'idle' : prev));
     };
 
@@ -174,7 +207,12 @@ export function useVoiceInput(
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      recognitionRef.current?.abort();
+      if (recognitionRef.current) {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
+      }
     };
   }, []);
 

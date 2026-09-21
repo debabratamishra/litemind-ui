@@ -29,6 +29,7 @@ wheels/
 MANIFEST
 .pytest_cache/
 .venv
+.coverage
 
 # Environment files
 .env
