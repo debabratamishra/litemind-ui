@@ -367,7 +367,7 @@ export function SettingsPanel({
                     id="set-model-in"
                     type="text"
                     placeholder={
-                      settings.backend === 'openrouter' ? 'e.g. openai/gpt-4o' : 'e.g. meta/llama-3.3-70b-instruct'
+                      settings.backend === 'openrouter' ? 'e.g. openai/gpt-4o' : 'e.g. meta/muse-glimmer-30b'
                     }
                     value={settings.model}
                     onChange={(e) => setSettings({ model: e.target.value })}

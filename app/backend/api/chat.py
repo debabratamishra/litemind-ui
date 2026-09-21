@@ -271,8 +271,10 @@ async def chat_stream(request: ChatRequestEnhanced, user: User = Depends(get_cur
     logger.info(f"Streaming chat - User: {user.id}, Backend: {request.backend}, Model: {request.model}")
 
     async def event_generator():
+        reply_chunks: list[str] = []
         try:
             async for chunk in _stream_chat_response(request, user_id=user.id):
+                reply_chunks.append(chunk)
                 payload = json.dumps({"chunk": chunk}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
 
@@ -280,6 +282,21 @@ async def chat_stream(request: ChatRequestEnhanced, user: User = Depends(get_cur
             logger.exception("Chat streaming error")
             payload = json.dumps({"error": "An internal error occurred"}, ensure_ascii=False)
             yield f"data: {payload}\n\n"
+            return
+
+        # Fire-and-forget memory update once the full reply is assembled
+        if reply_chunks:
+            asyncio.create_task(
+                run_memory_update(
+                    user.id,
+                    request.message,
+                    "".join(reply_chunks),
+                    backend=request.backend,
+                    model=request.model,
+                    api_base=request.api_base,
+                    api_key=request.api_key,
+                )
+            )
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

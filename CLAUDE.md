@@ -156,7 +156,7 @@ transcript/control events flow back over the WebRTC data channel.
 |---------|------------|---------------|
 | Ollama (local) | `OLLAMA_API_URL` | `gemma3:1b` |
 | OpenRouter | `OPENROUTER_API_KEY` | `meta-llama/llama-3.3-70b-instruct` |
-| Nvidia NIM | `NVIDIA_NIM_API_KEY` | `meta/llama3-70b-instruct` |
+| Nvidia NIM | `NVIDIA_NIM_API_KEY` | `meta/muse-glimmer-30b` |
 
 ### Key environment variables
 

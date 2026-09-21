@@ -25,7 +25,10 @@ MAX_MEMORY_OPS_PER_TURN = 3
 MEMORY_EXTRACTION_TIMEOUT_SECONDS = 15
 MAX_MEMORY_CONTENT_LENGTH = 500
 
-MEMORY_BLOCK_HEADER = "About the user (persistent memory; use when relevant):"
+MEMORY_BLOCK_HEADER = (
+    "Things you know about this user (use naturally in conversation; "
+    "never quote or reference this list directly):"
+)
 
 
 def build_memory_block(memories: List[Any]) -> str:
@@ -101,10 +104,19 @@ Return ONLY a JSON array. Each element is exactly one of:
 {"op": "delete", "id": "<existing memory id that is now wrong or obsolete>"}
 
 Rules:
+- CONTRADICTION RULE (highest priority): If anything the user says contradicts or corrects an \
+existing memory, you MUST either update that memory (preferred) or delete it and add the new fact. \
+Never silently ignore a contradiction. Example: existing memory "Lives in Sydney", user says \
+"I actually moved to Melbourne" → {"op": "update", "id": "<id>", "content": "Lives in Melbourne"}.
+- EXPLICIT REMEMBER RULE: If the user explicitly asks you to remember something (e.g. "remember \
+that…", "keep in mind that…"), always store it — even if it seems transient. If it contradicts \
+an existing memory, replace the old one.
 - Store only durable facts: the user's identity, stable preferences, ongoing projects or goals, \
-corrections to existing memories, and explicit requests to remember something.
+and explicit requests to remember something.
 - Never store secrets, credentials, API keys, passwords, or transient task details.
 - Prefer updating an existing memory over adding a near-duplicate.
+- Write content as a plain fact without a "User ..." prefix — e.g. "Named Deb" not "User is named Deb", \
+"From Australia" not "User is from Australia".
 - At most 3 operations. Return [] when nothing durable was shared."""
 
 
@@ -149,7 +161,7 @@ async def extract_memory_ops(
                 model=model,
                 api_base=api_base,
                 api_key=api_key,
-                max_tokens=300,
+                max_tokens=400,
             ),
             timeout=MEMORY_EXTRACTION_TIMEOUT_SECONDS,
         )

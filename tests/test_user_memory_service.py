@@ -27,7 +27,7 @@ def test_build_memory_block_empty():
 
 def test_build_memory_block_formats_facts():
     block = build_memory_block([FakeMemory("Prefers concise answers"), FakeMemory("Name is Alex")])
-    assert block.startswith("About the user (persistent memory; use when relevant):")
+    assert block.startswith("Things you know about this user")
     assert "- Prefers concise answers" in block
     assert "- Name is Alex" in block
 
@@ -205,3 +205,69 @@ async def test_load_memory_block_empty_user():
 async def test_load_memory_block_degrades_on_store_error():
     with patch.object(ums, "get_user_memory_store", side_effect=RuntimeError("db down")):
         assert await load_memory_block("user-1") == ""
+
+
+# ── Counter-fact / contradiction handling ──────────────────────
+
+VALID_ID_2 = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+
+
+@pytest.mark.asyncio
+async def test_extract_memory_ops_updates_contradicted_memory():
+    """When the user corrects an existing fact the LLM should emit an update op."""
+    existing_mem = type("M", (), {"id": VALID_MEMORY_ID, "content": "Lives in Sydney"})()
+    llm_response = f'[{{"op": "update", "id": "{VALID_MEMORY_ID}", "content": "Lives in Melbourne"}}]'
+    with patch.object(ums, "complete_text", new=AsyncMock(return_value=llm_response)):
+        ops = await extract_memory_ops(
+            "I actually moved to Melbourne last month",
+            "Good to know, I'll update that!",
+            [existing_mem],
+            backend="ollama",
+            model="gemma3:1b",
+        )
+    assert len(ops) == 1
+    assert ops[0] == {"op": "update", "id": VALID_MEMORY_ID, "content": "Lives in Melbourne"}
+
+
+@pytest.mark.asyncio
+async def test_extract_memory_ops_deletes_and_adds_on_contradiction():
+    """Some models emit delete+add instead of update; both are accepted."""
+    existing_mem = type("M", (), {"id": VALID_MEMORY_ID, "content": "Prefers Python"})()
+    llm_response = (
+        f'[{{"op": "delete", "id": "{VALID_MEMORY_ID}"}},'
+        f'{{"op": "add", "content": "Prefers Rust"}}]'
+    )
+    with patch.object(ums, "complete_text", new=AsyncMock(return_value=llm_response)):
+        ops = await extract_memory_ops(
+            "Actually I switched to Rust full time",
+            "Noted, Rust it is!",
+            [existing_mem],
+        )
+    assert len(ops) == 2
+    assert ops[0] == {"op": "delete", "id": VALID_MEMORY_ID}
+    assert ops[1] == {"op": "add", "content": "Prefers Rust"}
+
+
+@pytest.mark.asyncio
+async def test_run_memory_update_stores_counter_fact_via_update():
+    """End-to-end: counter-fact triggers an update that reaches the store."""
+    existing_mem = type("M", (), {"id": VALID_MEMORY_ID, "content": "Works at Acme"})()
+    store = FakeStore(memories=[existing_mem])
+    llm_response = f'[{{"op": "update", "id": "{VALID_MEMORY_ID}", "content": "Works at Globex"}}]'
+    with patch.object(ums, "get_user_memory_store", return_value=store), \
+         patch.object(ums, "complete_text", new=AsyncMock(return_value=llm_response)):
+        await run_memory_update(
+            "user-1",
+            "I changed jobs, I now work at Globex",
+            "Got it, I've updated that.",
+        )
+    assert store.updated == [("user-1", VALID_MEMORY_ID, "Works at Globex")]
+    assert store.added == []
+
+
+@pytest.mark.asyncio
+async def test_extraction_prompt_contains_contradiction_rule():
+    """Regression guard: the extraction prompt must explicitly mention contradictions."""
+    assert "CONTRADICTION" in ums._EXTRACTION_SYSTEM_PROMPT
+    assert "update" in ums._EXTRACTION_SYSTEM_PROMPT.lower()
+    assert "delete" in ums._EXTRACTION_SYSTEM_PROMPT.lower()
