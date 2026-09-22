@@ -1,11 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import MessageBubble from "@/components/message-bubble";
-import type { AppSettings, ChatMessage } from "@/lib/types";
+import type { AppSettings, UIMessage } from "@/lib/types";
 
 const settings: AppSettings = {
   model: "gemma3:1b",
   backend: "ollama",
+  apiKey: null,
+  apiBase: null,
+  ollamaUrl: null,
+  serpApiKey: null,
+  providerKeys: { ollama: null, openrouter: null, nvidia_nim: null },
   temperature: 0.7,
   maxTokens: 2048,
   topP: 1,
@@ -21,7 +26,7 @@ const settings: AppSettings = {
   voiceMode: false,
 };
 
-const WEB_SEARCH_MSG: ChatMessage = {
+const WEB_SEARCH_MSG: UIMessage = {
   id: "m1",
   role: "assistant",
   content: `Spain defeated Argentina 1- 0 in extra time to win the 2 026 FIFA World Cup [1][3][4][7].
@@ -95,7 +100,7 @@ describe("MessageBubble — web-search citations", () => {
   });
 
   it("renders a normal (non-web-search) answer without a Sources button", () => {
-    const plain: ChatMessage = {
+    const plain: UIMessage = {
       id: "m2",
       role: "assistant",
       content: "The capital of France is Paris.",
