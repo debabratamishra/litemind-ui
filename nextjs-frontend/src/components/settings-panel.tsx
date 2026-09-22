@@ -404,66 +404,6 @@ export function MemorySettings() {
   );
 }
 
-/**
- * Produce a masked fingerprint of an API key for display.
- *
- * - Keys shorter than 11 characters are fully masked as `••••••`.
- * - Otherwise: first 7 chars + `••••••` + last 4 chars.
- */
-function maskKey(key: string): string {
-  if (key.length < 11) {
-    return '••••••';
-  }
-  return `${key.slice(0, 7)}••••••${key.slice(-4)}`;
-}
-
-function ProviderKeyField({
-  label,
-  placeholder,
-  value,
-  onChange,
-}: {
-  label: string;
-  placeholder: string;
-  value: string | null;
-  onChange: (key: string) => void;
-}) {
-  const hasKey = !!value;
-  const masked = value ? maskKey(value) : '';
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <Label className="text-xs">{label}</Label>
-        {hasKey && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-5 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
-            onClick={() => onChange('')}
-            aria-label={`Clear ${label} API key`}
-          >
-            <X className="h-3 w-3" aria-hidden="true" />
-            Clear
-          </Button>
-        )}
-      </div>
-      <Input
-        type="password"
-        placeholder={placeholder}
-        autoComplete="off"
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 text-sm font-mono"
-        aria-label={`${label} API key`}
-      />
-      {masked && (
-        <div className="text-xs font-mono text-muted-foreground break-all">{masked}</div>
-      )}
-    </div>
-  );
-}
-
 export function SettingsPanel({
   open,
   onClose,
