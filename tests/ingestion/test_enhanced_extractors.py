@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from app.ingestion import enhanced_extractors as ee
+from backend.app.ingestion import enhanced_extractors as ee
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.ingestion import enhanced_document_processor as edp
+from backend.app.ingestion import enhanced_document_processor as edp
 
 
 @pytest.fixture(autouse=True)

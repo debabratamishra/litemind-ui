@@ -12,8 +12,8 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from app.backend.api import models
-from app.backend.models.api_models import (
+from backend.app.backend.api import models
+from backend.app.backend.models.api_models import (
     EnhancedModelListResponse,
     ModelListResponse,
     OllamaModelInfo,

@@ -29,7 +29,7 @@ jobs:
 
       - name: Validate Python compiles
         run: |
-          python -m compileall -q app main.py || {
+          uv run python -m compileall -q backend main.py config.py logging_config.py || {
             echo 'Python syntax errors detected.';
             exit 1;
           }
@@ -81,4 +81,4 @@ jobs:
         run: uv sync --group backend --group dev
 
       - name: Run ty
-        run: uv run ty check app/backend app/services app/core app/ingestion app/skills main.py config.py logging_config.py
+        run: uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py

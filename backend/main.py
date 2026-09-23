@@ -1,0 +1,1011 @@
+"""
+LiteMindUI FastAPI Backend
+Production-ready API server with chat and RAG capabilities.
+"""
+
+import asyncio
+import json
+import logging
+import os
+import shutil
+import signal
+import sys
+import threading
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import httpx
+import uvicorn
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
+from backend.app.backend.api import auth as auth_api
+from backend.app.backend.api import chat as chat_api
+from backend.app.backend.api import conversations as conversations_api
+from backend.app.backend.api import memory as memory_api
+from backend.app.backend.api import voice as voice_api
+from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.security_utils import sanitize_filename, validate_file_size
+from backend.app.backend.core.config import DEFAULT_RAG_CONFIG
+from backend.app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
+from backend.app.backend.core.ollama_models import build_enhanced_model_payload
+from backend.app.backend.user_memory_store import get_user_memory_store
+from backend.app.services.ollama import stream_ollama
+from backend.app.services.rag_service import RAGService
+from backend.app.services.speech_service import get_speech_service, preload_stt_model
+from backend.app.services.tts_service import get_tts_service, preload_tts_model
+from backend.app.skills import rag_skill_registry
+from backend.config import Config
+
+torch: Any = None
+try:
+    import torch
+except ImportError:
+    pass
+
+# Configure logging early so lifespan hooks can use logger
+try:
+    from backend.logging_config import get_logger, setup_logging
+
+    setup_logging()
+    logger = get_logger(__name__)
+except Exception:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+# Configuration
+Config.apply_performance_settings()
+dynamic_config = Config.get_dynamic_config()
+UPLOAD_FOLDER = Path(dynamic_config["upload_dir"])
+storage_dir = dynamic_config.get("storage_dir", Config.get_storage_path())
+CONFIG_PATH = Path(storage_dir) / "rag_config.json"
+Config.ensure_directories()
+
+# DEFAULT_RAG_CONFIG is now imported from backend.app.backend.core.config
+
+rag_service = None
+
+
+# Request/Response Models
+class ChatRequestEnhanced(BaseModel):
+    message: str
+    model: Optional[str] = "default"
+    temperature: Optional[float] = 0.7
+    backend: Optional[str] = "ollama"
+
+
+class RAGQueryRequestEnhanced(BaseModel):
+    query: str
+    messages: Optional[List[dict]] = []
+    model: Optional[str] = "default"
+    system_prompt: Optional[str] = "You are a helpful assistant."
+    n_results: Optional[int] = 3
+    use_multi_agent: Optional[bool] = False
+    use_hybrid_search: Optional[bool] = False
+    backend: Optional[str] = "ollama"
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
+    # Advanced LLM generation parameters
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 2048
+    top_p: Optional[float] = 0.9
+    frequency_penalty: Optional[float] = 0.0
+    repetition_penalty: Optional[float] = 1.0
+    min_p: Optional[float] = 0.0  # Minimum token probability floor (0.0 to 1.0)
+    seed: Optional[int] = None  # Fixed seed for reproducible outputs (None = random)
+    stop: Optional[List[str]] = None  # Sequences that halt generation
+    is_voice_mode: Optional[bool] = False
+    # Conversation memory fields
+    session_id: Optional[str] = None
+    conversation_summary: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    response: str
+    model: str
+
+
+class RAGConfigRequest(BaseModel):
+    provider: str
+    embedding_model: str
+    embedding_backend: Optional[str] = None
+    embedding_api_base: Optional[str] = None
+    embedding_api_key: Optional[str] = None
+    chunk_size: int
+
+
+class RagDuplicateCheckRequest(BaseModel):
+    filename: str
+
+
+class STTRequest(BaseModel):
+    audio_data: str
+    sample_rate: Optional[int] = 16000
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    use_cache: Optional[bool] = True
+
+
+# Configuration utilities
+def load_rag_config() -> Dict:
+    try:
+        if CONFIG_PATH.exists():
+            return json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        pass
+    return dict(DEFAULT_RAG_CONFIG)
+
+
+def save_rag_config_local(cfg: Dict) -> None:
+    try:
+        CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        logger.warning(f"Failed to persist RAG config: {e}")
+
+
+# Application lifecycle
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown"""
+    app.state.start_time = time.time()
+    logger.info("LiteMindUI API starting up...")
+
+    config_info = Config.get_dynamic_config()
+    logger.info(f"Environment: {'containerized' if config_info['is_containerized'] else 'native'}")
+    logger.info(f"Upload folder: {UPLOAD_FOLDER}")
+    logger.info(f"Storage path: {config_info['storage_dir']}")
+
+    try:
+        if UPLOAD_FOLDER.exists():
+            shutil.rmtree(UPLOAD_FOLDER, ignore_errors=True)
+        UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+        if config_info["is_containerized"]:
+            os.chmod(UPLOAD_FOLDER, 0o755)
+        logger.info("Uploads folder cleared")
+    except Exception as e:
+        logger.warning(f"Failed to clear uploads: {e}")
+
+    # Initialize services
+    global rag_service
+    try:
+        rag_service = RAGService()
+        logger.info("RAG service ready")
+    except Exception as e:
+        logger.warning(f"RAG service initialization failed: {e}")
+        rag_service = None
+
+    # Ensure the user-memory table exists (idempotent); degrade gracefully
+    try:
+        await get_user_memory_store().init_schema()
+        logger.info("User memory store ready")
+    except Exception as e:
+        logger.warning(f"User memory schema init skipped: {e}")
+
+    # Restore configuration
+    if rag_service is None:
+        logger.warning("RAG service unavailable, skipping config restore")
+    else:
+        # The embedding function is ALWAYS built through the inference-provider
+        # factory. There is no in-process default (no SentenceTransformer /
+        # DefaultEmbedding fallback) — only the providers registered in
+        # app.backend.core.embeddings.create_embedding_function
+        # (ollama / huggingface / openrouter / nvidia_nim) can be used.
+        cfg = load_rag_config()
+        configured_provider = str(cfg.get("provider", DEFAULT_RAG_CONFIG["provider"]))
+        embedding_backend = cfg.get("embedding_backend")
+        provider = resolve_embedding_provider(configured_provider, embedding_backend)
+        model_name = str(cfg.get("embedding_model", DEFAULT_RAG_CONFIG["embedding_model"]))
+        chunk_size = int(cfg.get("chunk_size", DEFAULT_RAG_CONFIG["chunk_size"]))
+
+        rag_service.embedding_function = create_embedding_function(
+            provider,
+            model_name,
+            config_info["ollama_url"],
+            embedding_backend=embedding_backend,
+            api_base=cfg.get("embedding_api_base"),
+            api_key=cfg.get("embedding_api_key"),
+        )
+
+        rag_service.default_chunk_size = chunk_size
+        logger.info(
+            "RAG config restored: provider=%s backend=%s model=%s",
+            provider,
+            embedding_backend,
+            model_name,
+        )
+
+    # Performance tuning
+    try:
+        cpu_threads = max(1, (os.cpu_count() or 4) - 1)
+        os.environ.setdefault("OMP_NUM_THREADS", str(cpu_threads))
+        if torch:
+            torch.set_num_threads(cpu_threads)
+        logger.info(f"Thread optimization applied: {cpu_threads} threads")
+    except Exception as e:
+        logger.warning(f"Thread tuning failed: {e}")
+
+    # Preload speech models for reduced latency
+    # This now runs synchronously to ensure models are ready before "startup complete"
+    preload_enabled = os.getenv("PRELOAD_SPEECH_MODELS", "1").strip().lower() not in {"0", "false", "no"}
+    preload_async_raw = os.getenv("PRELOAD_SPEECH_MODELS_ASYNC")
+    preload_async = (
+        preload_async_raw.strip().lower() in {"1", "true", "yes"}
+        if preload_async_raw is not None
+        else bool(config_info["is_containerized"])
+    )
+
+    if preload_enabled:
+        if preload_async_raw is None and config_info["is_containerized"]:
+            logger.info("Containerized environment detected; speech models will preload in background by default")
+        logger.info("=" * 60)
+        logger.info("LOADING SPEECH MODELS (this may take a moment)...")
+        logger.info("=" * 60)
+
+        def preload_models():
+            start_time = time.time()
+            stt_loaded = False
+            tts_loaded = False
+
+            try:
+                # Preload STT (Whisper) model
+                logger.info("  → Loading STT (Whisper) model...")
+                preload_stt_model()
+                stt_loaded = True
+                logger.info("  ✓ STT model loaded successfully")
+            except Exception as e:
+                logger.warning(f"  ✗ Failed to preload STT model: {e}")
+
+            try:
+                # Preload TTS (Kokoro) model
+                logger.info("  → Loading TTS (Kokoro) model...")
+                preload_tts_model()
+                tts_loaded = True
+                logger.info("  ✓ TTS model loaded successfully")
+            except Exception as e:
+                logger.warning(f"  ✗ Failed to preload TTS model: {e}")
+
+            elapsed = time.time() - start_time
+            logger.info("=" * 60)
+            logger.info(f"SPEECH MODELS READY (took {elapsed:.1f}s)")
+            logger.info(f"  STT: {'✓ Ready' if stt_loaded else '✗ Not loaded'}")
+            logger.info(f"  TTS: {'✓ Ready' if tts_loaded else '✗ Not loaded'}")
+            logger.info("=" * 60)
+
+        if preload_async:
+            # Optional: Run in background (set PRELOAD_SPEECH_MODELS_ASYNC=1)
+            logger.info("(Running in background mode)")
+            preload_thread = threading.Thread(target=preload_models, daemon=True)
+            preload_thread.start()
+        else:
+            # Default: Run synchronously so models are ready before server starts
+            preload_models()
+    else:
+        logger.info("Speech model preloading disabled (PRELOAD_SPEECH_MODELS=0)")
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("LITEMINDUI API READY")
+    logger.info("=" * 60)
+
+    yield
+
+    # Cleanup on shutdown
+    try:
+        if rag_service:
+            await rag_service.reset_system()
+        if UPLOAD_FOLDER.exists():
+            shutil.rmtree(UPLOAD_FOLDER, ignore_errors=True)
+        logger.info("Cleanup completed")
+    except Exception as e:
+        logger.warning(f"Cleanup failed: {e}")
+
+    # Tear down any open voice (WebRTC) peer connections
+    try:
+        from backend.app.backend.api.voice import pcs_map
+
+        for conn in list(pcs_map.values()):
+            try:
+                await conn.disconnect()
+            except Exception:
+                pass
+        pcs_map.clear()
+        logger.info("Voice peer connections cleaned up")
+    except Exception as e:
+        logger.warning(f"Voice peer cleanup failed: {e}")
+
+    logger.info("LiteMindUI API shutting down...")
+
+
+# FastAPI app
+app = FastAPI(
+    title="LiteMindUI API",
+    description="Production API for LiteMindUI with Chat and RAG capabilities",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include API routers
+app.include_router(auth_api.router)
+app.include_router(conversations_api.router)
+app.include_router(chat_api.router)
+app.include_router(voice_api.router)
+app.include_router(memory_api.router)
+
+# Templates
+try:
+    templates = Jinja2Templates(directory="app/templates")
+except Exception:
+    templates = None
+
+
+# Health endpoints
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "LiteMindUI API"}
+
+
+@app.get("/health/ready")
+async def readiness_check():
+    """Container readiness check"""
+    try:
+        status = {"status": "ready", "timestamp": time.time(), "checks": {}}
+
+        # Check RAG service
+        if rag_service is None:
+            status["checks"]["rag_service"] = {"status": "failed", "error": "Not initialized"}
+            status["status"] = "not_ready"
+        else:
+            status["checks"]["rag_service"] = {"status": "ready"}
+
+        # Check directories
+        critical_dirs = [UPLOAD_FOLDER]
+        for dir_path in critical_dirs:
+            if dir_path.exists() and os.access(dir_path, os.R_OK | os.W_OK):
+                status["checks"][dir_path.name] = {"status": "ready", "path": str(dir_path)}
+            else:
+                status["checks"][dir_path.name] = {"status": "failed", "path": str(dir_path)}
+                status["status"] = "not_ready"
+
+        return status if status["status"] == "ready" else JSONResponse(status_code=503, content=status)
+
+    except Exception:
+        logger.exception("Readiness check failed")
+        return JSONResponse(status_code=503, content={"status": "error", "error": "Readiness check failed"})
+
+
+def _get_ollama_url() -> str:
+    """Resolve the Ollama base URL from config / host service manager."""
+    try:
+        from backend.app.services.host_service_manager import host_service_manager
+
+        return host_service_manager.environment_config.ollama_url
+    except ImportError:
+        return Config.OLLAMA_API_URL
+
+
+# Model endpoints
+@app.get("/models")
+async def get_available_models():
+    """Get available Ollama models (flat list, backwards-compatible)."""
+    try:
+        ollama_url = _get_ollama_url()
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{ollama_url}/api/tags")
+            resp.raise_for_status()
+            data = resp.json()
+            return {"models": [model["name"] for model in data.get("models", [])]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not fetch models: {str(e)}")
+
+
+@app.get("/models/enhanced")
+async def get_enhanced_models():
+    """Return local models (with metadata) + cloud catalog with availability flags."""
+    ollama_url = _get_ollama_url()
+    return await build_enhanced_model_payload(ollama_url)
+
+
+# NOTE: Chat endpoints have been moved to app/backend/api/chat.py
+# They are included via router above to support web search functionality
+# The following endpoints are now available via the router:
+#   - POST /api/chat/ (single message)
+#   - POST /api/chat/stream (streaming)
+#   - POST /api/chat/web-search (web search with streaming)
+#   - GET  /api/chat/serp-status (SerpAPI token status)
+
+
+# RAG endpoints
+@app.get("/api/rag/status")
+async def get_rag_status():
+    """Get RAG system status"""
+    try:
+        if not rag_service:
+            return {"status": "not_initialized", "documents": 0, "chunks": 0}
+
+        uploaded_files = len([f for f in UPLOAD_FOLDER.iterdir() if f.is_file()])
+
+        collection_count = 0
+        try:
+            if getattr(rag_service, "text_collection", None):
+                collection_count = rag_service.text_collection.count()
+        except Exception:
+            pass
+
+        return {
+            "status": "ready",
+            "uploaded_files": uploaded_files,
+            "indexed_chunks": collection_count,
+            "bm25_corpus_size": len(rag_service.bm25_corpus) if rag_service.bm25_corpus else 0,
+        }
+    except Exception:
+        logger.exception("Failed to get RAG status")
+        return {"status": "error", "message": "Failed to retrieve RAG status"}
+
+
+@app.post("/api/rag/save_config")
+async def save_rag_config(request: RAGConfigRequest):
+    """Save RAG configuration"""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        # Save configuration
+        cfg = load_rag_config()
+        normalized_provider = resolve_embedding_provider(request.provider, request.embedding_backend)
+        cfg.update(
+            {
+                "provider": normalized_provider,
+                "embedding_model": request.embedding_model,
+                "embedding_backend": None,
+                "embedding_api_base": (
+                    request.embedding_api_base if normalized_provider in {"openrouter", "nvidia_nim"} else None
+                ),
+                "chunk_size": int(request.chunk_size),
+            }
+        )
+        save_rag_config_local(cfg)
+
+        current_config = Config.get_dynamic_config()
+        rag_service.embedding_function = create_embedding_function(
+            normalized_provider,
+            request.embedding_model,
+            current_config["ollama_url"],
+            api_base=request.embedding_api_base,
+            api_key=request.embedding_api_key,
+        )
+
+        rag_service.default_chunk_size = int(request.chunk_size)
+
+        return {"message": "Configuration saved successfully", "status": "success"}
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Save config error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save configuration: {str(e)}")
+
+
+@app.post("/api/rag/upload")
+async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form(500)):
+    """Upload and process files for RAG"""
+    if not rag_service:
+        raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+    results = []
+    saved_paths = []
+
+    # Validate number of files
+    if len(files) > 50:
+        raise HTTPException(status_code=400, detail="Too many files. Maximum 50 files per upload.")
+
+    # Save files and check for duplicates
+    for up in files:
+        try:
+            # Validate file size
+            await validate_file_size(up)
+
+            # Sanitize filename to prevent path traversal
+            safe_filename = sanitize_filename(up.filename or "")
+        except ValueError:
+            logger.exception("Filename validation failed for upload: %s", up.filename)
+            results.append(
+                {
+                    "filename": up.filename,
+                    "status": "error",
+                    "message": "Invalid filename",
+                    "chunks_created": 0,
+                }
+            )
+            continue
+        except HTTPException as e:
+            results.append(
+                {
+                    "filename": up.filename,
+                    "status": "error",
+                    "message": str(getattr(e, "detail", e)),
+                    "chunks_created": 0,
+                }
+            )
+            continue
+
+        # Save file with sanitized name
+        dest = UPLOAD_FOLDER / safe_filename
+
+        # Additional security check: ensure dest is within UPLOAD_FOLDER
+        try:
+            dest_resolved = dest.resolve()
+            upload_resolved = UPLOAD_FOLDER.resolve()
+            if not str(dest_resolved).startswith(str(upload_resolved)):
+                raise ValueError("Path traversal attempt detected")
+        except (ValueError, OSError, RuntimeError):
+            logger.exception("Security validation failed for upload path: %s", up.filename)
+            results.append(
+                {
+                    "filename": up.filename,
+                    "status": "error",
+                    "message": "Security validation failed",
+                    "chunks_created": 0,
+                }
+            )
+            continue
+
+        with open(dest, "wb") as f:
+            f.write(await up.read())
+
+        # Check for duplicates using the saved file path
+        is_duplicate, reason = rag_service._is_file_already_processed(str(dest), safe_filename)
+
+        if is_duplicate:
+            dest.unlink(missing_ok=True)
+            results.append({"filename": up.filename, "status": "duplicate", "message": reason, "chunks_created": 0})
+            continue
+
+        saved_paths.append((dest, up.filename))
+
+    # Process files
+    async def process_files():
+        sem = asyncio.Semaphore(2)
+
+        async def process_one(path_info):
+            async with sem:
+                path, filename = path_info
+                try:
+                    if rag_service is not None:
+                        result = await rag_service.add_document(str(path), filename, chunk_size=chunk_size)
+                        results.append(
+                            {
+                                "filename": filename,
+                                **(
+                                    result
+                                    or {"status": "success", "message": f"Processed {filename}", "chunks_created": 0}
+                                ),
+                            }
+                        )
+                except Exception:
+                    logger.exception("Failed to process uploaded file: %s", filename)
+                    results.append(
+                        {"filename": filename, "status": "error", "message": "Failed to process file", "chunks_created": 0}
+                    )
+
+        if saved_paths:
+            await asyncio.gather(*(process_one(path_info) for path_info in saved_paths))
+
+    await process_files()
+
+    # Summary
+    successful = [r for r in results if r["status"] == "success"]
+    duplicates = [r for r in results if r["status"] == "duplicate"]
+    errors = [r for r in results if r["status"] == "error"]
+
+    return {
+        "status": "completed",
+        "summary": {
+            "total_files": len(files),
+            "successful": len(successful),
+            "duplicates": len(duplicates),
+            "errors": len(errors),
+            "total_chunks_created": sum(r.get("chunks_created", 0) for r in successful),
+        },
+        "results": results,
+    }
+
+
+@app.post("/api/rag/check-duplicates")
+async def check_file_duplicates(request: RagDuplicateCheckRequest):
+    """Check if an uploaded file is a duplicate without processing it.
+
+    The frontend pre-flight sends the filename as JSON; we do a filename-based
+    duplicate check against already-processed files. Content-hash duplicates are
+    still caught at upload time, so this only prevents redundant uploads of the
+    same filename.
+    """
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        filename = request.filename
+        if not filename:
+            raise HTTPException(status_code=400, detail="filename is required")
+
+        # Sanitize to mirror the check used during upload
+        safe_filename = sanitize_filename(filename)
+
+        # Pre-flight check: the file is not on disk yet, so only do the
+        # filename-based duplicate check (no file-system access). Content-hash
+        # duplicates are still caught at upload time.
+        is_duplicate, reason = rag_service._is_filename_already_processed(safe_filename)
+
+        return {
+            "is_duplicate": is_duplicate,
+            "filename": filename,
+            "message": reason if is_duplicate else "",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking duplicates: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to check duplicates: {str(e)}")
+
+
+@app.post("/api/rag/reset")
+async def reset_rag_system():
+    """Reset RAG system"""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        # Clear files
+        files_removed = 0
+        for file_path in UPLOAD_FOLDER.iterdir():
+            if file_path.is_file():
+                file_path.unlink()
+                files_removed += 1
+
+        await rag_service.reset_system()
+
+        return {
+            "status": "success",
+            "message": f"RAG system reset. Removed {files_removed} files.",
+            "files_removed": files_removed,
+        }
+    except Exception as e:
+        logger.error(f"Reset error: {e}")
+        raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
+
+
+@app.get("/api/rag/files")
+async def list_rag_files():
+    """List the files currently in the knowledge base."""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        files = []
+        for path in sorted(UPLOAD_FOLDER.iterdir()):
+            if not path.is_file():
+                continue
+            chunks = 0
+            info = rag_service.processed_files.get(path.name)
+            if info:
+                chunks = info.get("chunk_count", 0)
+            files.append(
+                {
+                    "filename": path.name,
+                    "size": path.stat().st_size,
+                    "chunks": chunks,
+                }
+            )
+
+        return {"files": files}
+    except Exception as e:
+        logger.error(f"List RAG files error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
+
+@app.delete("/api/rag/files/{filename}")
+async def delete_rag_file(filename: str):
+    """Delete a single file from the knowledge base."""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        try:
+            safe_filename = sanitize_filename(filename)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Require exact canonical filename form from clients.
+        if safe_filename != filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        # Resolve the target from the trusted directory listing rather than
+        # constructing the path from the user-supplied name. The matched entry
+        # is a real path returned by the OS and is gated only by a basename
+        # comparison, so the filesystem sink contains no caller-controlled path
+        # component -- this removes any path-injection from the request.
+        upload_resolved = UPLOAD_FOLDER.resolve()
+        target: Path | None = None
+        for entry in upload_resolved.iterdir():
+            if entry.is_file() and not entry.is_symlink() and entry.name == safe_filename:
+                target = entry
+                break
+
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
+
+        target.unlink()
+
+        # Remove from the RAG index (ChromaDB + BM25). This is a no-op if the
+        # file was never successfully indexed.
+        rag_service.remove_processed_file(safe_filename)
+
+        return {
+            "message": f"Deleted '{filename}'.",
+            "filename": filename,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete RAG file error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
+
+
+@app.post("/api/rag/query")
+async def rag_query(request: RAGQueryRequestEnhanced, user: User = Depends(get_current_user)):
+    """Query RAG system (requires authentication)."""
+    try:
+        if not rag_service:
+            raise HTTPException(status_code=503, detail="RAG service not initialized")
+
+        skill = rag_skill_registry.resolve(request)
+        if skill is None:
+            raise HTTPException(status_code=400, detail="No compatible RAG skill found for request")
+
+        from backend.app.services.user_memory_service import load_memory_block
+
+        memory_block = await load_memory_block(user.id)
+
+        async def event_generator():
+            logger.info("Routing RAG query through skill '%s'", skill.name)
+            async for chunk in skill.stream(request, rag_service, memory_block=memory_block):
+                yield chunk + "\n"
+
+        return StreamingResponse(event_generator(), media_type="text/plain")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"RAG query error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Speech-to-Text endpoints
+@app.post("/api/stt/transcribe")
+async def transcribe_audio(request: STTRequest):
+    """Transcribe audio data"""
+    try:
+        import base64
+
+        audio_bytes = base64.b64decode(request.audio_data)
+        speech_service = get_speech_service()
+        transcription = speech_service.transcribe_audio(audio_bytes, request.sample_rate or 16000)
+
+        return {
+            "status": "success" if transcription else "error",
+            "transcription": transcription or "",
+            "length": len(transcription) if transcription else 0,
+        }
+    except Exception as e:
+        logger.error(f"STT error: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+# Text-to-Speech endpoints
+@app.post("/api/tts/synthesize")
+async def synthesize_speech(request: TTSRequest):
+    """Convert text to speech audio."""
+    try:
+        logger.info(f"TTS request received: text_length={len(request.text) if request.text else 0}")
+        tts_service = get_tts_service()
+
+        if not tts_service.is_available():
+            logger.error("TTS service not available")
+            raise HTTPException(
+                status_code=503, detail="TTS service not available. Please check if required packages are installed."
+            )
+
+        logger.info(f"TTS service status: {tts_service.get_status()}")
+
+        audio_data, content_type = await tts_service.synthesize(
+            request.text, request.voice, request.use_cache if request.use_cache is not None else True
+        )
+
+        if not audio_data:
+            logger.error("TTS synthesis returned no audio data")
+            raise HTTPException(status_code=500, detail="Failed to generate speech audio")
+
+        logger.info(f"TTS synthesis successful: {len(audio_data)} bytes, type={content_type}")
+
+        # Return audio as a regular Response with proper headers
+        return Response(
+            content=audio_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": "inline; filename=speech.mp3",
+                "Content-Length": str(len(audio_data)),
+                "Cache-Control": "public, max-age=3600",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"TTS error: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Speech synthesis failed: {str(e)}")
+
+
+@app.get("/api/tts/voices")
+async def get_tts_voices():
+    """Get list of available TTS voices."""
+    try:
+        tts_service = get_tts_service()
+        return {"voices": tts_service.get_available_voices(), "default": "en-US-AriaNeural"}
+    except Exception as e:
+        logger.error(f"Failed to get TTS voices: {e}")
+        return {"voices": [], "default": None}
+
+
+@app.get("/api/tts/status")
+async def get_tts_status():
+    """Get TTS service status."""
+    try:
+        tts_service = get_tts_service()
+        return tts_service.get_status()
+    except Exception:
+        logger.exception("Failed to get TTS status")
+        return {"available": False, "error": "Failed to retrieve TTS status"}
+
+
+@app.post("/api/tts/synthesize-chunk")
+async def synthesize_chunk(request: TTSRequest):
+    """
+    Synthesize a single text chunk to speech.
+
+    This endpoint is optimized for streaming scenarios where you want to
+    synthesize text sentence by sentence as it arrives from the LLM.
+    """
+    try:
+        tts_service = get_tts_service()
+
+        if not tts_service.is_available():
+            raise HTTPException(status_code=503, detail="TTS service not available")
+
+        # Use synchronous chunk synthesis for lower latency
+        loop = asyncio.get_running_loop()
+        audio_data = await loop.run_in_executor(None, tts_service.synthesize_text_chunk, request.text, request.voice)
+
+        if not audio_data:
+            raise HTTPException(status_code=500, detail="Failed to generate speech audio")
+
+        # Determine content type based on audio format
+        content_type = "audio/wav"  # Kokoro outputs WAV
+        if audio_data[:4] != b"RIFF":
+            content_type = "audio/mpeg"  # Edge TTS outputs MP3
+
+        return Response(
+            content=audio_data,
+            media_type=content_type,
+            headers={"Content-Length": str(len(audio_data)), "Cache-Control": "no-cache"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"TTS chunk error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stt/status")
+async def get_stt_status():
+    """Get STT service status."""
+    try:
+        speech_service = get_speech_service()
+        return speech_service.get_status()
+    except Exception as e:
+        logger.error(f"Failed to get STT status: {e}")
+        return {"available": False, "error": "Unable to retrieve STT status"}
+
+
+# Utility functions
+async def process_llm_request(message: str, model: str, temperature: float) -> str:
+    """Process single LLM request"""
+    messages = [{"role": "user", "content": message}]
+    response = ""
+    async for chunk in stream_ollama(messages, model=model, temperature=temperature):
+        response += chunk
+    return response
+
+
+# Error handlers
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    return JSONResponse(status_code=404, content={"error": "Endpoint not found", "path": str(request.url.path)})
+
+
+@app.exception_handler(500)
+async def internal_error_handler(request: Request, exc):
+    return JSONResponse(status_code=500, content={"error": "Internal server error", "detail": str(exc)})
+
+
+# Server runner
+def run():
+    """Run the server with graceful shutdown"""
+    config = uvicorn.Config(
+        "backend.main:app", host="localhost", port=8000, reload=bool(int(os.getenv("RELOAD", "0"))), log_level="info"
+    )
+    server = uvicorn.Server(config)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    stop_event = asyncio.Event()
+
+    def handle_exit(*_args):
+        logger.info("Received exit signal")
+        stop_event.set()
+
+    # Signal handling
+    signals = [signal.SIGINT]
+    if hasattr(signal, "SIGTERM"):
+        signals.append(signal.SIGTERM)
+
+    for sig in signals:
+        try:
+            loop.add_signal_handler(sig, handle_exit)
+        except (NotImplementedError, RuntimeError):
+            signal.signal(sig, lambda s, f: stop_event.set())
+
+    # Windows keyboard handling
+    def keyboard_watcher():
+        try:
+            while not stop_event.is_set():
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            stop_event.set()
+
+    if sys.platform.startswith("win"):
+        threading.Thread(target=keyboard_watcher, daemon=True).start()
+
+    async def main():
+        server_task = loop.create_task(server.serve())
+        await stop_event.wait()
+        server.should_exit = True
+        await server_task
+
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logger.info("Shutting down gracefully...")
+    finally:
+        logger.info("Server stopped")
+
+
+if __name__ == "__main__":
+    run()

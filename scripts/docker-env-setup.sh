@@ -82,11 +82,11 @@ validate_environment() {
 set_environment_files() {
     case "$ENVIRONMENT" in
         "development")
-            COMPOSE_FILE="docker-compose.dev.yml"
+            COMPOSE_FILE="infra/docker/compose/docker-compose.dev.yml"
             ENV_FILE=".env.development"
             ;;
         "production")
-            COMPOSE_FILE="docker-compose.prod.yml"
+            COMPOSE_FILE="infra/docker/compose/docker-compose.prod.yml"
             ENV_FILE=".env.production"
             ;;
     esac

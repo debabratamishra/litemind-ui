@@ -11,7 +11,7 @@ No model is downloaded and no network call is made:
 """
 import pytest
 
-from app.backend.core import embeddings
+from backend.app.backend.core import embeddings
 
 
 def test_resolve_embedding_provider_unknown_raises():

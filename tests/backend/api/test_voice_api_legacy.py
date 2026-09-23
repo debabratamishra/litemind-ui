@@ -2,12 +2,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.auth_deps import User, get_current_user
 
 
 @pytest.fixture
 def client(monkeypatch):
-    import app.backend.api.voice as voice_mod
+    import backend.app.backend.api.voice as voice_mod
 
     calls = {}
 
@@ -58,7 +58,7 @@ def test_offer_creates_connection(client):
     body = resp.json()
     assert body["pc_id"] == "test-pc"
     assert body["type"] == "answer"
-    import app.backend.api.voice as voice_mod
+    import backend.app.backend.api.voice as voice_mod
 
     assert "test-pc" in voice_mod.pcs_map
 

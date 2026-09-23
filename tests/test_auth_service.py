@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from app.backend.api import auth_service
+from backend.app.backend.api import auth_service
 
 
 def _mock_handler(request):

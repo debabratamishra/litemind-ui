@@ -9,8 +9,8 @@ so no live PostgreSQL or GoTrue is needed.
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.api.auth_deps import User, get_current_user
-from app.backend.api.conversations import get_store, router
+from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.conversations import get_store, router
 from tests.test_conversation_store import FakeStore
 
 

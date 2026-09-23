@@ -14,8 +14,8 @@ RAG without any signal.
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.skills.rag import MultiAgentRAGSkill, StandardRAGSkill
-from app.skills.registry import RAGSkillRegistry
+from backend.app.skills.rag import MultiAgentRAGSkill, StandardRAGSkill
+from backend.app.skills.registry import RAGSkillRegistry
 
 
 def _make_request(**overrides) -> SimpleNamespace:

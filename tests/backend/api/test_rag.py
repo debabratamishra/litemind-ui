@@ -1,10 +1,10 @@
 """Unit tests for ``app/backend/api/rag.py`` route handlers.
 
-The RAG router is **not** mounted in ``main.app`` (the RAG endpoints served by
-the running app are duplicated inline in ``main.py``). To exercise the real
+The RAG router is **not** mounted in ``backend.main.app`` (the RAG endpoints served by
+the running app are duplicated inline in ``backend.main.py``). To exercise the real
 ``app/backend/api/rag.py`` handlers we mount that router on a throwaway
 ``FastAPI`` app. The skill layer (``rag_skill_registry``) and the RAG service
-(``main.rag_service``) are mocked at their boundaries so no ChromaDB / model /
+(``backend.main.rag_service``) are mocked at their boundaries so no ChromaDB / model /
 network access occurs.
 """
 
@@ -15,8 +15,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import main
-from app.backend.api import rag as rag_api
+import backend.main
+from backend.app.backend.api import rag as rag_api
 
 
 def _make_fake_skill(name="standard", chunks=("doc chunk one", "doc chunk two")):
@@ -32,10 +32,10 @@ def _make_fake_skill(name="standard", chunks=("doc chunk one", "doc chunk two"))
 
 @pytest.fixture
 def rag_client(monkeypatch, tmp_path):
-    # The router's endpoints read ``rag_service`` lazily via ``from main import
+    # The router's endpoints read ``rag_service`` lazily via ``from backend.main import
     # rag_service``; provide a mocked, truthy service.
     rag_service = MagicMock()
-    main.rag_service = rag_service
+    backend.main.rag_service = rag_service
 
     registry = MagicMock()
     monkeypatch.setattr(rag_api, "rag_skill_registry", registry)
@@ -86,7 +86,7 @@ def test_rag_query_passes_rag_service_to_skill(rag_client):
 
     resp = client.post("/api/rag/query", json={"query": "q"})
     assert resp.status_code == 200
-    # The real ``main.rag_service`` mock must be threaded into the skill.
+    # The real ``backend.main.rag_service`` mock must be threaded into the skill.
     assert captured["svc"] is rag_service
 
 
@@ -101,8 +101,8 @@ def test_rag_query_no_matching_skill_returns_400(rag_client):
 
 def test_rag_query_service_uninitialized_returns_503(rag_client, monkeypatch):
     client, registry, _ = rag_client
-    # Force the lazy ``from main import rag_service`` lookup to be falsy.
-    monkeypatch.setattr(main, "rag_service", None)
+    # Force the lazy ``from backend.main import rag_service`` lookup to be falsy.
+    monkeypatch.setattr(backend.main, "rag_service", None)
 
     resp = client.post("/api/rag/query", json={"query": "q"})
     assert resp.status_code == 503
@@ -187,7 +187,7 @@ def test_rag_upload_rejects_disallowed_extension(rag_client):
 
 def test_rag_upload_service_uninitialized_returns_503(rag_client, monkeypatch):
     client, registry, _ = rag_client
-    monkeypatch.setattr(main, "rag_service", None)
+    monkeypatch.setattr(backend.main, "rag_service", None)
 
     resp = client.post("/api/rag/upload", files=[_upload_file("doc.txt")])
     assert resp.status_code == 503

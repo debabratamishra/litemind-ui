@@ -10,8 +10,8 @@ fixed fixture dict. The real ``OLLAMA_API_URL`` environment wiring is exercised 
 import os
 from pathlib import Path
 
-import config as app_config
-from app.backend.core.config import DEFAULT_RAG_CONFIG, BackendConfig
+import backend.config as app_config
+from backend.app.backend.core.config import DEFAULT_RAG_CONFIG, BackendConfig
 
 
 def _fixed_dynamic_config() -> dict:

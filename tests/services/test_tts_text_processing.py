@@ -12,7 +12,7 @@ function (``_clean_text_for_tts``) lives on ``TTSService`` in
 helper directly, which is the real, correct surface to assert against.
 """
 
-from app.services import tts_text_processing as ttp
+from backend.app.services import tts_text_processing as ttp
 
 
 # ── sentence splitting ────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 """Unit tests for ``app/backend/api/voice.py`` (WebRTC SDP offer endpoint).
 
-The voice route is mounted in ``main.app``, so we test it there. The WebRTC
+The voice route is mounted in ``backend.main.app``, so we test it there. The WebRTC
 peer connection (``SmallWebRTCConnection``) and the Pipecat pipeline runner
 (``run_voice_pipeline``) are mocked at their boundaries, so no real WebRTC /
 Pipecat / network activity occurs offline.
@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.backend.api import voice as voice_api
-from app.backend.api.auth_deps import User, get_current_user
-from main import app
+from backend.app.backend.api import voice as voice_api
+from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.main import app
 
 # Voice offer now requires authentication; satisfy it for these unit tests.
 app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@x.com")

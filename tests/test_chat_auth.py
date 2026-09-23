@@ -9,8 +9,8 @@ injected via dependency override. LLM calls are stubbed so no model is needed.
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.api import chat as chat_api
-from app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api import chat as chat_api
+from backend.app.backend.api.auth_deps import User, get_current_user
 
 
 def _make_app(authed: bool):

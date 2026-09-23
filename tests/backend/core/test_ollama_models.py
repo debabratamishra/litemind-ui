@@ -7,7 +7,7 @@ request is made, and assert the function returns the expected ``local_models`` /
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.backend.core import ollama_models
+from backend.app.backend.core import ollama_models
 
 
 async def test_build_enhanced_model_payload():

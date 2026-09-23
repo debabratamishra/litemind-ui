@@ -7,7 +7,7 @@ optional-field behaviour, and required-field validation.
 import pydantic
 import pytest
 
-from app.backend.models.api_models import (
+from backend.app.backend.models.api_models import (
     ChatMessage,
     ChatRequestEnhanced,
     ChatResponse,

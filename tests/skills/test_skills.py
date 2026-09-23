@@ -10,10 +10,10 @@ from types import SimpleNamespace
 from typing import AsyncIterator
 from unittest.mock import patch
 
-from app.skills.base import SkillValidationResult
-from app.skills.rag import MultiAgentRAGSkill, StandardRAGSkill
-from app.skills.registry import ChatSkillRegistry, RAGSkillRegistry
-from app.skills.web_search import (
+from backend.app.skills.base import SkillValidationResult
+from backend.app.skills.rag import MultiAgentRAGSkill, StandardRAGSkill
+from backend.app.skills.registry import ChatSkillRegistry, RAGSkillRegistry
+from backend.app.skills.web_search import (
     WebSearchChatSkill,
     build_web_search_conversation_history,
 )

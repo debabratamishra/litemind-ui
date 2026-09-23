@@ -12,9 +12,9 @@ import types
 
 from fastapi.responses import JSONResponse
 
-from app.backend.api import health
-from app.backend.core import config as backend_config_module
-from app.backend.models.api_models import HealthResponse
+from backend.app.backend.api import health
+from backend.app.backend.core import config as backend_config_module
+from backend.app.backend.models.api_models import HealthResponse
 
 
 async def test_health_check_returns_healthy():
@@ -30,9 +30,9 @@ async def test_readiness_check_ready(tmp_path, monkeypatch):
     st.mkdir()
 
     # Stub the RAG service so the import of ``main`` is never exercised.
-    fake_main = types.ModuleType("main")
+    fake_main = types.ModuleType("backend.main")
     setattr(fake_main, "rag_service", object())  # non-None => initialised
-    monkeypatch.setitem(sys.modules, "main", fake_main)
+    monkeypatch.setitem(sys.modules, "backend.main", fake_main)
 
     monkeypatch.setattr(backend_config_module.backend_config, "upload_folder", up)
     monkeypatch.setattr(backend_config_module.backend_config, "storage_dir", st)
@@ -51,9 +51,9 @@ async def test_readiness_check_rag_unavailable(tmp_path, monkeypatch):
     up.mkdir()
     st.mkdir()
 
-    fake_main = types.ModuleType("main")
+    fake_main = types.ModuleType("backend.main")
     setattr(fake_main, "rag_service", None)  # not initialised
-    monkeypatch.setitem(sys.modules, "main", fake_main)
+    monkeypatch.setitem(sys.modules, "backend.main", fake_main)
 
     monkeypatch.setattr(backend_config_module.backend_config, "upload_folder", up)
     monkeypatch.setattr(backend_config_module.backend_config, "storage_dir", st)
@@ -75,9 +75,9 @@ async def test_readiness_check_dir_not_writable(tmp_path, monkeypatch):
     up.mkdir()
     st.mkdir()
 
-    fake_main = types.ModuleType("main")
+    fake_main = types.ModuleType("backend.main")
     setattr(fake_main, "rag_service", object())
-    monkeypatch.setitem(sys.modules, "main", fake_main)
+    monkeypatch.setitem(sys.modules, "backend.main", fake_main)
 
     monkeypatch.setattr(backend_config_module.backend_config, "upload_folder", up)
     monkeypatch.setattr(backend_config_module.backend_config, "storage_dir", st)

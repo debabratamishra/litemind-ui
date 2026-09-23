@@ -7,8 +7,7 @@
 
 # CI/CD and Docker configurations
 .github/ @debabratamishra
-docker-compose*.yml @debabratamishra
-Dockerfile* @debabratamishra
+infra/docker/** @debabratamishra
 scripts/ @debabratamishra
 
 # Release and version management

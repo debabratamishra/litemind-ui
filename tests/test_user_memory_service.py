@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import app.services.user_memory_service as ums
-from app.services.user_memory_service import (
+import backend.app.services.user_memory_service as ums
+from backend.app.services.user_memory_service import (
     MAX_MEMORY_OPS_PER_TURN,
     apply_memory_ops,
     build_memory_block,

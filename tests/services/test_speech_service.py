@@ -22,8 +22,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-import app.services.speech_service as ss
-from app.services.speech_service import SpeechService, get_speech_service, preload_stt_model
+import backend.app.services.speech_service as ss
+from backend.app.services.speech_service import SpeechService, get_speech_service, preload_stt_model
 
 
 class _FakeWhisperPipe:

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ingestion import file_ingest as fi
+from backend.app.ingestion import file_ingest as fi
 
 
 # ── _guess_mime ────────────────────────────────────────────────────────────

@@ -14,8 +14,8 @@ synthesis streaming, and the fallback-to-base-LLM paths.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services import web_search_crew as wsc
-from app.services.web_search_crew import WebSearchOrchestrator
+from backend.app.services import web_search_crew as wsc
+from backend.app.services.web_search_crew import WebSearchOrchestrator
 
 
 def _fake_stream(chunks):
