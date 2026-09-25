@@ -75,6 +75,42 @@ async def test_shutdown_does_not_reset_rag_system(monkeypatch):
     rag_service.reset_system.assert_not_awaited()
 
 
+async def test_lifespan_shutdown_does_not_reset_rag_system(monkeypatch, tmp_path):
+    """Drive the whole lifespan, so every shutdown path is covered.
+
+    The helper test above pins ``_shutdown_cleanup`` only: re-adding
+    ``reset_system()`` *inline in lifespan* would slip past it. This test runs
+    startup and shutdown end to end with the startup side-effects faked out, so
+    the call cannot come back anywhere in the shutdown path without failing here.
+    """
+    rag_service = MagicMock()
+    rag_service.reset_system = AsyncMock()
+    memory_store = MagicMock()
+    memory_store.init_schema = AsyncMock()
+    config_info = {
+        "is_containerized": False,
+        "storage_dir": str(tmp_path),
+        "ollama_url": "http://localhost:11434",
+    }
+
+    # Patching the module global records its old value, so teardown restores
+    # whatever lifespan rebinds it to.
+    monkeypatch.setattr(main_module, "rag_service", rag_service)
+    monkeypatch.setattr(main_module, "RAGService", lambda: rag_service)
+    monkeypatch.setattr(main_module, "UPLOAD_FOLDER", tmp_path / "uploads")
+    monkeypatch.setattr(main_module, "load_rag_config", lambda: dict(main_module.DEFAULT_RAG_CONFIG))
+    monkeypatch.setattr(main_module, "create_embedding_function", MagicMock())
+    monkeypatch.setattr(main_module, "get_user_memory_store", lambda: memory_store)
+    monkeypatch.setattr(main_module.Config, "get_dynamic_config", classmethod(lambda cls: dict(config_info)))
+    monkeypatch.setenv("PRELOAD_SPEECH_MODELS", "0")
+
+    app = FastAPI()
+    async with main_module.lifespan(app):
+        assert app.state.start_time > 0
+
+    rag_service.reset_system.assert_not_awaited()
+
+
 # --------------------------------------------------------------------------- #
 # Root compatibility shim
 # --------------------------------------------------------------------------- #
