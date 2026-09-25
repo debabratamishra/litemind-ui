@@ -1,6 +1,10 @@
 # Docker guide
 
-The main Docker documentation now lives in [`docs/docker/README.md`](docs/docker/README.md).
+The canonical Docker definitions live under `infra/docker/`:
+
+- `infra/docker/Dockerfile` — FastAPI backend image
+- `infra/docker/Dockerfile.nextjs` — Next.js frontend image
+- `infra/docker/compose/` — supported Compose workflows
 
 Most users only need one of these commands:
 
@@ -11,4 +15,4 @@ make prod
 make hub-up
 ```
 
-For publishing and release automation, see [`docs/docker/publishing.md`](docs/docker/publishing.md).
+See [`docs/docker/README.md`](docs/docker/README.md) for the Compose layout, environment setup, persistence, and direct Compose examples.

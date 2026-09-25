@@ -6,6 +6,8 @@
 # Docker
 Dockerfile*
 docker-compose*.yml
+!infra/docker/
+!infra/docker/**
 .dockerignore
 
 # Documentation

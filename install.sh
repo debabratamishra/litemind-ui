@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 REPO_NAME="litemind-ui"
-COMPOSE_FILE="docker-compose.hub.yml"
+COMPOSE_FILE="infra/docker/compose/docker-compose.hub.yml"
 SETUP_SCRIPT="scripts/docker-setup.sh"
 
 print_banner() {
@@ -84,7 +84,7 @@ download_files() {
     cd "$REPO_NAME"
     
     # Download docker-compose file
-    if ! curl -fsSL "https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/docker-compose.hub.yml" -o "$COMPOSE_FILE"; then
+    if ! curl -fsSL "https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/infra/docker/compose/docker-compose.hub.yml" -o "$COMPOSE_FILE"; then
         echo -e "${RED}❌ Failed to download docker-compose file${NC}"
         exit 1
     fi
@@ -169,7 +169,7 @@ start_services() {
             echo -e "${YELLOW}⚠️  Backend may still be starting up${NC}"
         fi
         
-        if curl -f http://localhost:8501 > /dev/null 2>&1; then
+        if curl -f http://localhost:3000 > /dev/null 2>&1; then
             echo -e "${GREEN}✅ Frontend is healthy${NC}"
         else
             echo -e "${YELLOW}⚠️  Frontend may still be starting up${NC}"
@@ -185,7 +185,7 @@ show_next_steps() {
     echo -e "${BLUE}"
     echo "📖 Next Steps:"
     echo ""
-    echo "1. Open your browser and go to http://localhost:8501"
+    echo "1. Open your browser and go to http://localhost:3000"
     echo "2. Explore the Chat and RAG features"
     echo "3. For Ollama support, install Ollama locally and ensure it's running"
     echo ""

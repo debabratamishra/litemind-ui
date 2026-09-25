@@ -310,4 +310,4 @@ anyio_mode = "auto"
 testpaths = ["tests"]
 # Coverage is reported for visibility; there is intentionally NO fail_under
 # gate (the goal is comprehensive per-module tests, not a hard percentage).
-addopts = "--cov=app --cov-report=term-missing"
+addopts = "--cov=backend --cov-report=term-missing"
