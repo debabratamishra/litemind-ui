@@ -1,6 +1,6 @@
-# Build and deploy the LiteMindUI GitHub Pages site from the `site/` folder.
+# Build and deploy the LiteMindUI GitHub Pages site from the `docs/site/` folder.
 #
-# The site source lives in `site/` (Jekyll _config.yml, layouts, pages, assets).
+# The site source lives in `docs/site/` (Astro pages, layouts, and assets).
 # Publishing is driven by this workflow (not the legacy "deploy from a branch"
 # setting), so edits to the site are maintained on `main` like the rest of the
 # codebase.
@@ -10,7 +10,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "site/**"
+      - "docs/site/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -43,13 +43,13 @@ jobs:
       - name: Build with Astro
         uses: withastro/action@v3
         with:
-          path: site
+          path: docs/site
           node-version: '22'
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site/dist
+          path: docs/site/dist
           name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
 
   deploy:

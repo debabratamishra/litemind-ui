@@ -1,4 +1,4 @@
-"""Unit tests for app/ingestion/file_ingest.py.
+"""Unit tests for backend/app/ingestion/file_ingest.py.
 
 These tests cover the pure logic of the ingestion pipeline (format/MIME
 detection, text normalisation, chunking strategies) and the offline-safe
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ingestion import file_ingest as fi
+from backend.app.ingestion import file_ingest as fi
 
 
 # ── _guess_mime ────────────────────────────────────────────────────────────

@@ -69,21 +69,21 @@
 
 ### 2.7 Configuration
 - All runtime configuration goes through `config.py` (`Config` class) or
-  `app/backend/core/config.py` (`BackendConfig`).
+  `backend/app/backend/core/config.py` (`BackendConfig`).
 - Never hard-code URLs, file paths, secrets, or numeric thresholds in business logic.
 - New environment variables must be added to `.env.example` with a description comment.
 
 ### 2.8 Pydantic models
-- Request and response models live in `app/backend/models/`.
+- Request and response models live in `backend/app/backend/models/`.
 - Use `Optional[X] = None` (or `X | None = None`) for truly optional fields.
 - Validate and sanitise at the model boundary — do not re-validate downstream.
 
 ### 2.9 Security
 - All uploaded file names must pass through `sanitize_filename()` from
-  `app/backend/api/security_utils.py`.
+  `backend/app/backend/api/security_utils.py`.
 - All uploaded file sizes must be validated with `validate_file_size()`.
 - Use parameterised queries for all database operations (SQLAlchemy ORM or `?` placeholders).
-- CORS origins are configured in `main.py`; do not widen them without approval.
+- CORS origins are configured in `backend/main.py`; do not widen them without approval.
 
 ---
 
@@ -152,12 +152,12 @@
 ## 5. Architecture constraints
 
 ### 5.1 Skill layer
-- New chat or RAG capabilities **must** be implemented as Skills (`app/skills/`).
+- New chat or RAG capabilities **must** be implemented as Skills (`backend/app/skills/`).
 - Never add conditional capability logic directly inside route handlers.
 - Skills are resolved by the registry in priority order; the first `supports()` match wins.
 
 ### 5.2 LLM gateway
-- All LLM calls go through `app/services/llm_gateway.py`.
+- All LLM calls go through `backend/app/services/llm_gateway.py`.
 - Never call Ollama, OpenRouter, or Nvidia NIM APIs directly from route handlers or Skills.
 - New providers require a new case in `resolve_backend_config()` and corresponding streaming logic.
 
@@ -167,17 +167,17 @@
 - Hybrid search (vector + BM25) is on by default; do not remove it.
 
 ### 5.4 Document ingestion
-- All document processing goes through `app/ingestion/file_ingest.py`.
+- All document processing goes through `backend/app/ingestion/file_ingest.py`.
 - Format detection must be by MIME type or magic bytes, not file extension alone.
 - OCR (EasyOCR) is an optional fallback for images — it is slow; do not call it eagerly.
 
 ### 5.5 Conversation memory
-- Memory is session-scoped and lives in `app/services/conversation_memory.py`.
+- Memory is session-scoped and lives in `backend/app/services/conversation_memory.py`.
 - Summarisation kicks in at 75 % of the 24 K context limit — do not change this threshold
   without load-testing the summarisation path.
 
 ### 5.6 Environment detection
-- Container vs native detection is centralised in `app/core/environment.py` (singleton
+- Container vs native detection is centralised in `backend/app/core/environment.py` (singleton
   `EnvironmentDetector`). Do not duplicate this logic elsewhere.
 
 ---

@@ -31,13 +31,13 @@ The release workflow (`release.yml`) bumps `version.json`, creates a git tag, an
 ## CI gates — all must pass before merge
 | Check | Command | Workflow |
 |-------|---------|----------|
-| Python syntax | `python -m compileall -q app main.py` | `pr-checks.yml` |
+| Python syntax | `python -m compileall -q backend main.py config.py logging_config.py` | `pr-checks.yml` |
 | Ruff lint | `uv run ruff check .` | `pr-checks.yml` |
 | ty type-check | `uv run ty check <backend paths>` | `pr-checks.yml` |
 
 After every Python change run locally:
 ```bash
-uv run ruff check . && uv run ty check app/backend app/services app/core app/ingestion app/skills main.py config.py logging_config.py
+uv run ruff check . && uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py
 ```
 
 After every TypeScript change run locally:
@@ -47,8 +47,8 @@ cd nextjs-frontend && npm run lint && npm run build
 
 ## What the Docker publish workflow does
 On push to `main` or a semver tag, `docker-publish.yml` builds and pushes:
-- `litemindui/backend:<tag>` — from `Dockerfile`
-- `litemindui/frontend:<tag>` — from `Dockerfile.nextjs`
+- `litemindui/backend:<tag>` — from `infra/docker/Dockerfile`
+- `litemindui/frontend:<tag>` — from `infra/docker/Dockerfile.nextjs`
 
 Do not modify workflow files unless the task is explicitly about CI/CD.
 

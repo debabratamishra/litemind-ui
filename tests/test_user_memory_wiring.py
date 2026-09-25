@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import app.backend.api.chat as chat_api
-from app.backend.models.api_models import ChatRequestEnhanced, RAGQueryRequestEnhanced
+import backend.app.backend.api.chat as chat_api
+from backend.app.backend.models.api_models import ChatRequestEnhanced, RAGQueryRequestEnhanced
 
 
 async def aiter(items):
@@ -88,8 +88,8 @@ async def test_handle_chat_request_without_user_skips_memory_load():
 @pytest.mark.asyncio
 async def test_rag_query_injects_memory_block():
     """query(..., memory_block=...) must place the block before conversation history."""
-    from app.services import rag_service as rag_module
-    from app.services.rag_service import RAGService
+    from backend.app.services import rag_service as rag_module
+    from backend.app.services.rag_service import RAGService
 
     svc = RAGService.__new__(RAGService)  # retrieval + prompt seams are patched below
 
@@ -116,7 +116,7 @@ async def test_rag_query_injects_memory_block():
 @pytest.mark.asyncio
 async def test_standard_rag_skill_forwards_memory_block_to_query():
     """StandardRAGSkill.stream must pass memory_block into rag_service.query."""
-    from app.skills.rag import StandardRAGSkill
+    from backend.app.skills.rag import StandardRAGSkill
 
     mock_rag_service = MagicMock()
     mock_rag_service.query.side_effect = _empty
@@ -136,11 +136,11 @@ async def test_standard_rag_skill_forwards_memory_block_to_query():
 
 @pytest.mark.asyncio
 async def test_voice_pipeline_prepends_memory_to_system_instruction():
-    from app.services.voice_pipeline import VoiceSettings
+    from backend.app.services.voice_pipeline import VoiceSettings
 
     settings = VoiceSettings(user_id="u-1", system_instruction="You are a helpful voice assistant.")
-    with patch("app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="About the user:\n- Likes tea")):
-        from app.services.voice_pipeline import apply_memory_to_voice_settings
+    with patch("backend.app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="About the user:\n- Likes tea")):
+        from backend.app.services.voice_pipeline import apply_memory_to_voice_settings
 
         await apply_memory_to_voice_settings(settings)
     assert settings.system_instruction.startswith("You are a helpful voice assistant.")
@@ -149,10 +149,10 @@ async def test_voice_pipeline_prepends_memory_to_system_instruction():
 
 @pytest.mark.asyncio
 async def test_voice_pipeline_skips_memory_without_user():
-    from app.services.voice_pipeline import VoiceSettings, apply_memory_to_voice_settings
+    from backend.app.services.voice_pipeline import VoiceSettings, apply_memory_to_voice_settings
 
     settings = VoiceSettings(user_id=None, system_instruction="base")
-    with patch("app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="X")) as m:
+    with patch("backend.app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="X")) as m:
         await apply_memory_to_voice_settings(settings)
     m.assert_not_called()
     assert settings.system_instruction == "base"

@@ -14,8 +14,8 @@ RAG without any signal.
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.skills.rag import MultiAgentRAGSkill, StandardRAGSkill
-from app.skills.registry import RAGSkillRegistry
+from backend.app.skills.rag import MultiAgentRAGSkill, StandardRAGSkill
+from backend.app.skills.registry import RAGSkillRegistry
 
 
 def _make_request(**overrides) -> SimpleNamespace:
@@ -84,7 +84,7 @@ async def test_multi_agent_falls_back_when_crewai_unavailable():
     req = _make_request(use_multi_agent=True, use_hybrid_search=False)
 
     with patch(
-        "app.skills.rag.multi_agent_rag_available",
+        "backend.app.skills.rag.multi_agent_rag_available",
         return_value=(False, "No module named 'crewai'"),
     ):
         chunks = [c async for c in skill.stream(req, rag_service)]

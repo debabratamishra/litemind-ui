@@ -7,7 +7,7 @@ separate in-memory contexts (the core multi-tenant isolation guarantee).
 
 import pytest
 
-from app.services.conversation_memory import ConversationMemoryService
+from backend.app.services.conversation_memory import ConversationMemoryService
 
 
 @pytest.fixture

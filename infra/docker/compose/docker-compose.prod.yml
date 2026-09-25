@@ -1,0 +1,137 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    container_name: litemindui-backend-prod
+    network_mode: host
+    volumes:
+      # OS-independent cache directories using environment variables (read-only for security)
+      - ${HOST_HF_CACHE:-${HOME}/.cache/huggingface}:${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - ${HOST_OLLAMA_CACHE:-${HOME}/.ollama}:${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      # Application data persistence
+      - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
+      # Production logs directory
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
+    environment:
+      - OLLAMA_API_URL=http://localhost:11434
+      - DEFAULT_OLLAMA_MODEL=${DEFAULT_OLLAMA_MODEL:-gemma3:1b}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
+      - DEFAULT_OPENROUTER_MODEL=${DEFAULT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
+      - SUMMARY_BACKEND=${SUMMARY_BACKEND:-ollama}
+      - SUMMARY_MODEL=${SUMMARY_MODEL:-gemma3:1b}
+      - SUMMARY_API_BASE=${SUMMARY_API_BASE:-}
+      - SUMMARY_API_KEY=${SUMMARY_API_KEY:-}
+      - CHROMA_DB_PATH=${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - UPLOAD_FOLDER=${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - STORAGE_PATH=${CONTAINER_STORAGE_DIR:-/app/storage}
+      - HF_HOME=${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - OLLAMA_MODELS=${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      # Production settings
+      - DEBUG=0
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=production
+      - PRELOAD_SPEECH_MODELS_ASYNC=1
+      # Production optimizations - use more threads for better performance
+      - OMP_NUM_THREADS=${PROD_OMP_THREADS:-8}
+      - MKL_NUM_THREADS=${PROD_MKL_THREADS:-8}
+      - NUMEXPR_NUM_THREADS=${PROD_NUMEXPR_THREADS:-8}
+      - WORKERS=${PROD_WORKERS:-4}
+      # Security settings
+      - PYTHONHASHSEED=random
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    restart: always
+    # Production security settings
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Need write access for uploads and cache
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    # Resource limits for production stability
+    deploy:
+      resources:
+        limits:
+          memory: ${BACKEND_MEMORY_LIMIT:-4G}
+          cpus: ${BACKEND_CPU_LIMIT:-2.0}
+        reservations:
+          memory: ${BACKEND_MEMORY_RESERVATION:-1G}
+          cpus: ${BACKEND_CPU_RESERVATION:-0.5}
+    # Production health check - more robust
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    # Production logging - structured and rotated
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        labels: "environment=production,service=backend,version=${APP_VERSION:-latest}"
+        tag: "{{.ImageName}}/{{.Name}}/{{.ID}}"
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${PROD_WORKERS:-4}", "--log-level", "info", "--no-access-log"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.nextjs
+    container_name: litemindui-frontend-prod
+    network_mode: host
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=production
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
+      - DEFAULT_OPENROUTER_MODEL=${DEFAULT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
+      - ENVIRONMENT=production
+      # Realtime voice (WebRTC) NAT traversal. With host networking (Linux) the
+      # in-container peer shares the host network, so STUN is enough. Set the
+      # TURN vars (and run a TURN server) if UDP is blocked or on Docker Desktop.
+      # WEBRTC_SERVER_TURN_URL is the TURN url the in-container peer uses; leave
+      # empty with host networking so it falls back to STUN on the shared network.
+      - WEBRTC_STUN_URL=${WEBRTC_STUN_URL:-stun:stun.l.google.com:19302}
+      - WEBRTC_TURN_URL=${WEBRTC_TURN_URL:-}
+      - WEBRTC_SERVER_TURN_URL=${WEBRTC_SERVER_TURN_URL:-}
+      - WEBRTC_TURN_USERNAME=${WEBRTC_TURN_USERNAME:-}
+      - WEBRTC_TURN_CREDENTIAL=${WEBRTC_TURN_CREDENTIAL:-}
+      - WEBRTC_ICE_SERVERS=${WEBRTC_ICE_SERVERS:-}
+      - WEBRTC_SERVER_ICE_SERVERS=${WEBRTC_SERVER_ICE_SERVERS:-}
+    restart: always
+    # Production security settings
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Application needs some write access for runtime files
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    # Resource limits for frontend
+    deploy:
+      resources:
+        limits:
+          memory: ${FRONTEND_MEMORY_LIMIT:-1G}
+          cpus: ${FRONTEND_CPU_LIMIT:-1.0}
+        reservations:
+          memory: ${FRONTEND_MEMORY_RESERVATION:-256M}
+          cpus: ${FRONTEND_CPU_RESERVATION:-0.25}
+    # Production health check
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 45s
+    depends_on:
+      - backend
+    # Production logging - structured and rotated
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        labels: "environment=production,service=frontend,version=${APP_VERSION:-latest}"
+        tag: "{{.ImageName}}/{{.Name}}/{{.ID}}"

@@ -19,7 +19,7 @@ from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.stt_service import SegmentedSTTService
 
-from app.services.voice_pipeline import (
+from backend.app.services.voice_pipeline import (
     AssistantTranscriptEmitter,
     BackendKokoroTTSService,
     BackendLLMService,
@@ -38,7 +38,7 @@ def _fake_wav():
 
 @pytest.fixture
 def patch_services(monkeypatch):
-    import app.services.voice_pipeline as vp
+    import backend.app.services.voice_pipeline as vp
 
     class FakeSpeech:
         def transcribe_pcm(self, audio_data, source_rate=16000):
@@ -83,7 +83,7 @@ async def test_tts_yields_pcm_audio_frame(patch_services):
 
 
 async def test_llm_streams_text_frames(monkeypatch):
-    import app.services.voice_pipeline as vp
+    import backend.app.services.voice_pipeline as vp
 
     async def fake_stream(messages, **kwargs):
         for t in ["Hello", " world"]:
@@ -105,7 +105,7 @@ async def test_llm_streams_text_frames(monkeypatch):
 
 
 async def test_llm_process_frame_drives_inference(monkeypatch):
-    import app.services.voice_pipeline as vp
+    import backend.app.services.voice_pipeline as vp
 
     async def fake_stream(messages, **kwargs):
         for t in ["Hello", " world"]:
@@ -143,7 +143,7 @@ def test_build_voice_pipeline_constructs_without_real_peer(monkeypatch):
     assert the pipeline is built without loading heavy weights or touching
     a real connection.
     """
-    import app.services.voice_pipeline as vp
+    import backend.app.services.voice_pipeline as vp
 
     class FakeVAD:
         pass

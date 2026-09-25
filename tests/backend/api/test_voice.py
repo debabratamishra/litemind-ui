@@ -1,6 +1,6 @@
-"""Unit tests for ``app/backend/api/voice.py`` (WebRTC SDP offer endpoint).
+"""Unit tests for ``backend/app/backend/api/voice.py`` (WebRTC SDP offer endpoint).
 
-The voice route is mounted in ``main.app``, so we test it there. The WebRTC
+The voice route is mounted in ``backend.main.app``, so we test it there. The WebRTC
 peer connection (``SmallWebRTCConnection``) and the Pipecat pipeline runner
 (``run_voice_pipeline``) are mocked at their boundaries, so no real WebRTC /
 Pipecat / network activity occurs offline.
@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.backend.api import voice as voice_api
-from app.backend.api.auth_deps import User, get_current_user
-from main import app
+from backend.app.backend.api import voice as voice_api
+from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.main import app
 
 # Voice offer now requires authentication; satisfy it for these unit tests.
 app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@x.com")
@@ -46,9 +46,13 @@ def voice_client(monkeypatch):
         async def renegotiate(self, sdp, type, restart_pc=False):
             calls["renegotiate"] = (sdp, type, restart_pc)
 
-    monkeypatch.setattr(voice_api, "SmallWebRTCConnection", FakeConn)
+    # The route imports Pipecat and the pipeline at call time, so patch them
+    # at their source modules rather than on the router.
+    monkeypatch.setattr(
+        "pipecat.transports.smallwebrtc.connection.SmallWebRTCConnection", FakeConn
+    )
     # Background task must not touch a real Pipecat pipeline.
-    monkeypatch.setattr(voice_api, "run_voice_pipeline", AsyncMock())
+    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", AsyncMock())
 
     voice_api.pcs_map.clear()
     client = TestClient(app)
@@ -116,7 +120,7 @@ def test_voice_offer_runs_pipeline_as_background_task(voice_client, monkeypatch)
     async def _fake_pipeline(conn, settings):
         ran["ok"] = True
 
-    monkeypatch.setattr(voice_api, "run_voice_pipeline", _fake_pipeline)
+    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _fake_pipeline)
 
     resp = client_post_offer(voice_client)
     assert resp.status_code == 200
@@ -137,7 +141,7 @@ def test_voice_offer_pipeline_failure_is_swallowed(voice_client, monkeypatch):
     async def _boom(conn, settings):
         raise RuntimeError("pipeline down")
 
-    monkeypatch.setattr(voice_api, "run_voice_pipeline", _boom)
+    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _boom)
 
     client, _ = voice_client
     resp = client.post(
@@ -147,3 +151,30 @@ def test_voice_offer_pipeline_failure_is_swallowed(voice_client, monkeypatch):
     # The answer is still returned; the failure is handled inside the task.
     assert resp.status_code == 200
     assert resp.json()["type"] == "answer"
+
+
+def test_voice_pipeline_error_event_is_generic(monkeypatch):
+    """The data-channel error event must not carry internal exception text."""
+
+    class RecordingConn:
+        pc_id = "test-pc"
+        sent: list = []
+
+        def send_app_message(self, message):
+            RecordingConn.sent.append(message)
+
+    async def _boom(conn, settings):
+        raise RuntimeError("pipecat transport died on 10.0.0.5:7860")
+
+    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _boom)
+    conn = RecordingConn()
+
+    import asyncio
+
+    from backend.app.services.voice_pipeline import VoiceSettings
+
+    settings = VoiceSettings()
+    asyncio.run(voice_api.run_voice_pipeline_safe(conn, settings))
+
+    assert RecordingConn.sent
+    assert "10.0.0.5" not in str(RecordingConn.sent[0])

@@ -10,8 +10,8 @@ fixed fixture dict. The real ``OLLAMA_API_URL`` environment wiring is exercised 
 import os
 from pathlib import Path
 
-import config as app_config
-from app.backend.core.config import DEFAULT_RAG_CONFIG, BackendConfig
+import backend.config as app_config
+from backend.app.backend.core.config import DEFAULT_RAG_CONFIG, BackendConfig
 
 
 def _fixed_dynamic_config() -> dict:
@@ -64,7 +64,7 @@ def test_backend_config_ollama_url_from_env(mock_env, monkeypatch):
         app_config.Config, "get_dynamic_config", staticmethod(_fixed_dynamic_config)
     )
     monkeypatch.setattr(
-        "app.services.host_service_manager.host_service_manager",
+        "backend.app.services.host_service_manager.host_service_manager",
         _StubHostServiceManager(),
     )
 

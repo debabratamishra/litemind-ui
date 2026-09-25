@@ -164,7 +164,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./Dockerfile
+        file: ./infra/docker/Dockerfile
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ steps.meta-backend.outputs.tags }}
         labels: ${{ steps.meta-backend.outputs.labels }}
@@ -186,7 +186,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./Dockerfile.nextjs
+        file: ./infra/docker/Dockerfile.nextjs
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ steps.meta-frontend.outputs.tags }}
         labels: ${{ steps.meta-frontend.outputs.labels }}

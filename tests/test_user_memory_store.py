@@ -10,7 +10,7 @@ import uuid
 
 import pytest
 
-from app.backend.user_memory_store import UserMemoryRecord, UserMemoryStore
+from backend.app.backend.user_memory_store import UserMemoryRecord, UserMemoryStore
 
 
 class FakeUserMemoryStore(UserMemoryStore):
@@ -131,8 +131,8 @@ async def test_real_store_crud_and_cross_user_isolation():
     """Runs only when TEST_DATABASE_URL points at a disposable Postgres."""
     import asyncpg
 
-    from app.backend.conversation_store import SCHEMA_SQL as CORE_SCHEMA_SQL
-    from app.backend.user_memory_store import UserMemoryStore
+    from backend.app.backend.conversation_store import SCHEMA_SQL as CORE_SCHEMA_SQL
+    from backend.app.backend.user_memory_store import UserMemoryStore
 
     store = UserMemoryStore(_REAL_DSN)
     # user_memories has an FK on users(id); make sure both tables exist and

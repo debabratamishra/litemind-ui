@@ -1,0 +1,70 @@
+"""
+Health check endpoints
+"""
+import logging
+import os
+import time
+
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+
+from backend.app.backend.models.api_models import HealthResponse
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/health", tags=["health"])
+
+
+@router.get("", response_model=HealthResponse)
+async def health_check():
+    """Basic health check"""
+    return HealthResponse(status="healthy", service="LiteMindUI API")
+
+
+@router.get("/ready")
+async def readiness_check():
+    """Container readiness check with detailed status"""
+    try:
+        from backend.app.backend.core.config import backend_config
+
+        status_data = {
+            "status": "ready",
+            "timestamp": time.time(),
+            "checks": {}
+        }
+
+        # Check RAG service
+        try:
+            from backend.main import rag_service
+            if rag_service is None:
+                status_data["checks"]["rag_service"] = {"status": "failed", "error": "Not initialized"}
+                status_data["status"] = "not_ready"
+            else:
+                status_data["checks"]["rag_service"] = {"status": "ready"}
+        except Exception:
+            logger.exception("RAG service readiness check failed")
+            status_data["checks"]["rag_service"] = {"status": "error", "error": "Internal error"}
+            status_data["status"] = "not_ready"
+
+        # Check critical directories. Only the upload folder gates readiness: it is
+        # the RAG write path, and without it the process cannot serve. The storage
+        # directory is not listed — a degraded storage path is not an unready process.
+        critical_dirs = [backend_config.upload_folder]
+        for dir_path in critical_dirs:
+            if dir_path.exists() and os.access(dir_path, os.R_OK | os.W_OK):
+                status_data["checks"][dir_path.name] = {"status": "ready", "path": str(dir_path)}
+            else:
+                status_data["checks"][dir_path.name] = {"status": "failed", "path": str(dir_path)}
+                status_data["status"] = "not_ready"
+
+        if status_data["status"] == "ready":
+            return status_data
+        else:
+            return JSONResponse(status_code=503, content=status_data)
+
+    except Exception:
+        logger.exception("Readiness check failed")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "error": "Internal error", "timestamp": time.time()}
+        )

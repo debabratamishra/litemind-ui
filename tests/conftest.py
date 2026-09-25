@@ -19,7 +19,7 @@ def tmp_upload_dir(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setenv("UPLOAD_FOLDER", str(d))
     try:
-        import config as app_config
+        import backend.config as app_config
 
         if hasattr(app_config, "Config"):
             monkeypatch.setattr(app_config.Config, "upload_folder", str(d), raising=False)

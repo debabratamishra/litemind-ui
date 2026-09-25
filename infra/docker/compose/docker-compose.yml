@@ -1,0 +1,133 @@
+# macOS-Compatible Docker Compose Configuration
+# This version uses proper port mapping instead of host networking for macOS compatibility
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    container_name: litemindui-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # OS-independent cache directories using environment variables
+      - ${HOST_HF_CACHE:-${HOME}/.cache/huggingface}:${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - ${HOST_OLLAMA_CACHE:-${HOME}/.ollama}:${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      # Application data persistence
+      - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
+    environment:
+      - OLLAMA_API_URL=http://host.docker.internal:11434
+      - DEFAULT_OLLAMA_MODEL=${DEFAULT_OLLAMA_MODEL:-gemma3:1b}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
+      - DEFAULT_OPENROUTER_MODEL=${DEFAULT_OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct}
+      - SUMMARY_BACKEND=${SUMMARY_BACKEND:-ollama}
+      - SUMMARY_MODEL=${SUMMARY_MODEL:-gemma3:1b}
+      - SUMMARY_API_BASE=${SUMMARY_API_BASE:-}
+      - SUMMARY_API_KEY=${SUMMARY_API_KEY:-}
+      - CHROMA_DB_PATH=${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - UPLOAD_FOLDER=${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - STORAGE_PATH=${CONTAINER_STORAGE_DIR:-/app/storage}
+      - HF_HOME=${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
+      - OLLAMA_MODELS=${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PRELOAD_SPEECH_MODELS_ASYNC=1
+      # Performance tuning
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
+      - NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-4}
+      # Authentication (GoTrue + Postgres)
+      - GOTRUE_API_URL=http://gotrue:9999
+      - AUTH_MODE=docker
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+      - GOTRUE_JWT_SECRET=${GOTRUE_JWT_SECRET:-}
+    # gotrue and db are defined in infra/docker/compose/docker-compose.auth.yml — always launch with:
+    #   docker compose --project-directory . -f infra/docker/compose/docker-compose.yml -f infra/docker/compose/docker-compose.auth.yml ...
+    depends_on:
+      - gotrue
+      - db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.nextjs
+    container_name: litemindui-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NODE_ENV=production
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # TURN/STUN relay for realtime voice (WebRTC) media traversal.
+  # Required inside Docker because WebRTC media uses dynamic UDP ports that the
+  # bridge network does not publish; coturn relays that media over fixed,
+  # published ports so the host browser and the in-container aiortc peer can
+  # exchange audio.
+  #
+  # IMPORTANT: set HOST_LAN_IP in your .env to the IP the BROWSER uses to reach
+  # this machine (your LAN IP, e.g. 192.168.1.20). coturn advertises this as the
+  # relay address via --external-ip; the browser cannot use a container-internal
+  # 172.x address. For same-machine access on Linux, 127.0.0.1 also works.
+  coturn:
+    image: coturn/coturn:latest
+    container_name: litemindui-coturn
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+    restart: unless-stopped
+    command: >
+      -n
+      --listening-port=3478
+      --min-port=49160
+      --max-port=49200
+      --realm=litemindui
+      --fingerprint
+      --lt-cred-mech
+      --user=${WEBRTC_TURN_USERNAME:-litemind}:${WEBRTC_TURN_CREDENTIAL:-litemindsecret}
+      --external-ip=${HOST_LAN_IP:-127.0.0.1}
+      --no-tls
+      --no-dtls
+      --log-file=stdout
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  default:
+    driver: bridge

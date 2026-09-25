@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import rag_multi_agent as rma
+from backend.app.services import rag_multi_agent as rma
 
 
 def _reset_records():

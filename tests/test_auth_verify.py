@@ -3,7 +3,7 @@
 import jwt as jose_jwt
 import pytest
 
-from app.backend.api import auth_verify
+from backend.app.backend.api import auth_verify
 
 
 def make_token(sub="user-123", secret="s3cr3t"):
@@ -28,7 +28,7 @@ def test_verify_malformed_raises():
 
 
 def test_missing_secret_raises(monkeypatch):
-    from config import Config
+    from backend.config import Config
 
     monkeypatch.setattr(Config, "GOTRUE_JWT_SECRET", "")
     with pytest.raises(ValueError):
