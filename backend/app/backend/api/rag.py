@@ -64,9 +64,19 @@ async def get_rag_status():
 @router.get("/files", response_model=RagFilesResponse)
 async def list_rag_files():
     """List the files currently uploaded to the knowledge base."""
+    from backend.main import rag_service
+
+    if not rag_service:
+        raise HTTPException(status_code=503, detail="RAG service not initialized")
+
     try:
         files = [
-            RagFileInfo(filename=f.name, size=f.stat().st_size)
+            RagFileInfo(
+                filename=f.name,
+                size=f.stat().st_size,
+                # The index is the source of truth for what is actually searchable.
+                indexed=rag_service._is_filename_already_processed(f.name)[0],
+            )
             for f in backend_config.upload_folder.iterdir()
             if f.is_file()
         ]
@@ -146,12 +156,25 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
 
             # Sanitize filename to prevent path traversal
             safe_filename = sanitize_filename(upload_file.filename)
-        except ValueError as e:
+        except ValueError:
+            logger.exception("Filename validation failed for upload: %s", upload_file.filename)
             results.append(
                 {
                     "filename": upload_file.filename,
                     "status": "error",
-                    "message": f"Invalid filename: {str(e)}",
+                    "message": "Invalid filename",
+                    "chunks_created": 0,
+                }
+            )
+            continue
+        except HTTPException as exc:
+            # A per-file rejection (e.g. an oversized file) must not abort the
+            # rest of the batch.
+            results.append(
+                {
+                    "filename": upload_file.filename,
+                    "status": "error",
+                    "message": str(getattr(exc, "detail", exc)),
                     "chunks_created": 0,
                 }
             )
@@ -166,21 +189,33 @@ async def rag_upload(files: List[UploadFile] = File(...), chunk_size: int = Form
             upload_resolved = backend_config.upload_folder.resolve()
             if not str(dest_resolved).startswith(str(upload_resolved)):
                 raise ValueError("Path traversal attempt detected")
-        except (ValueError, OSError, RuntimeError) as e:
+        except (ValueError, OSError, RuntimeError):
+            logger.exception("Security validation failed for upload path: %s", upload_file.filename)
             results.append(
                 {
                     "filename": upload_file.filename,
                     "status": "error",
-                    "message": f"Security error: {str(e)}",
+                    "message": "Security validation failed",
                     "chunks_created": 0,
                 }
+            )
+            continue
+
+        # Duplicate check BEFORE opening the destination for writing: opening it
+        # truncates the file, so an already-indexed name must be rejected while
+        # the stored copy is still untouched.
+        is_duplicate, reason = rag_service._is_filename_already_processed(safe_filename)
+        if is_duplicate:
+            results.append(
+                {"filename": upload_file.filename, "status": "duplicate", "message": reason, "chunks_created": 0}
             )
             continue
 
         with open(dest_path, "wb") as f:
             f.write(await upload_file.read())
 
-        # Check for duplicates using the saved file path
+        # Content-hash duplicate stored under a different name: the freshly
+        # written file is not indexed, so removing it destroys nothing.
         is_duplicate, reason = rag_service._is_file_already_processed(str(dest_path), safe_filename)
 
         if is_duplicate:
@@ -249,15 +284,21 @@ async def reset_rag_system():
 @router.post("/check-duplicates", response_model=DuplicateCheckResponse)
 async def duplicate_check_rag(request: DuplicateCheckRequest):
     """Preflight check: is a file with this name already in the knowledge base?"""
+    from backend.main import rag_service
+
+    if not rag_service:
+        raise HTTPException(status_code=503, detail="RAG service not initialized")
+
     try:
         safe_filename = sanitize_filename(request.filename)
-    except ValueError as e:
-        return DuplicateCheckResponse(is_duplicate=False, reason=f"Invalid filename: {e}")
+    except ValueError:
+        logger.exception("Duplicate check filename validation failed: %s", request.filename)
+        return DuplicateCheckResponse(is_duplicate=False, reason="Invalid filename")
 
-    dest_path = backend_config.upload_folder / safe_filename
-    if dest_path.is_file():
-        return DuplicateCheckResponse(is_duplicate=True, reason=f"'{safe_filename}' is already uploaded.")
-    return DuplicateCheckResponse(is_duplicate=False, reason="")
+    # Same predicate as the upload path (the index), so the two cannot disagree.
+    # Pre-flight has only a filename, so the content-hash check is left to upload.
+    is_duplicate, reason = rag_service._is_filename_already_processed(safe_filename)
+    return DuplicateCheckResponse(is_duplicate=is_duplicate, reason=reason if is_duplicate else "")
 
 
 @router.delete("/files/{filename}")
@@ -319,8 +360,11 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
                         **(result or {"status": "success", "message": f"Processed {filename}", "chunks_created": 0}),
                     }
                 )
-            except Exception as e:
-                results.append({"filename": filename, "status": "error", "message": str(e), "chunks_created": 0})
+            except Exception:
+                logger.exception("Failed to process uploaded file: %s", filename)
+                results.append(
+                    {"filename": filename, "status": "error", "message": "Failed to process file", "chunks_created": 0}
+                )
 
     await asyncio.gather(*(process_single_file(path_info) for path_info in saved_paths))
 
