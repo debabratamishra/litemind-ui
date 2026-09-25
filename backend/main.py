@@ -76,13 +76,6 @@ def load_rag_config() -> Dict:
     return dict(DEFAULT_RAG_CONFIG)
 
 
-def save_rag_config_local(cfg: Dict) -> None:
-    try:
-        CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
-    except Exception as e:
-        logger.warning(f"Failed to persist RAG config: {e}")
-
-
 # Application lifecycle
 def _prepare_upload_folder(upload_folder: Path, *, is_containerized: bool) -> None:
     """Ensure the upload folder exists without destroying previously uploaded files.
@@ -93,6 +86,29 @@ def _prepare_upload_folder(upload_folder: Path, *, is_containerized: bool) -> No
     upload_folder.mkdir(parents=True, exist_ok=True)
     if is_containerized:
         os.chmod(upload_folder, 0o755)
+
+
+async def _shutdown_cleanup() -> None:
+    """Release process-owned resources on shutdown.
+
+    Deliberately does NOT reset the RAG system: uploaded documents, the Chroma
+    index and the processed-file/chunk maps are user data held on persistent
+    volumes and must survive a restart. Only live, in-process resources are
+    torn down here.
+    """
+    # Tear down any open voice (WebRTC) peer connections
+    try:
+        from backend.app.backend.api.voice import pcs_map
+
+        for conn in list(pcs_map.values()):
+            try:
+                await conn.disconnect()
+            except Exception:
+                pass
+        pcs_map.clear()
+        logger.info("Voice peer connections cleaned up")
+    except Exception as e:
+        logger.warning(f"Voice peer cleanup failed: {e}")
 
 
 @asynccontextmanager
@@ -237,26 +253,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup on shutdown
-    try:
-        if rag_service:
-            await rag_service.reset_system()
-        logger.info("Cleanup completed")
-    except Exception as e:
-        logger.warning(f"Cleanup failed: {e}")
-
-    # Tear down any open voice (WebRTC) peer connections
-    try:
-        from backend.app.backend.api.voice import pcs_map
-
-        for conn in list(pcs_map.values()):
-            try:
-                await conn.disconnect()
-            except Exception:
-                pass
-        pcs_map.clear()
-        logger.info("Voice peer connections cleaned up")
-    except Exception as e:
-        logger.warning(f"Voice peer cleanup failed: {e}")
+    await _shutdown_cleanup()
 
     logger.info("LiteMindUI API shutting down...")
 

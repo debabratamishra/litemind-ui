@@ -1,5 +1,8 @@
 """Backward-compatible backend entrypoint."""
 
-from backend.main import app
+from backend.main import app, run
 
-__all__ = ["app"]
+__all__ = ["app", "run"]
+
+if __name__ == "__main__":
+    run()
