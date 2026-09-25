@@ -24,7 +24,7 @@ description: >-
           <tr><th>Process</th><th>Entry point</th><th>Default port</th></tr>
         </thead>
         <tbody>
-          <tr><td>FastAPI backend</td><td><code>main.py</code></td><td>8000</td></tr>
+          <tr><td>FastAPI backend</td><td><code>backend/main.py</code></td><td>8000</td></tr>
           <tr><td>Next.js frontend (primary)</td><td><code>nextjs-frontend/</code></td><td>3000</td></tr>
         </tbody>
       </table>
@@ -56,8 +56,8 @@ description: >-
 ├── <span class="k">hooks/</span>         <span class="c">custom React hooks</span>
 └── <span class="k">lib/</span>           <span class="c">API clients &amp; utilities</span>
 
-<span class="c">main.py</span>            <span class="c">FastAPI entry (lifespan, route registration)</span>
-<span class="c">config.py</span>          <span class="c">global Config (env vars, paths, tuning)</span>
+<span class="c">backend/main.py</span>    <span class="c">FastAPI entry (lifespan, route registration)</span>
+<span class="c">backend/config.py</span>  <span class="c">global Config (env vars, paths, tuning)</span>
     </div>
 
     <h2>Key design patterns</h2>
