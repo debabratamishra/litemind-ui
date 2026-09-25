@@ -87,6 +87,7 @@ class STTRequest(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    service: Optional[str] = None
     checks: Optional[Dict] = None
     timestamp: Optional[float] = None
     error: Optional[str] = None

@@ -131,3 +131,24 @@ async def test_transcribe_audio_service_error():
     assert excinfo.value.status_code == 500
     assert "Transcription failed" in excinfo.value.detail
     assert "/opt/models/whisper" not in excinfo.value.detail
+
+
+async def test_get_stt_status_returns_service_status():
+    service = MagicMock()
+    service.get_status.return_value = {"available": True, "model_loaded": True}
+
+    with patch.object(models, "get_speech_service", return_value=service):
+        result = await models.get_stt_status()
+
+    assert result["available"] is True
+
+
+async def test_get_stt_status_error_is_generic():
+    service = MagicMock()
+    service.get_status.side_effect = RuntimeError("whisper missing at /opt/models/whisper")
+
+    with patch.object(models, "get_speech_service", return_value=service):
+        result = await models.get_stt_status()
+
+    assert result == {"available": False, "error": "Unable to retrieve STT status"}
+    assert "/opt/models/whisper" not in str(result)

@@ -31,3 +31,10 @@ def test_public_api_routes_are_owned_by_feature_routers():
     assert _route("/models").endpoint is models_api.get_available_models
     assert _route("/models/enhanced").endpoint is models_api.get_enhanced_models
     assert _route("/api/tts/synthesize").endpoint is tts_api.synthesize_speech
+
+
+def test_stt_status_route_is_mounted():
+    """``GET /api/stt/status`` survived the route consolidation."""
+    route = _route("/api/stt/status")
+    assert route.endpoint is models_api.get_stt_status
+    assert "GET" in route.methods

@@ -18,7 +18,7 @@ router = APIRouter(prefix="/health", tags=["health"])
 @router.get("", response_model=HealthResponse)
 async def health_check():
     """Basic health check"""
-    return HealthResponse(status="healthy")
+    return HealthResponse(status="healthy", service="LiteMindUI API")
 
 
 @router.get("/ready")
@@ -46,8 +46,10 @@ async def readiness_check():
             status_data["checks"]["rag_service"] = {"status": "error", "error": "Internal error"}
             status_data["status"] = "not_ready"
 
-        # Check critical directories
-        critical_dirs = [backend_config.upload_folder, backend_config.storage_dir]
+        # Check critical directories. Only the upload folder gates readiness: it is
+        # the RAG write path, and without it the process cannot serve. The storage
+        # directory is not listed — a degraded storage path is not an unready process.
+        critical_dirs = [backend_config.upload_folder]
         for dir_path in critical_dirs:
             if dir_path.exists() and os.access(dir_path, os.R_OK | os.W_OK):
                 status_data["checks"][dir_path.name] = {"status": "ready", "path": str(dir_path)}

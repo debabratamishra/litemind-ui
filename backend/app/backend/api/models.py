@@ -75,5 +75,16 @@ async def transcribe_audio(request: STTRequest):
         raise HTTPException(status_code=500, detail="Transcription failed")
 
 
+@stt_router.get("/status")
+async def get_stt_status():
+    """Get STT service status."""
+    try:
+        speech_service = get_speech_service()
+        return speech_service.get_status()
+    except Exception:
+        logger.exception("Failed to get STT status")
+        return {"available": False, "error": "Unable to retrieve STT status"}
+
+
 # Include STT router
 router.include_router(stt_router)
