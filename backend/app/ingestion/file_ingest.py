@@ -24,7 +24,11 @@ from backend.app.core.rag_formats import (
     TEXT_EXTENSIONS,
     TEXTISH_EXTENSIONS,
 )
-from backend.app.ingestion.enhanced_document_processor import extract_docx_enhanced, extract_epub_enhanced, extract_pdf_enhanced
+from backend.app.ingestion.enhanced_document_processor import (
+    extract_docx_enhanced,
+    extract_epub_enhanced,
+    extract_pdf_enhanced,
+)
 from backend.app.ingestion.enhanced_extractors import extract_csv_enhanced
 
 logger = logging.getLogger(__name__)
