@@ -20,7 +20,7 @@ uv run pytest -x -q                   # fail-fast, quiet
 uv run ruff check .                   # lint (ruff)
 uv run ruff format .                  # format (ruff)
 uv run black .                        # alternative formatter (line-length 120)
-uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills main.py config.py logging_config.py
+uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py
 uv run mypy .                         # type check
 
 # ── Next.js frontend ──────────────────────────────────────────────

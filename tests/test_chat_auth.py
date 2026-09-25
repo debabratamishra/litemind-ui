@@ -1,5 +1,5 @@
 """
-Auth-gate tests for the chat endpoints (app/backend/api/chat.py).
+Auth-gate tests for the chat endpoints (backend/app/backend/api/chat.py).
 
 Verifies that the chat, stream, web-search, and memory endpoints require a
 valid user (401 when unauthenticated) and accept requests once a user is

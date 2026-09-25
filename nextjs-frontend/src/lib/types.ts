@@ -2,7 +2,7 @@
  * Shared frontend types.
  *
  * These describe the shapes the UI works with. Backend response models live in
- * `app/backend/models/api_models.py`; the field names here mirror those models
+ * `backend/app/backend/models/api_models.py`; the field names here mirror those models
  * so the API layer can pass responses through with minimal mapping.
  */
 

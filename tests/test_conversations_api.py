@@ -1,5 +1,5 @@
 """
-Tests for the conversation CRUD API (app/backend/api/conversations.py).
+Tests for the conversation CRUD API (backend/app/backend/api/conversations.py).
 
 Verifies authentication is required and that every operation is isolated to
 the authenticated user. Uses an in-memory FakeStore and dependency overrides

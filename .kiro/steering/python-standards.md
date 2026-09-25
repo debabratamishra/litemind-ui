@@ -16,7 +16,7 @@ Applies whenever a Python file is in context.
   ```bash
   uv run ruff check .
   uv run ruff format --check .
-  uv run ty check app/backend app/services app/core app/ingestion app/skills main.py config.py logging_config.py
+  uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py
   uv run pytest -x -q
   ```
 
@@ -51,7 +51,7 @@ logger = get_logger(__name__)
 - Use `httpx.AsyncClient` in async contexts — not `requests`
 
 ## Configuration
-- All runtime config via `config.py` (`Config`) or `app/backend/core/config.py` (`BackendConfig`)
+- All runtime config via `config.py` (`Config`) or `backend/app/backend/core/config.py` (`BackendConfig`)
 - New env vars must be added to `.env.example` with a comment
 
 ## Security (file upload paths)
@@ -63,9 +63,9 @@ from app.backend.api.security_utils import sanitize_filename, validate_file_size
 ## New code goes here
 | What | Where |
 |------|-------|
-| New LLM provider | `app/services/llm_gateway.py` |
-| New chat skill | `app/skills/` + register in `ChatSkillRegistry` |
-| New RAG skill | `app/skills/` + register in `RAGSkillRegistry` |
-| New document format | `app/ingestion/file_ingest.py` |
-| New API route | `app/backend/api/` + register router in `main.py` |
-| New Pydantic models | `app/backend/models/` |
+| New LLM provider | `backend/app/services/llm_gateway.py` |
+| New chat skill | `backend/app/skills/` + register in `ChatSkillRegistry` |
+| New RAG skill | `backend/app/skills/` + register in `RAGSkillRegistry` |
+| New document format | `backend/app/ingestion/file_ingest.py` |
+| New API route | `backend/app/backend/api/` + register router in `main.py` |
+| New Pydantic models | `backend/app/backend/models/` |

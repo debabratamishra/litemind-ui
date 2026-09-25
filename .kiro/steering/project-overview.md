@@ -24,11 +24,11 @@ The two runtimes are fully independent and communicate only over HTTP.
 ## Core backend modules
 
 ```
-app/services/llm_gateway.py        → all LLM calls (Ollama, OpenRouter, Nvidia NIM)
-app/services/rag_service.py        → ChromaDB + BM25 hybrid RAG
-app/skills/registry.py             → pluggable skill routing
-app/ingestion/file_ingest.py       → document processing pipeline
-app/services/conversation_memory.py → multi-turn memory + summarisation
+backend/app/services/llm_gateway.py        → all LLM calls (Ollama, OpenRouter, Nvidia NIM)
+backend/app/services/rag_service.py        → ChromaDB + BM25 hybrid RAG
+backend/app/skills/registry.py             → pluggable skill routing
+backend/app/ingestion/file_ingest.py       → document processing pipeline
+backend/app/services/conversation_memory.py → multi-turn memory + summarisation
 ```
 
 ## Quick commands
@@ -49,7 +49,7 @@ make health   # health check
 
 # Lint & type-check (Python)
 uv run ruff check .
-uv run ty check app/backend app/services app/core app/ingestion app/skills main.py config.py logging_config.py
+uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py
 
 # Lint & type-check (TypeScript)
 cd nextjs-frontend && npm run lint && npm run build

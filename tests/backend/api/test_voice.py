@@ -1,4 +1,4 @@
-"""Unit tests for ``app/backend/api/voice.py`` (WebRTC SDP offer endpoint).
+"""Unit tests for ``backend/app/backend/api/voice.py`` (WebRTC SDP offer endpoint).
 
 The voice route is mounted in ``backend.main.app``, so we test it there. The WebRTC
 peer connection (``SmallWebRTCConnection``) and the Pipecat pipeline runner

@@ -1,4 +1,4 @@
-"""Unit tests for app/ingestion/enhanced_extractors.py.
+"""Unit tests for backend/app/ingestion/enhanced_extractors.py.
 
 Covers the CSV and image extractor paths. External services are mocked at their
 boundary so no real OCR / model download / network activity occurs:

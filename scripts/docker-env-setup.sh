@@ -181,7 +181,7 @@ start_services() {
     
     print_success "Services started successfully"
     print_status "Backend available at: http://localhost:8000"
-    print_status "Frontend available at: http://localhost:8501"
+    print_status "Frontend available at: http://localhost:3000"
     
     # Show service status
     sleep 2

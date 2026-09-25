@@ -1,4 +1,4 @@
-"""Unit tests for ``app/services/speech_service.py`` (Whisper STT service).
+"""Unit tests for ``backend/app/services/speech_service.py`` (Whisper STT service).
 
 These tests run fully offline. Heavy dependencies (``transformers``, ``torch``,
 ``librosa``) are mocked at their boundaries so that no real model is downloaded

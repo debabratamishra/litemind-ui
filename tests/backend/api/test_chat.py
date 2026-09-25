@@ -1,4 +1,4 @@
-"""Unit tests for ``app/backend/api/chat.py`` route handlers.
+"""Unit tests for ``backend/app/backend/api/chat.py`` route handlers.
 
 The chat route delegates to the LLM gateway (``complete_text`` /
 ``stream_completion``) and to the pluggable chat skill layer
