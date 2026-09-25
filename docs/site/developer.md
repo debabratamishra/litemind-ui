@@ -32,7 +32,7 @@ description: >-
 
     <div class="callout">
       <strong>Quick start.</strong> Install Python deps with <code>uv sync --group all</code>,
-      start the backend with <code>uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload</code>,
+      start the backend with <code>uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload</code>,
       then <code>cd nextjs-frontend &amp;&amp; npm install &amp;&amp; npm run dev</code>.
       Prefer containers? <code>make up</code> brings up the whole stack.
     </div>
@@ -194,7 +194,7 @@ description: >-
     <h2>Useful commands</h2>
     <pre><code># Python / backend
 uv sync --group all              # install all dependency groups
-uv run uvicorn main:app --reload # start backend on :8000
+uv run uvicorn backend.main:app --reload # start backend on :8000
 uv run pytest                    # run tests
 uv run ruff check .              # lint
 uv run ty check app              # type-check

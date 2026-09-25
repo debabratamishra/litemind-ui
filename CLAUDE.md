@@ -11,7 +11,7 @@ uv sync --group all                   # install all dependency groups
 uv sync --group backend               # backend only
 uv sync --group dev                   # dev tools only (ruff, black, mypy, ty, pytest)
 
-uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload   # start backend
+uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload   # start backend
 
 uv run pytest                         # run all tests
 uv run pytest tests/test_file.py      # run a single test file

@@ -58,7 +58,7 @@ COPY pyproject.toml uv.lock ./
 
 # Install backend + voice dependencies (not frontend, not dev).
 # The voice group pulls in pipecat-ai and aiortc, which main.py imports at
-# startup (app/backend/api/voice.py). Without it the app fails with
+# startup (backend/app/backend/api/voice.py). Without it the app fails with
 # "ModuleNotFoundError: No module named 'pipecat'".
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-dev --only-group backend --only-group voice --no-install-project

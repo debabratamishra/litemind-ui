@@ -67,5 +67,5 @@ from app.backend.api.security_utils import sanitize_filename, validate_file_size
 | New chat skill | `backend/app/skills/` + register in `ChatSkillRegistry` |
 | New RAG skill | `backend/app/skills/` + register in `RAGSkillRegistry` |
 | New document format | `backend/app/ingestion/file_ingest.py` |
-| New API route | `backend/app/backend/api/` + register router in `main.py` |
+| New API route | `backend/app/backend/api/` + register router in `backend/main.py` |
 | New Pydantic models | `backend/app/backend/models/` |

@@ -5,7 +5,7 @@ inclusion: always
 # LiteMindUI — Project Overview
 
 LiteMindUI is a **local-first AI workspace** (v0.0.27) with:
-- A **FastAPI backend** (`main.py`, port 8000) — chat, RAG, web search, voice, document ingestion
+- A **FastAPI backend** (`backend/main.py`, port 8000) — chat, RAG, web search, voice, document ingestion
 - A **Next.js 16 / TypeScript frontend** (`nextjs-frontend/`, port 3000) — primary UI
 
 The two runtimes are fully independent and communicate only over HTTP.
@@ -14,9 +14,9 @@ The two runtimes are fully independent and communicate only over HTTP.
 
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI entry point — lifespan, all route registration |
-| `config.py` | Global Config class — env vars, paths, performance tuning |
-| `logging_config.py` | Structured logging — always use `get_logger(__name__)` |
+| `backend/main.py` | FastAPI entry point — lifespan, all route registration |
+| `backend/config.py` | Global Config class — env vars, paths, performance tuning |
+| `backend/logging_config.py` | Structured logging — always use `get_logger(__name__)` |
 | `nextjs-frontend/src/app/` | Next.js App Router pages |
 | `nextjs-frontend/src/components/` | Shared shadcn/ui components |
 | `nextjs-frontend/src/lib/` | Utilities and HTTP client helpers |
@@ -35,7 +35,7 @@ backend/app/services/conversation_memory.py → multi-turn memory + summarisatio
 
 ```bash
 # Backend
-uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
 # Frontend
 cd nextjs-frontend && npm run dev

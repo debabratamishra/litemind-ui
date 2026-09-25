@@ -31,7 +31,7 @@ The release workflow (`release.yml`) bumps `version.json`, creates a git tag, an
 ## CI gates — all must pass before merge
 | Check | Command | Workflow |
 |-------|---------|----------|
-| Python syntax | `python -m compileall -q app main.py` | `pr-checks.yml` |
+| Python syntax | `python -m compileall -q backend main.py config.py logging_config.py` | `pr-checks.yml` |
 | Ruff lint | `uv run ruff check .` | `pr-checks.yml` |
 | ty type-check | `uv run ty check <backend paths>` | `pr-checks.yml` |
 

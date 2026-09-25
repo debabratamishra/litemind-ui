@@ -12,4 +12,4 @@ This directory is the canonical home for project documentation, design records, 
 - [`superpowers/specs/`](superpowers/specs/) — approved design documents.
 - [`superpowers/plans/`](superpowers/plans/) — implementation plans and verification checklists.
 
-The Astro documentation and marketing site lives under [`site/`](site/). The application code remains in the repository-level `backend/`, `nextjs-frontend/`, and `infra/` directories.
+The Astro documentation and marketing site lives under [`docs/site/`](site/). The application code remains in the repository-level `backend/`, `nextjs-frontend/`, and `infra/` directories.

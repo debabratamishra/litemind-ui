@@ -34,7 +34,7 @@ Never use a raw user-supplied file name for disk paths.
 - Do not expose internal module paths, library versions, or server internals in error responses
 
 ## CORS
-- CORS origins are configured in `main.py` — do not widen the allowed origins list without explicit approval
+- CORS origins are configured in `backend/main.py` — do not widen the allowed origins list without explicit approval
 - In development, `*` is acceptable; in production it must be a specific origin allowlist
 
 ## Logging
