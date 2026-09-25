@@ -6,9 +6,10 @@ import asyncio
 import logging
 from typing import List
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from backend.app.backend.api.auth_deps import User, get_current_user
 from backend.app.backend.api.security_utils import sanitize_filename, validate_file_size
 from backend.app.backend.core.config import backend_config
 from backend.app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
@@ -243,6 +244,7 @@ async def reset_rag_system():
 
 
 @router.post("/duplicate-check", response_model=DuplicateCheckResponse)
+@router.post("/check-duplicates", response_model=DuplicateCheckResponse)
 async def duplicate_check_rag(request: DuplicateCheckRequest):
     """Preflight check: is a file with this name already in the knowledge base?"""
     try:
@@ -280,7 +282,7 @@ async def delete_rag_file(filename: str):
 
 
 @router.post("/query")
-async def rag_query(request: RAGQueryRequestEnhanced):
+async def rag_query(request: RAGQueryRequestEnhanced, user: User = Depends(get_current_user)):
     """Query RAG system"""
     try:
         from backend.main import rag_service
@@ -288,7 +290,10 @@ async def rag_query(request: RAGQueryRequestEnhanced):
         if not rag_service:
             raise HTTPException(status_code=503, detail="RAG service not initialized")
 
-        return await _handle_rag_query(request, rag_service)
+        from backend.app.services.user_memory_service import load_memory_block
+
+        memory_block = await load_memory_block(user.id)
+        return await _handle_rag_query(request, rag_service, memory_block=memory_block)
 
     except HTTPException:
         raise
@@ -318,7 +323,7 @@ async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service)
     await asyncio.gather(*(process_single_file(path_info) for path_info in saved_paths))
 
 
-async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
+async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service, memory_block: str | None = None):
     """Handle a RAG query through the registered RAG skill layer."""
     skill = rag_skill_registry.resolve(request)
     if skill is None:
@@ -328,7 +333,7 @@ async def _handle_rag_query(request: RAGQueryRequestEnhanced, rag_service):
         logger.info("Routing RAG query through skill '%s'", skill.name)
 
         try:
-            async for chunk in skill.stream(request, rag_service):
+            async for chunk in skill.stream(request, rag_service, memory_block=memory_block):
                 yield chunk + "\n"
         except Exception as exc:
             logger.error("RAG stream error: %s", exc)

@@ -1,11 +1,7 @@
-"""Unit tests for ``app/backend/api/rag.py`` route handlers.
+"""Unit tests for the mounted RAG router handlers.
 
-The RAG router is **not** mounted in ``backend.main.app`` (the RAG endpoints served by
-the running app are duplicated inline in ``backend.main.py``). To exercise the real
-``app/backend/api/rag.py`` handlers we mount that router on a throwaway
-``FastAPI`` app. The skill layer (``rag_skill_registry``) and the RAG service
-(``backend.main.rag_service``) are mocked at their boundaries so no ChromaDB / model /
-network access occurs.
+The RAG router is mounted in ``backend.main.app``. These tests use a throwaway app so the
+skill layer and RAG service can be mocked without ChromaDB, model, or network access.
 """
 
 import io
@@ -17,10 +13,12 @@ from fastapi.testclient import TestClient
 
 import backend.main
 from backend.app.backend.api import rag as rag_api
+from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.services import user_memory_service
 
 
 def _make_fake_skill(name="standard", chunks=("doc chunk one", "doc chunk two")):
-    async def _stream(request, rag_service):
+    async def _stream(_request, _rag_service, **_kwargs):
         for c in chunks:
             yield c
 
@@ -50,6 +48,8 @@ def rag_client(monkeypatch, tmp_path):
     monkeypatch.setattr(rag_api.backend_config, "upload_folder", upload_dir)
 
     app = FastAPI()
+    app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@example.com")
+    monkeypatch.setattr(user_memory_service, "load_memory_block", AsyncMock(return_value=""))
     app.include_router(rag_api.router)
 
     client = TestClient(app)
@@ -75,7 +75,7 @@ def test_rag_query_passes_rag_service_to_skill(rag_client):
     client, registry, rag_service = rag_client
     captured = {}
 
-    async def _stream(request, svc):
+    async def _stream(_request, svc, **_kwargs):
         captured["svc"] = svc
         yield "answer"
 
@@ -100,7 +100,7 @@ def test_rag_query_no_matching_skill_returns_400(rag_client):
 
 
 def test_rag_query_service_uninitialized_returns_503(rag_client, monkeypatch):
-    client, registry, _ = rag_client
+    client, _registry, _ = rag_client
     # Force the lazy ``from backend.main import rag_service`` lookup to be falsy.
     monkeypatch.setattr(backend.main, "rag_service", None)
 
@@ -111,7 +111,7 @@ def test_rag_query_service_uninitialized_returns_503(rag_client, monkeypatch):
 def test_rag_query_skill_stream_error_yields_generic_message(rag_client):
     client, registry, _ = rag_client
 
-    async def _failing_stream(request, rag_service):
+    async def _failing_stream(_request, _rag_service, **_kwargs):
         yield "partial"
         raise RuntimeError("retrieval boom")
 
@@ -135,7 +135,7 @@ def _upload_file(name, content=b"hello world content"):
 
 
 def test_rag_upload_processes_file(rag_client):
-    client, registry, rag_service = rag_client
+    client, _registry, rag_service = rag_client
     rag_service._is_file_already_processed.return_value = (False, "")
     rag_service.add_document.return_value = {
         "status": "success",
@@ -166,7 +166,7 @@ def test_rag_upload_duplicate_is_flagged(rag_client):
 
 
 def test_rag_upload_too_many_files_returns_400(rag_client):
-    client, registry, rag_service = rag_client
+    client, _registry, _rag_service = rag_client
 
     files = [_upload_file(f"doc{i}.txt") for i in range(51)]
     resp = client.post("/api/rag/upload", files=files)
