@@ -56,9 +56,9 @@ async def synthesize_speech(request: TTSRequest):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error("TTS error: %s: %s", type(e).__name__, e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Speech synthesis failed: {str(e)}")
+    except Exception:
+        logger.exception("TTS synthesis error")
+        raise HTTPException(status_code=500, detail="Speech synthesis failed")
 
 
 @router.get("/voices")
@@ -111,6 +111,6 @@ async def synthesize_chunk(request: TTSRequest):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error("TTS chunk error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("TTS chunk synthesis error")
+        raise HTTPException(status_code=500, detail="Speech synthesis failed")

@@ -7,7 +7,6 @@ import asyncio
 import json
 import logging
 import os
-import shutil
 import signal
 import sys
 import threading
@@ -85,6 +84,17 @@ def save_rag_config_local(cfg: Dict) -> None:
 
 
 # Application lifecycle
+def _prepare_upload_folder(upload_folder: Path, *, is_containerized: bool) -> None:
+    """Ensure the upload folder exists without destroying previously uploaded files.
+
+    Uploaded documents are user data backed by a persistent volume in Docker.
+    Startup must never wipe them; only an explicit RAG reset removes files.
+    """
+    upload_folder.mkdir(parents=True, exist_ok=True)
+    if is_containerized:
+        os.chmod(upload_folder, 0o755)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown"""
@@ -97,14 +107,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"Storage path: {config_info['storage_dir']}")
 
     try:
-        if UPLOAD_FOLDER.exists():
-            shutil.rmtree(UPLOAD_FOLDER, ignore_errors=True)
-        UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
-        if config_info["is_containerized"]:
-            os.chmod(UPLOAD_FOLDER, 0o755)
-        logger.info("Uploads folder cleared")
+        _prepare_upload_folder(UPLOAD_FOLDER, is_containerized=config_info["is_containerized"])
+        logger.info("Uploads folder ready")
     except Exception as e:
-        logger.warning(f"Failed to clear uploads: {e}")
+        logger.warning(f"Failed to prepare uploads folder: {e}")
 
     # Initialize services
     global rag_service
@@ -234,8 +240,6 @@ async def lifespan(app: FastAPI):
     try:
         if rag_service:
             await rag_service.reset_system()
-        if UPLOAD_FOLDER.exists():
-            shutil.rmtree(UPLOAD_FOLDER, ignore_errors=True)
         logger.info("Cleanup completed")
     except Exception as e:
         logger.warning(f"Cleanup failed: {e}")
@@ -300,7 +304,16 @@ async def not_found_handler(request: Request, exc):
 
 @app.exception_handler(500)
 async def internal_error_handler(request: Request, exc):
-    return JSONResponse(status_code=500, content={"error": "Internal server error", "detail": str(exc)})
+    """Answer unhandled errors generically and keep the detail in the server log.
+
+    Exception text can carry connection strings, file paths, and driver
+    messages, so it must never be serialized into the response body.
+    """
+    logger.error("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": "Internal server error"},
+    )
 
 
 # Server runner

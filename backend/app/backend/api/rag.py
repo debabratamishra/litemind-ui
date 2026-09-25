@@ -118,9 +118,9 @@ async def save_rag_config(request: RAGConfigRequest):
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Save config error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to save configuration: {str(e)}")
+    except Exception:
+        logger.exception("Save config error")
+        raise HTTPException(status_code=500, detail="Failed to save configuration")
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -238,9 +238,11 @@ async def reset_rag_system():
             status="success", message=f"RAG system reset. Removed {files_removed} files.", files_removed=files_removed
         )
 
-    except Exception as e:
-        logger.error(f"Reset error: {e}")
-        raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Reset error")
+        raise HTTPException(status_code=500, detail="Reset failed")
 
 
 @router.post("/duplicate-check", response_model=DuplicateCheckResponse)
@@ -297,9 +299,9 @@ async def rag_query(request: RAGQueryRequestEnhanced, user: User = Depends(get_c
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"RAG query error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("RAG query error")
+        raise HTTPException(status_code=500, detail="Failed to process RAG query")
 
 
 async def _process_uploaded_files(saved_paths, chunk_size, results, rag_service):

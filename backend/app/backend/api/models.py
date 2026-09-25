@@ -34,9 +34,9 @@ async def get_available_models():
             models = [model["name"] for model in data.get("models", [])]
             return ModelListResponse(models=models)
 
-    except Exception as e:
-        logger.error(f"Failed to fetch models: {e}")
-        raise HTTPException(status_code=500, detail=f"Could not fetch models: {str(e)}")
+    except Exception:
+        logger.exception("Failed to fetch models")
+        raise HTTPException(status_code=500, detail="Could not fetch models")
 
 
 @router.get("/models/enhanced", response_model=EnhancedModelListResponse)
@@ -70,9 +70,9 @@ async def transcribe_audio(request: STTRequest):
             length=len(transcription) if transcription else 0
         )
 
-    except Exception as e:
-        logger.error(f"STT error: {e}")
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+    except Exception:
+        logger.exception("STT transcription error")
+        raise HTTPException(status_code=500, detail="Transcription failed")
 
 
 # Include STT router

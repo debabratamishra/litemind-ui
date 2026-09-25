@@ -128,6 +128,45 @@ def test_rag_query_skill_stream_error_yields_generic_message(rag_client):
 
 
 # --------------------------------------------------------------------------- #
+# Error responses must not carry internal exception text
+# --------------------------------------------------------------------------- #
+def test_rag_query_unexpected_error_is_generic(rag_client, monkeypatch):
+    client, _registry, _ = rag_client
+    # The route imports ``load_memory_block`` from the service module at call time.
+    monkeypatch.setattr(
+        user_memory_service, "load_memory_block", AsyncMock(side_effect=RuntimeError("db password=hunter2"))
+    )
+
+    resp = client.post("/api/rag/query", json={"query": "q"})
+
+    assert resp.status_code == 500
+    assert "hunter2" not in resp.text
+
+
+def test_rag_save_config_unexpected_error_is_generic(rag_client, monkeypatch):
+    client, _registry, _ = rag_client
+    monkeypatch.setattr(rag_api.backend_config, "save_rag_config", MagicMock(side_effect=OSError("disk /srv/full")))
+
+    resp = client.post(
+        "/api/rag/save_config",
+        json={"provider": "ollama", "embedding_model": "nomic", "chunk_size": 500},
+    )
+
+    assert resp.status_code == 500
+    assert "/srv/full" not in resp.text
+
+
+def test_rag_reset_unexpected_error_is_generic(rag_client, monkeypatch):
+    client, _registry, rag_service = rag_client
+    rag_service.reset_system = AsyncMock(side_effect=RuntimeError("chroma socket closed"))
+
+    resp = client.post("/api/rag/reset")
+
+    assert resp.status_code == 500
+    assert "chroma socket closed" not in resp.text
+
+
+# --------------------------------------------------------------------------- #
 # RAG ingestion (upload)
 # --------------------------------------------------------------------------- #
 def _upload_file(name, content=b"hello world content"):

@@ -139,7 +139,7 @@ async def test_voice_pipeline_prepends_memory_to_system_instruction():
     from backend.app.services.voice_pipeline import VoiceSettings
 
     settings = VoiceSettings(user_id="u-1", system_instruction="You are a helpful voice assistant.")
-    with patch("app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="About the user:\n- Likes tea")):
+    with patch("backend.app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="About the user:\n- Likes tea")):
         from backend.app.services.voice_pipeline import apply_memory_to_voice_settings
 
         await apply_memory_to_voice_settings(settings)
@@ -152,7 +152,7 @@ async def test_voice_pipeline_skips_memory_without_user():
     from backend.app.services.voice_pipeline import VoiceSettings, apply_memory_to_voice_settings
 
     settings = VoiceSettings(user_id=None, system_instruction="base")
-    with patch("app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="X")) as m:
+    with patch("backend.app.services.voice_pipeline.load_memory_block", new=AsyncMock(return_value="X")) as m:
         await apply_memory_to_voice_settings(settings)
     m.assert_not_called()
     assert settings.system_instruction == "base"

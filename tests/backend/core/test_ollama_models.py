@@ -28,7 +28,7 @@ async def test_build_enhanced_model_payload():
     mock_client.__aexit__.return_value = False
 
     with patch(
-        "app.backend.core.ollama_models.httpx.AsyncClient", return_value=mock_client
+        "backend.app.backend.core.ollama_models.httpx.AsyncClient", return_value=mock_client
     ):
         payload = await ollama_models.build_enhanced_model_payload(
             "http://localhost:11434"
@@ -72,7 +72,7 @@ async def test_build_enhanced_model_payload_filters_local_cloud_dups():
     mock_client.__aexit__.return_value = False
 
     with patch(
-        "app.backend.core.ollama_models.httpx.AsyncClient", return_value=mock_client
+        "backend.app.backend.core.ollama_models.httpx.AsyncClient", return_value=mock_client
     ):
         payload = await ollama_models.build_enhanced_model_payload(
             "http://localhost:11434"

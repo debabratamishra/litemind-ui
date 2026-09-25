@@ -147,3 +147,28 @@ def test_voice_offer_pipeline_failure_is_swallowed(voice_client, monkeypatch):
     # The answer is still returned; the failure is handled inside the task.
     assert resp.status_code == 200
     assert resp.json()["type"] == "answer"
+
+
+def test_voice_pipeline_error_event_is_generic(monkeypatch):
+    """The data-channel error event must not carry internal exception text."""
+
+    class RecordingConn:
+        pc_id = "test-pc"
+        sent: list = []
+
+        def send_app_message(self, message):
+            RecordingConn.sent.append(message)
+
+    async def _boom(conn, settings):
+        raise RuntimeError("pipecat transport died on 10.0.0.5:7860")
+
+    monkeypatch.setattr(voice_api, "run_voice_pipeline", _boom)
+    conn = RecordingConn()
+
+    import asyncio
+
+    settings = voice_api.VoiceSettings()
+    asyncio.run(voice_api.run_voice_pipeline_safe(conn, settings))
+
+    assert RecordingConn.sent
+    assert "10.0.0.5" not in str(RecordingConn.sent[0])

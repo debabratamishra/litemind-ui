@@ -51,6 +51,9 @@ async def test_get_available_models_provider_error(httpx_mock):
         await models.get_available_models()
     assert excinfo.value.status_code == 500
     assert "Could not fetch models" in excinfo.value.detail
+    # The upstream URL and driver message stay server-side.
+    assert "/api/tags" not in excinfo.value.detail
+    assert "500" not in excinfo.value.detail
 
 
 async def test_get_enhanced_models():
@@ -117,7 +120,7 @@ async def test_transcribe_audio_empty_transcript():
 
 async def test_transcribe_audio_service_error():
     service = MagicMock()
-    service.transcribe_audio.side_effect = RuntimeError("model missing")
+    service.transcribe_audio.side_effect = RuntimeError("model missing at /opt/models/whisper")
 
     audio = base64.b64encode(b"data").decode()
     request = STTRequest(audio_data=audio)
@@ -127,3 +130,4 @@ async def test_transcribe_audio_service_error():
             await models.transcribe_audio(request)
     assert excinfo.value.status_code == 500
     assert "Transcription failed" in excinfo.value.detail
+    assert "/opt/models/whisper" not in excinfo.value.detail

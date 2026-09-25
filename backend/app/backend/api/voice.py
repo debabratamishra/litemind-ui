@@ -28,10 +28,12 @@ async def run_voice_pipeline_safe(connection: SmallWebRTCConnection, settings: V
     """
     try:
         await run_voice_pipeline(connection, settings)
-    except Exception as exc:  # noqa: BLE001 - surface any pipeline failure to the client
+    except Exception:  # noqa: BLE001 - surface any pipeline failure to the client
         logger.exception("Voice pipeline failed for pc %s", connection.pc_id)
         try:
-            connection.send_app_message({"type": "error", "message": str(exc)})
+            # Exception text can carry hostnames, ports, and transport internals;
+            # the browser only needs to know the pipeline stopped.
+            connection.send_app_message({"type": "error", "message": "Voice pipeline failed"})
         except Exception:  # noqa: BLE001 - data channel may be closed
             logger.debug("Could not send error event (data channel closed)")
 

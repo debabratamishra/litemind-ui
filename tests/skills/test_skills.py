@@ -266,7 +266,7 @@ def test_web_search_chat_skill_stream_mocked_boundary():
     skill = WebSearchChatSkill()
     req = _web_search_request(serp_api_key="abcdefghij123456")
 
-    with patch("app.skills.web_search.WebSearchOrchestrator", _FakeOrchestrator):
+    with patch("backend.app.skills.web_search.WebSearchOrchestrator", _FakeOrchestrator):
         import anyio
 
         async def run() -> list[str]:
