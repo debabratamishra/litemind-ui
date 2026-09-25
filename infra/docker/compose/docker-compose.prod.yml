@@ -1,8 +1,8 @@
 services:
   backend:
     build:
-      context: ../../..
-      dockerfile: ../Dockerfile
+      context: .
+      dockerfile: infra/docker/Dockerfile
     container_name: litemindui-backend-prod
     network_mode: host
     volumes:
@@ -10,11 +10,11 @@ services:
       - ${HOST_HF_CACHE:-${HOME}/.cache/huggingface}:${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
       - ${HOST_OLLAMA_CACHE:-${HOME}/.ollama}:${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
       # Application data persistence
-      - ${HOST_UPLOADS_DIR:-../../../uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
-      - ${HOST_CHROMA_DB_DIR:-../../../chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
-      - ${HOST_STORAGE_DIR:-../../../storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
+      - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
       # Production logs directory
-      - ${HOST_LOGS_DIR:-../../../logs}:/app/logs
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
     environment:
       - OLLAMA_API_URL=http://localhost:11434
       - DEFAULT_OLLAMA_MODEL=${DEFAULT_OLLAMA_MODEL:-gemma3:1b}
@@ -79,8 +79,8 @@ services:
 
   frontend:
     build:
-      context: ../../..
-      dockerfile: ../Dockerfile.nextjs
+      context: .
+      dockerfile: infra/docker/Dockerfile.nextjs
     container_name: litemindui-frontend-prod
     network_mode: host
     environment:

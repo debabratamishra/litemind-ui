@@ -1,10 +1,14 @@
 # Auth infrastructure: PostgreSQL + Supabase GoTrue.
 # Single source of truth for BOTH deployment modes:
 #   Docker mode     — layered with the main file:
-#                     docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d
+#                     docker compose --project-directory . \
+#                       -f infra/docker/compose/docker-compose.yml \
+#                       -f infra/docker/compose/docker-compose.auth.yml up -d
 #   Standalone mode — run alone (backend runs natively):
-#                     docker compose -f docker-compose.auth.yml up -d   (or `make gotrue-up`)
-# Compose reads ${VARS} from .env in this directory.
+#                     docker compose --project-directory . -f infra/docker/compose/docker-compose.auth.yml up -d
+#                     (or `make gotrue-up`)
+# Compose reads ${VARS} from the repository-root .env (the project directory set
+# by `--project-directory .`, which every Makefile recipe passes).
 
 services:
   # PostgreSQL — stores GoTrue auth data plus LiteMindUI users/conversations.
@@ -16,7 +20,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-postgres}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../../../scripts/db/init-auth-schema.sql:/docker-entrypoint-initdb.d/10-init-auth-schema.sql:ro
+      - ./scripts/db/init-auth-schema.sql:/docker-entrypoint-initdb.d/10-init-auth-schema.sql:ro
     ports:
       - "5432:5432"
     healthcheck:

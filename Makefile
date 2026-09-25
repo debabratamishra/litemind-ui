@@ -4,7 +4,13 @@
 
 COMPOSE_CMD ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif docker compose version >/dev/null 2>&1; then echo "docker compose"; fi)
 COMPOSE_DIR := infra/docker/compose
-COMPOSE_FILES := -f $(COMPOSE_DIR)/docker-compose.yml -f $(COMPOSE_DIR)/docker-compose.auth.yml
+# The compose files live in infra/docker/compose/, so without this every relative
+# path, every ${VAR} interpolation and the .env lookup would resolve against that
+# subdirectory instead of the repo root. It also keeps the compose project name
+# (and therefore the pgdata volume name) equal to the checkout directory basename,
+# as it was before the files moved.
+COMPOSE_PROJECT_FLAGS := --project-directory .
+COMPOSE_FILES := $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.yml -f $(COMPOSE_DIR)/docker-compose.auth.yml
 
 # Default target
 help:
@@ -47,21 +53,21 @@ up: setup
 # Development mode
 dev: setup
 	@echo "🛠️  Starting LiteMindUI in development mode..."
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.dev.yml up -d
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.dev.yml up -d
 	@echo "✅ Development services started."
 
 # Production mode  
 prod: setup
 	@echo "🏭 Starting LiteMindUI in production mode..."
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.prod.yml up -d
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.prod.yml up -d
 	@echo "✅ Production services started."
 
 # Stop services
 down:
 	@echo "🛑 Stopping services..."
 	$(COMPOSE_CMD) $(COMPOSE_FILES) down
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.dev.yml down 2>/dev/null || true
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.prod.yml down 2>/dev/null || true
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.dev.yml down 2>/dev/null || true
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.prod.yml down 2>/dev/null || true
 
 # Show logs
 logs:
@@ -75,8 +81,8 @@ health:
 clean: down
 	@echo "🧹 Cleaning up Docker resources..."
 	$(COMPOSE_CMD) $(COMPOSE_FILES) down -v --rmi all --remove-orphans 2>/dev/null || true
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.dev.yml down -v --rmi all --remove-orphans 2>/dev/null || true
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.prod.yml down -v --rmi all --remove-orphans 2>/dev/null || true
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.dev.yml down -v --rmi all --remove-orphans 2>/dev/null || true
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.prod.yml down -v --rmi all --remove-orphans 2>/dev/null || true
 	docker system prune -f
 	@echo "✅ Cleanup complete."
 
@@ -85,21 +91,21 @@ restart: down up
 
 # Quick development workflow
 dev-restart:
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.dev.yml down
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.dev.yml up -d
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.dev.yml down
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.dev.yml up -d
 	@echo "🔄 Development services restarted."
 
 # Docker Hub deployment
 hub-up:
 	@echo "🐳 Starting LiteMindUI using Docker Hub images..."
 	@./scripts/docker-setup.sh
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.hub.yml pull
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.hub.yml up -d
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.hub.yml pull
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.hub.yml up -d
 	@echo "✅ Docker Hub services started."
 
 hub-down:
 	@echo "🛑 Stopping Docker Hub services..."
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.hub.yml down
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.hub.yml down
 
 # Version management
 version:
@@ -122,8 +128,8 @@ tag-release:
 status:
 	@echo "📊 Service Status:"
 	@$(COMPOSE_CMD) $(COMPOSE_FILES) ps 2>/dev/null || echo "No services running with default compose file"
-	@$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.dev.yml ps 2>/dev/null || echo "No development services running"
-	@$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.prod.yml ps 2>/dev/null || echo "No production services running"
+	@$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.dev.yml ps 2>/dev/null || echo "No development services running"
+	@$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.prod.yml ps 2>/dev/null || echo "No production services running"
 
 # Test Docker build and push locally
 test-docker-local:
@@ -157,14 +163,14 @@ gotrue-up:
 		exit 1; \
 	fi
 	@echo "🔐 Starting auth services (Postgres + GoTrue)..."
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.auth.yml up -d
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.auth.yml up -d
 	@echo "✅ GoTrue running at http://localhost:9999 (Postgres at localhost:5432)."
 	@echo "   Set AUTH_MODE=standalone in .env for the native backend."
 
 # Stop auth services; also removes legacy pre-compose containers if present.
 gotrue-down:
 	@echo "🛑 Stopping auth services..."
-	$(COMPOSE_CMD) -f $(COMPOSE_DIR)/docker-compose.auth.yml down
+	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.auth.yml down
 	@docker rm -f litemind-gotrue litemind-postgres 2>/dev/null || true
 	@docker network rm litemind-auth 2>/dev/null || true
 	@echo "✅ Auth services stopped."

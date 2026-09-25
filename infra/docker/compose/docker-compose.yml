@@ -4,8 +4,8 @@
 services:
   backend:
     build:
-      context: ../../..
-      dockerfile: ../Dockerfile
+      context: .
+      dockerfile: infra/docker/Dockerfile
     container_name: litemindui-backend
     ports:
       - "8000:8000"
@@ -14,10 +14,10 @@ services:
       - ${HOST_HF_CACHE:-${HOME}/.cache/huggingface}:${CONTAINER_HF_CACHE:-/root/.cache/huggingface}
       - ${HOST_OLLAMA_CACHE:-${HOME}/.ollama}:${CONTAINER_OLLAMA_CACHE:-/root/.ollama}
       # Application data persistence
-      - ${HOST_UPLOADS_DIR:-../../../uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
-      - ${HOST_CHROMA_DB_DIR:-../../../chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
-      - ${HOST_STORAGE_DIR:-../../../storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
-      - ${HOST_LOGS_DIR:-../../../logs}:/app/logs
+      - ${HOST_UPLOADS_DIR:-./uploads}:${CONTAINER_UPLOADS_DIR:-/app/uploads}
+      - ${HOST_CHROMA_DB_DIR:-./chroma_db}:${CONTAINER_CHROMA_DB_DIR:-/app/chroma_db}
+      - ${HOST_STORAGE_DIR:-./storage}:${CONTAINER_STORAGE_DIR:-/app/storage}
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
     environment:
       - OLLAMA_API_URL=http://host.docker.internal:11434
       - DEFAULT_OLLAMA_MODEL=${DEFAULT_OLLAMA_MODEL:-gemma3:1b}
@@ -46,7 +46,7 @@ services:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
       - GOTRUE_JWT_SECRET=${GOTRUE_JWT_SECRET:-}
     # gotrue and db are defined in infra/docker/compose/docker-compose.auth.yml — always launch with:
-    #   docker compose -f infra/docker/compose/docker-compose.yml -f infra/docker/compose/docker-compose.auth.yml ...
+    #   docker compose --project-directory . -f infra/docker/compose/docker-compose.yml -f infra/docker/compose/docker-compose.auth.yml ...
     depends_on:
       - gotrue
       - db
@@ -65,8 +65,8 @@ services:
 
   frontend:
     build:
-      context: ../../..
-      dockerfile: ../Dockerfile.nextjs
+      context: .
+      dockerfile: infra/docker/Dockerfile.nextjs
     container_name: litemindui-frontend
     ports:
       - "3000:3000"

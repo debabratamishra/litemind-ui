@@ -28,7 +28,7 @@ make logs        # follow logs
 make health      # run the health-check helper
 ```
 
-The underlying Compose files are referenced with `-f infra/docker/compose/<file>` when running Docker Compose directly. All Compose files use the repository root as their build context (`context: ../../..`) and the canonical Dockerfiles in `infra/docker/`.
+The underlying Compose files are referenced with `-f infra/docker/compose/<file>` when running Docker Compose directly. Pass `--project-directory .` as well: the Compose project directory (which drives the `.env` lookup, the project/volume names, and every relative path below) must stay the repository root. All Compose files use the repository root as their build context (`context: .`) and the canonical Dockerfiles in `infra/docker/`.
 
 ## Environment and persistence
 

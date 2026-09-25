@@ -16,10 +16,10 @@ services:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       - ${HOME}/.ollama:/root/.ollama
       # Application data persistence
-      - ../../../uploads:/app/uploads
-      - ../../../chroma_db:/app/chroma_db
-      - ../../../storage:/app/storage
-      - ../../../logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./chroma_db:/app/chroma_db
+      - ./storage:/app/storage
+      - ./logs:/app/logs
     environment:
       - OLLAMA_API_URL=http://host.docker.internal:11434
       - CHROMA_DB_PATH=/app/chroma_db
@@ -54,7 +54,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ../../../logs:/app/logs
+      - ./logs:/app/logs
     environment:
       - NEXT_PUBLIC_API_URL=http://backend:8000
       - NODE_ENV=production
