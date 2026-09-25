@@ -2,22 +2,31 @@
 
 The browser POSTs an SDP offer; the server answers and runs the Pipecat
 pipeline as a background task. All ongoing transcript/control events are sent
-back over the WebRTC data channel (see app.services.voice_pipeline).
+back over the WebRTC data channel (see ``backend.app.services.voice_pipeline``).
+
+Pipecat ships in the optional ``voice`` dependency group, so every Pipecat and
+voice-pipeline import here is deferred to call time: importing this module (and
+therefore ``backend.main``) must not require the extra install.
 """
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
-from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
 
 from backend.app.backend.api.auth_deps import User, get_current_user
-from backend.app.services.voice_pipeline import VoiceSettings, run_voice_pipeline
+
+if TYPE_CHECKING:
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+
+    from backend.app.services.voice_pipeline import VoiceSettings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-pcs_map: dict[str, SmallWebRTCConnection] = {}
-ice_servers = [IceServer(urls="stun:stun.l.google.com:19302")]
+pcs_map: dict[str, Any] = {}
 
 
 async def run_voice_pipeline_safe(connection: SmallWebRTCConnection, settings: VoiceSettings) -> None:
@@ -26,6 +35,8 @@ async def run_voice_pipeline_safe(connection: SmallWebRTCConnection, settings: V
     Best-effort: the data channel may already be gone by the time an error is
     surfaced, so every ``send_app_message`` is guarded.
     """
+    from backend.app.services.voice_pipeline import run_voice_pipeline
+
     try:
         await run_voice_pipeline(connection, settings)
     except Exception:  # noqa: BLE001 - surface any pipeline failure to the client
@@ -40,6 +51,10 @@ async def run_voice_pipeline_safe(connection: SmallWebRTCConnection, settings: V
 
 @router.post("/api/voice/offer")
 async def offer(request: dict, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+    from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
+
+    from backend.app.services.voice_pipeline import VoiceSettings
+
     pc_id = request.get("pc_id")
     if not pc_id:
         return {"error": "pc_id required"}
@@ -50,7 +65,7 @@ async def offer(request: dict, background_tasks: BackgroundTasks, user: User = D
             sdp=request["sdp"], type=request["type"], restart_pc=request.get("restart_pc", False)
         )
     else:
-        connection = SmallWebRTCConnection(ice_servers)
+        connection = SmallWebRTCConnection([IceServer(urls="stun:stun.l.google.com:19302")])
         await connection.initialize(sdp=request["sdp"], type=request["type"])
 
         @connection.event_handler("closed")

@@ -46,9 +46,13 @@ def voice_client(monkeypatch):
         async def renegotiate(self, sdp, type, restart_pc=False):
             calls["renegotiate"] = (sdp, type, restart_pc)
 
-    monkeypatch.setattr(voice_api, "SmallWebRTCConnection", FakeConn)
+    # The route imports Pipecat and the pipeline at call time, so patch them
+    # at their source modules rather than on the router.
+    monkeypatch.setattr(
+        "pipecat.transports.smallwebrtc.connection.SmallWebRTCConnection", FakeConn
+    )
     # Background task must not touch a real Pipecat pipeline.
-    monkeypatch.setattr(voice_api, "run_voice_pipeline", AsyncMock())
+    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", AsyncMock())
 
     voice_api.pcs_map.clear()
     client = TestClient(app)
@@ -116,7 +120,7 @@ def test_voice_offer_runs_pipeline_as_background_task(voice_client, monkeypatch)
     async def _fake_pipeline(conn, settings):
         ran["ok"] = True
 
-    monkeypatch.setattr(voice_api, "run_voice_pipeline", _fake_pipeline)
+    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _fake_pipeline)
 
     resp = client_post_offer(voice_client)
     assert resp.status_code == 200
@@ -137,7 +141,7 @@ def test_voice_offer_pipeline_failure_is_swallowed(voice_client, monkeypatch):
     async def _boom(conn, settings):
         raise RuntimeError("pipeline down")
 
-    monkeypatch.setattr(voice_api, "run_voice_pipeline", _boom)
+    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _boom)
 
     client, _ = voice_client
     resp = client.post(
@@ -162,12 +166,14 @@ def test_voice_pipeline_error_event_is_generic(monkeypatch):
     async def _boom(conn, settings):
         raise RuntimeError("pipecat transport died on 10.0.0.5:7860")
 
-    monkeypatch.setattr(voice_api, "run_voice_pipeline", _boom)
+    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _boom)
     conn = RecordingConn()
 
     import asyncio
 
-    settings = voice_api.VoiceSettings()
+    from backend.app.services.voice_pipeline import VoiceSettings
+
+    settings = VoiceSettings()
     asyncio.run(voice_api.run_voice_pipeline_safe(conn, settings))
 
     assert RecordingConn.sent

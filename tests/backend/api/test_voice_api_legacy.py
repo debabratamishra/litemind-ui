@@ -32,8 +32,14 @@ def client(monkeypatch):
         async def renegotiate(self, sdp, type, restart_pc=False):
             calls["reneg"] = True
 
-    monkeypatch.setattr(voice_mod, "SmallWebRTCConnection", FakeConn)
-    monkeypatch.setattr(voice_mod, "run_voice_pipeline", lambda conn, settings: None)
+    # The route imports Pipecat and the pipeline at call time, so patch them
+    # at their source modules rather than on the router.
+    monkeypatch.setattr(
+        "pipecat.transports.smallwebrtc.connection.SmallWebRTCConnection", FakeConn
+    )
+    monkeypatch.setattr(
+        "backend.app.services.voice_pipeline.run_voice_pipeline", lambda conn, settings: None
+    )
     app = FastAPI()
     app.include_router(voice_mod.router)
     # Voice offer now requires authentication; provide a user for the tests.
