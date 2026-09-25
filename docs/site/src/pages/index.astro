@@ -1,0 +1,189 @@
+---
+import Base from '../layouts/Base.astro';
+import { u } from '../lib/urls';
+import { benefits, enterpriseTiles, faqs, features, steps } from '../data/home';
+import CardGrid from '../components/CardGrid.astro';
+import Steps from '../components/Steps.astro';
+import SectionHead from '../components/SectionHead.astro';
+
+const repoUrl = 'https://github.com/debabratamishra/litemind-ui';
+const enterpriseUrl = 'mailto:debabrata.mishra641@gmail.com?subject=LiteMindUI%20enterprise%20support';
+---
+
+<Base title="LiteMindUI: private AI work, on your terms" description="LiteMindUI is an open-source, local-first AI workspace for chat, document Q&A, web search, and voice. Run it yourself, keep your data where you choose, and connect local or hosted models.">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-grid container">
+      <div class="hero-copy">
+        <div class="hero-kicker"><span class="status-dot" aria-hidden="true"></span> Private by design · open source · self-hosted</div>
+        <h1 id="hero-title">AI work that stays <em>in your hands.</em></h1>
+        <p class="hero-lead">
+          LiteMindUI brings chat, document questions, web search, and voice into one browser workspace. Run the model on your machine or connect a hosted provider when the job calls for it.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href={`${repoUrl}#quick-start`} target="_blank" rel="noopener">
+            <span>Install LiteMindUI</span><span class="button-icon" aria-hidden="true">↗</span>
+          </a>
+          <a class="btn btn-secondary" href="#workspace">See the workspace</a>
+        </div>
+        <div class="install-line">
+          <span>Start with the prebuilt Docker images</span>
+          <code>curl -fsSL https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/install.sh | bash</code>
+        </div>
+        <ul class="hero-proof" aria-label="Product signals">
+          <li><strong>Local or cloud</strong><span>Choose the model path</span></li>
+          <li><strong>Per-user isolation</strong><span>Built into the backend</span></li>
+          <li><strong>Browser native</strong><span>Open at localhost:3000</span></li>
+        </ul>
+      </div>
+
+      <div class="hero-visual" aria-label="LiteMindUI workspace preview">
+        <div class="visual-shell">
+          <div class="visual-top">
+            <span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span>
+            <span class="window-title">LiteMindUI / workspace</span>
+          </div>
+          <div class="visual-body">
+            <aside class="visual-sidebar" aria-hidden="true">
+              <div class="visual-logo">L</div>
+              <span class="sidebar-label">Workspace</span>
+              <span class="sidebar-item active">New conversation</span>
+              <span class="sidebar-item">Document Q&amp;A</span>
+              <span class="sidebar-item">Web search</span>
+              <span class="sidebar-item">Voice mode</span>
+              <span class="sidebar-foot">Local model ready</span>
+            </aside>
+            <div class="visual-main">
+              <div class="visual-prompt">What changed in the operations brief?</div>
+              <div class="visual-answer">
+                <div class="answer-line wide"></div>
+                <div class="answer-line"></div>
+                <div class="answer-line short"></div>
+                <div class="answer-source">Source: operations-brief.pdf · page 4</div>
+              </div>
+              <div class="visual-input"><span>Ask anything...</span><button type="button" aria-label="Send message">↑</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="visual-caption"><span class="caption-mark"></span> A focused workspace for the work already on your machine.</div>
+      </div>
+    </div>
+  </section>
+
+    <section class="section workspace-section" id="workspace" aria-labelledby="workspace-title">
+      <div class="container">
+        <SectionHead
+          title="One workspace for the work you already do"
+          lead="The interface stays out of the way. The useful parts are close at hand."
+        />
+        <CardGrid cards={features} className="feature-grid" />
+      </div>
+    </section>
+
+    <section class="section proof-section" aria-labelledby="proof-title">
+      <div class="container proof-grid">
+        <div class="proof-intro">
+          <div class="section-label">Why teams look twice</div>
+          <h2 id="proof-title">Private is a deployment decision, not a slogan.</h2>
+          <p>LiteMindUI gives you the controls to decide where inference, identity, documents, and conversation history live. The project is open for inspection, and the hosted model path is optional.</p>
+          <a class="text-link" href={`${repoUrl}#authentication`}>Read the data and auth model <span aria-hidden="true">↗</span></a>
+        </div>
+        <CardGrid cards={benefits} className="benefit-grid" />
+      </div>
+    </section>
+
+    <section class="section demo-section" aria-labelledby="demo-title">
+      <div class="container demo-layout">
+        <div class="demo-copy">
+          <div class="section-label">See the shape of the product</div>
+          <h2 id="demo-title">A browser window, not another app to manage.</h2>
+          <p>Bring the conversation, the documents, and the model settings into one place. The same interface works for a first local experiment and a larger self-hosted rollout.</p>
+          <dl class="demo-facts">
+            <div><dt>Frontend</dt><dd>Next.js / TypeScript</dd></div>
+            <div><dt>Backend</dt><dd>FastAPI</dd></div>
+            <div><dt>Retrieval</dt><dd>ChromaDB + BM25</dd></div>
+          </dl>
+        </div>
+        <figure class="demo-frame">
+          <picture>
+            <source srcset={u('/assets/demo.webp')} type="image/webp" />
+            <img src={u('/assets/demo.gif')} width="720" height="408" loading="lazy" decoding="async" alt="LiteMindUI conversation workspace in a browser window" />
+          </picture>
+          <figcaption>LiteMindUI in the browser. The installer starts the Docker stack; the interface opens at <code>localhost:3000</code>.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section start-section" aria-labelledby="start-title">
+      <div class="container start-layout">
+        <div class="start-copy">
+          <div class="section-label">From clone to conversation</div>
+          <h2 id="start-title">Start with a small model. Grow from there.</h2>
+          <p>Use the installer for the shortest path, or run the source with Docker when you want to inspect the stack. Local inference keeps the first run private; hosted providers are a configuration change.</p>
+          <a class="btn btn-primary" href={`${repoUrl}#quick-start`} target="_blank" rel="noopener"><span>Open the quick start</span><span class="button-icon" aria-hidden="true">↗</span></a>
+        </div>
+        <Steps steps={steps} />
+      </div>
+    </section>
+
+    <section class="section developer-section" aria-labelledby="developer-title">
+      <div class="container developer-layout">
+        <div class="developer-card">
+          <div class="developer-mark" aria-hidden="true">{}</div>
+          <div>
+            <div class="section-label">For the people extending it</div>
+            <h2 id="developer-title">A backend you can trace. A frontend you can change.</h2>
+            <p>Chat and RAG route through a pluggable skill layer. Retrieval combines vector and keyword search, and voice runs as a separate realtime pipeline.</p>
+            <a class="text-link" href={u('/developer/')}>Read the developer guide <span aria-hidden="true">→</span></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section enterprise-section" aria-labelledby="enterprise-title">
+      <div class="container">
+        <SectionHead title="A practical base for a private rollout" lead="Start with the open-source project, then adapt the parts your organization needs to own." />
+        <CardGrid cards={enterpriseTiles} className="enterprise-grid" />
+        <div class="enterprise-cta">
+          <div>
+            <span class="section-label">Enterprise support</span>
+            <h2 id="enterprise-title">Tell us what has to stay private.</h2>
+          </div>
+          <p>For deployment planning, identity integration, or a custom model and data-source connection, start with the use case and the constraints.</p>
+          <a class="btn btn-primary" href={enterpriseUrl}><span>Discuss your deployment</span><span class="button-icon" aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section faq-section" aria-labelledby="faq-title">
+      <div class="container faq-layout">
+        <div class="faq-intro">
+        <div class="section-label">Before you ask</div>
+        <h2 id="faq-title">The details that affect a real deployment.</h2>
+        <p>Short answers first. The repository and developer guide carry the implementation detail.</p>
+        </div>
+        <div class="faq-list">
+          {faqs.map((faq) => (
+            <details>
+              <summary>{faq.question}</summary>
+              <p>{faq.answer}</p>
+            </details>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="final-cta" aria-labelledby="final-title">
+      <div class="container final-cta-inner">
+        <div>
+          <div class="section-label">Your workspace, your rules</div>
+          <h2 id="final-title">Put LiteMindUI to work this week.</h2>
+        </div>
+        <div class="final-actions">
+          <a class="btn btn-primary" href={`${repoUrl}#quick-start`} target="_blank" rel="noopener"><span>Install LiteMindUI</span><span class="button-icon" aria-hidden="true">↗</span></a>
+          <a class="text-link light-link" href={u('/developer/')}>See how it is put together <span aria-hidden="true">→</span></a>
+        </div>
+      </div>
+    </section>
+</Base>

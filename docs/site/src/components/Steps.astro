@@ -1,0 +1,22 @@
+---
+import type { StepData } from '../data/home';
+
+interface Props {
+  steps: StepData[];
+}
+
+const { steps } = Astro.props;
+---
+
+<ol class="steps">
+  {steps.map((step, index) => (
+    <li class="step">
+      <span class="num" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+      <div>
+        <h3>{step.title}</h3>
+        <p>{step.body}</p>
+        {step.command && <code class="step-command">{step.command}</code>}
+      </div>
+    </li>
+  ))}
+</ol>
