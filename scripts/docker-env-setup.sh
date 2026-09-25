@@ -5,6 +5,15 @@
 
 set -e
 
+# The Compose files live under infra/docker/compose/, so the compose *project directory*
+# (which drives the .env lookup, the project and volume names, and every relative path
+# inside the files) has to be pinned back to the repository root — otherwise compose
+# derives the name "compose" from the file's directory, mounts empty volumes there and
+# refuses to build. This script resolves its own paths against the current directory,
+# so the root is derived from the script location rather than assumed to be ".".
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPOSE_PROJECT_FLAGS=(--project-directory "$REPO_ROOT")
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -118,6 +127,19 @@ ensure_directories() {
     chmod 755 logs uploads chroma_db storage 2>/dev/null || true
 }
 
+# Function to detect the available Compose binary
+# (must be defined above validate_docker, which calls it in the main body)
+detect_compose_cmd() {
+    if command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_CMD="docker-compose"
+    elif docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD="docker compose"
+    else
+        print_error "Docker Compose is not installed or not in PATH"
+        exit 1
+    fi
+}
+
 # Function to validate Docker setup
 validate_docker() {
     if ! command -v docker &> /dev/null; then
@@ -161,9 +183,9 @@ build_images() {
     fi
     
     if [[ -f "$ENV_FILE" ]]; then
-        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build $build_args
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build $build_args
     else
-        $COMPOSE_CMD -f "$COMPOSE_FILE" build $build_args
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" -f "$COMPOSE_FILE" build $build_args
     fi
     
     print_success "Images built successfully"
@@ -174,9 +196,9 @@ start_services() {
     print_status "Starting services in $ENVIRONMENT mode..."
     
     if [[ -f "$ENV_FILE" ]]; then
-        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
     else
-        $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" -f "$COMPOSE_FILE" up -d
     fi
     
     print_success "Services started successfully"
@@ -193,9 +215,9 @@ stop_services() {
     print_status "Stopping services..."
     
     if [[ -f "$ENV_FILE" ]]; then
-        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
     else
-        $COMPOSE_CMD -f "$COMPOSE_FILE" down
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" -f "$COMPOSE_FILE" down
     fi
     
     print_success "Services stopped successfully"
@@ -213,9 +235,9 @@ show_logs() {
     print_status "Showing logs for $ENVIRONMENT environment..."
     
     if [[ -f "$ENV_FILE" ]]; then
-        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f
     else
-        $COMPOSE_CMD -f "$COMPOSE_FILE" logs -f
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" -f "$COMPOSE_FILE" logs -f
     fi
 }
 
@@ -224,9 +246,9 @@ show_status() {
     print_status "Container status:"
     
     if [[ -f "$ENV_FILE" ]]; then
-        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
     else
-        $COMPOSE_CMD -f "$COMPOSE_FILE" ps
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" -f "$COMPOSE_FILE" ps
     fi
 }
 
@@ -236,9 +258,9 @@ cleanup() {
     
     # Stop and remove containers
     if [[ -f "$ENV_FILE" ]]; then
-        $COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans
     else
-        $COMPOSE_CMD -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans
+        $COMPOSE_CMD "${COMPOSE_PROJECT_FLAGS[@]}" -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans
     fi
     
     # Clean up unused Docker resources
@@ -321,13 +343,3 @@ case "$COMMAND" in
         exit 1
         ;;
 esac
-detect_compose_cmd() {
-    if command -v docker-compose >/dev/null 2>&1; then
-        COMPOSE_CMD="docker-compose"
-    elif docker compose version >/dev/null 2>&1; then
-        COMPOSE_CMD="docker compose"
-    else
-        print_error "Docker Compose is not installed or not in PATH"
-        exit 1
-    fi
-}
