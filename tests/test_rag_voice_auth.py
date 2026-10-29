@@ -9,8 +9,8 @@ import contextlib
 
 from fastapi.testclient import TestClient
 
-from app.backend.api.auth_deps import User, get_current_user
-from main import app
+from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.main import app
 
 
 @contextlib.contextmanager

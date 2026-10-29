@@ -14,8 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services import tts_service as ts
-from app.services.tts_service import TTSService, get_tts_service, preload_tts_model
+from backend.app.services import tts_service as ts
+from backend.app.services.tts_service import TTSService, get_tts_service, preload_tts_model
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Unit tests for app/ingestion/enhanced_document_processor.py.
+"""Unit tests for backend/app/ingestion/enhanced_document_processor.py.
 
 These tests cover the PDF / DOCX / EPUB extraction orchestration and the
 pure formatting/classification helpers. Heavy document libraries
@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.ingestion import enhanced_document_processor as edp
+from backend.app.ingestion import enhanced_document_processor as edp
 
 
 @pytest.fixture(autouse=True)

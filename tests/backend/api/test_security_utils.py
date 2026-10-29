@@ -8,7 +8,7 @@ import io
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from app.backend.api import security_utils as su
+from backend.app.backend.api import security_utils as su
 
 
 # ── sanitize_filename ──────────────────────────────────────────────

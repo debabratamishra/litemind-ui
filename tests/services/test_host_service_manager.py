@@ -15,8 +15,8 @@ from pathlib import Path
 
 import httpx
 
-from app.core.environment import environment as env_detector
-from app.services.host_service_manager import (
+from backend.app.core.environment import environment as env_detector
+from backend.app.services.host_service_manager import (
     EnvironmentConfig,
     HostServiceManager,
     ServiceStatus,

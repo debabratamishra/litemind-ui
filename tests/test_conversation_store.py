@@ -10,7 +10,7 @@ import uuid
 
 import pytest
 
-from app.backend.conversation_store import ConversationRecord, ConversationStore, MessageRecord
+from backend.app.backend.conversation_store import ConversationRecord, ConversationStore, MessageRecord
 
 
 class FakeStore(ConversationStore):

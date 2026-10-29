@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
-    from app.services.host_service_manager import host_service_manager
+    from backend.app.services.host_service_manager import host_service_manager
 except ImportError as e:
     print(f"Error importing host service manager: {e}")
     print("Make sure you're running this script from the project root directory.")

@@ -1,4 +1,4 @@
-from app.core.rag_formats import (
+from backend.app.core.rag_formats import (
     ALLOWED_UPLOAD_EXTENSIONS,
     DOCUMENT_EXTENSIONS,
     IMAGE_EXTENSIONS,

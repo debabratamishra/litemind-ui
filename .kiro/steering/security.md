@@ -14,7 +14,7 @@ These apply to every change in this repository without exception.
 - `NEXT_PUBLIC_*` env vars are baked into the client bundle — **never put secrets here**
 
 ## File upload handling
-Every upload path must call both helpers from `app/backend/api/security_utils.py`:
+Every upload path must call both helpers from `backend/app/backend/api/security_utils.py`:
 ```python
 from app.backend.api.security_utils import sanitize_filename, validate_file_size
 
@@ -34,7 +34,7 @@ Never use a raw user-supplied file name for disk paths.
 - Do not expose internal module paths, library versions, or server internals in error responses
 
 ## CORS
-- CORS origins are configured in `main.py` — do not widen the allowed origins list without explicit approval
+- CORS origins are configured in `backend/main.py` — do not widen the allowed origins list without explicit approval
 - In development, `*` is acceptable; in production it must be a specific origin allowlist
 
 ## Logging

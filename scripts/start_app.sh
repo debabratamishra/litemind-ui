@@ -21,6 +21,12 @@ detect_compose_cmd
 
 cd "$REPO_ROOT"
 
+# The Compose files moved to infra/docker/compose/, so nothing is auto-discovered here.
+# Name the same stack the Makefile's default target uses, and pin the compose project
+# directory to the repository root (the directory we just cd'd into) so the .env lookup,
+# the project/volume names and every relative path inside the files stay correct.
+COMPOSE_CMD="$COMPOSE_CMD --project-directory . -f infra/docker/compose/docker-compose.yml -f infra/docker/compose/docker-compose.auth.yml"
+
 echo "🚀 Starting LiteMindUI..."
 echo "========================="
 
@@ -56,7 +62,7 @@ fi
 
 # Test frontend
 echo "🖥️  Testing Frontend..."
-if curl -s http://localhost:8501 >/dev/null 2>&1; then
+if curl -s http://localhost:3000 >/dev/null 2>&1; then
     echo "✅ Frontend: ACCESSIBLE"
 else
     echo "❌ Frontend: NOT ACCESSIBLE - Check logs with: $COMPOSE_CMD logs frontend"
@@ -84,4 +90,4 @@ echo "     - Run: ollama serve"
 echo "     - Pull models: ollama pull llama2"
 echo ""
 echo "✨ LiteMindUI is ready to use!"
-echo "   Start by visiting: http://localhost:8501"
+echo "   Start by visiting: http://localhost:3000"

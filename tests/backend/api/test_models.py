@@ -12,8 +12,8 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from app.backend.api import models
-from app.backend.models.api_models import (
+from backend.app.backend.api import models
+from backend.app.backend.models.api_models import (
     EnhancedModelListResponse,
     ModelListResponse,
     OllamaModelInfo,
@@ -51,6 +51,9 @@ async def test_get_available_models_provider_error(httpx_mock):
         await models.get_available_models()
     assert excinfo.value.status_code == 500
     assert "Could not fetch models" in excinfo.value.detail
+    # The upstream URL and driver message stay server-side.
+    assert "/api/tags" not in excinfo.value.detail
+    assert "500" not in excinfo.value.detail
 
 
 async def test_get_enhanced_models():
@@ -117,7 +120,7 @@ async def test_transcribe_audio_empty_transcript():
 
 async def test_transcribe_audio_service_error():
     service = MagicMock()
-    service.transcribe_audio.side_effect = RuntimeError("model missing")
+    service.transcribe_audio.side_effect = RuntimeError("model missing at /opt/models/whisper")
 
     audio = base64.b64encode(b"data").decode()
     request = STTRequest(audio_data=audio)
@@ -127,3 +130,25 @@ async def test_transcribe_audio_service_error():
             await models.transcribe_audio(request)
     assert excinfo.value.status_code == 500
     assert "Transcription failed" in excinfo.value.detail
+    assert "/opt/models/whisper" not in excinfo.value.detail
+
+
+async def test_get_stt_status_returns_service_status():
+    service = MagicMock()
+    service.get_status.return_value = {"available": True, "model_loaded": True}
+
+    with patch.object(models, "get_speech_service", return_value=service):
+        result = await models.get_stt_status()
+
+    assert result["available"] is True
+
+
+async def test_get_stt_status_error_is_generic():
+    service = MagicMock()
+    service.get_status.side_effect = RuntimeError("whisper missing at /opt/models/whisper")
+
+    with patch.object(models, "get_speech_service", return_value=service):
+        result = await models.get_stt_status()
+
+    assert result == {"available": False, "error": "Unable to retrieve STT status"}
+    assert "/opt/models/whisper" not in str(result)

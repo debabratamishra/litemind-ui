@@ -12,7 +12,7 @@ real network request is ever made. We cover:
 import httpx
 import pytest
 
-from app.services import web_search_service as wss
+from backend.app.services import web_search_service as wss
 
 VALID_KEY = "abcdefghij1234567890"
 

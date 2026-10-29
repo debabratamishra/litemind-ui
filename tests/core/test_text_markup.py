@@ -1,4 +1,4 @@
-from app.core.text_markup import (
+from backend.app.core.text_markup import (
     _match_tag,
     extract_tagged_sections,
     remove_tagged_sections,

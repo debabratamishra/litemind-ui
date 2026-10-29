@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from app.services import rag_service as rs
+from backend.app.services import rag_service as rs
 
 
 # ── Fixture ──────────────────────────────────────────────────────────────────

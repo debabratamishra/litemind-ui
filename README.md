@@ -18,7 +18,7 @@ LiteMindUI is a local-first AI workspace with a FastAPI backend and a production
 curl -fsSL https://raw.githubusercontent.com/debabratamishra/litemind-ui/main/install.sh | bash
 ```
 
-This downloads `docker-compose.hub.yml`, prepares the required runtime directories, and starts the app with prebuilt images.
+This downloads `infra/docker/compose/docker-compose.hub.yml`, prepares the required runtime directories, and starts the app with prebuilt images.
 
 ### 2. Run from source with Docker
 
@@ -48,7 +48,7 @@ If you want to override defaults, copy `.env.example` to `.env` before starting 
 **Backend:**
 
 ```bash
-uv run uvicorn main:app --host 0.0.0.0 --port 8000
+uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 **Frontend (Next.js):**
@@ -83,7 +83,7 @@ LiteMindUI requires every user to register or sign in before using the app. Auth
 
 Mode is selected by `AUTH_MODE` in `.env`:
 
-- **Docker (recommended with `make up`):** auth infrastructure (`gotrue` + `db` PostgreSQL) lives in `docker-compose.auth.yml`, which `make up` layers automatically with `docker-compose.yml`. Set `GOTRUE_JWT_SECRET` (a long random string, e.g. `openssl rand -hex 32`) and `POSTGRES_PASSWORD` in `.env`, then `make up`. The backend reaches GoTrue at `http://gotrue:9999` and Postgres at `db:5432` inside the compose network. The browser talks to the backend exclusively through the Next.js frontend server via same-origin requests — the internal `backend` hostname is never exposed to the browser.
+- **Docker (recommended with `make up`):** auth infrastructure (`gotrue` + `db` PostgreSQL) lives in `infra/docker/compose/docker-compose.auth.yml`, which `make up` layers automatically with `infra/docker/compose/docker-compose.yml`. Set `GOTRUE_JWT_SECRET` (a long random string, e.g. `openssl rand -hex 32`) and `POSTGRES_PASSWORD` in `.env`, then `make up`. The backend reaches GoTrue at `http://gotrue:9999` and Postgres at `db:5432` inside the compose network. The browser talks to the backend exclusively through the Next.js frontend server via same-origin requests — the internal `backend` hostname is never exposed to the browser.
 - **Standalone (native `uv run`):** run GoTrue as a container while the backend and Postgres run natively on the host:
   ```bash
   make gotrue-up     # starts Postgres + GoTrue containers
@@ -118,24 +118,20 @@ On first run, register an account at `/register`, then sign in at `/login`. SMTP
 ## Repository layout
 
 ```text
-app/
-  backend/         FastAPI routes, schemas, and API logic
-  core/            shared configuration and application wiring
-  ingestion/       document ingestion and knowledge-processing flow
-  services/        model, RAG, speech, and web-search integrations
-  skills/          pluggable chat and RAG capability layer
-nextjs-frontend/   Next.js / TypeScript production frontend
-  src/
-    app/           App Router pages (chat, rag, web-search, settings)
-    components/    Shared UI components (markdown, generative-UI, voice, sidebar)
-    hooks/         Custom React hooks (useVoiceInput)
-    lib/           API client, Zustand store, types, generative-UI parser
-scripts/           setup, Docker, release, and health-check helpers
-docs/              deeper documentation and docs assets
-main.py            backend entrypoint
-Dockerfile         backend container
-Dockerfile.nextjs  Next.js frontend container
-docker-compose*.yml supported container workflows
+backend/              canonical FastAPI backend package
+  main.py             backend entrypoint
+  config.py           global configuration
+  logging_config.py   structured logging
+  app/                backend application modules
+nextjs-frontend/      Next.js / TypeScript production frontend
+  src/                App Router pages and shared UI modules
+infra/docker/         Dockerfiles and Compose workflow definitions
+docs/                 documentation, design records, and the Astro site
+scripts/              setup, Docker, release, and health-check helpers
+tests/                Python test suite
+main.py               compatibility shim for backend.main
+config.py             compatibility shim for backend.config
+logging_config.py     compatibility shim for backend.logging_config
 ```
 
 ## Documentation
@@ -161,10 +157,10 @@ uv run pytest -v
 uv run pytest tests/test_rag_skills.py
 
 # Run with coverage report
-uv run pytest --cov=app --cov-report=term-missing
+uv run pytest --cov=backend --cov-report=term-missing
 
 # Run with HTML coverage report
-uv run pytest --cov=app --cov-report=html
+uv run pytest --cov=backend --cov-report=html
 # Open htmlcov/index.html in a browser to view coverage
 ```
 

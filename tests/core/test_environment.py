@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.core.environment import (
+from backend.app.core.environment import (
     EnvironmentDetector,
     get_platform,
     is_containerized,
@@ -32,7 +32,7 @@ from app.core.environment import (
 # ``environment``, which shadows the submodule attribute ``app.core.environment``.
 # To rebind the module-level singleton (so the module functions observe a
 # controlled detector) we must use the real module object from sys.modules.
-_env_module = sys.modules["app.core.environment"]
+_env_module = sys.modules["backend.app.core.environment"]
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def test_get_platform_returns_current():
 
 def test_get_platform_returns_controlled_value(fresh_detector):
     """``get_platform()`` reflects ``platform.system()`` via the property."""
-    with patch("app.core.environment.platform.system", return_value="Linux"):
+    with patch("backend.app.core.environment.platform.system", return_value="Linux"):
         EnvironmentDetector._instance = None
         EnvironmentDetector._initialized = False
         det = EnvironmentDetector()
@@ -131,7 +131,7 @@ def test_is_containerized_false_without_signals(mock_env, fresh_detector):
     # ensure no container env vars leak through
     for var in ("DOCKER_CONTAINER", "CONTAINER", "KUBERNETES_SERVICE_HOST", "CONTAINER_NAME"):
         mock_env(**{var: ""})
-    with patch("app.core.environment.Path") as mock_path:
+    with patch("backend.app.core.environment.Path") as mock_path:
         # No /.dockerenv, no /proc/1/cgroup, no container mounts.
         mock_path.return_value.exists.return_value = False
         det = EnvironmentDetector()

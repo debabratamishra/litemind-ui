@@ -12,7 +12,7 @@ All session-scoped methods now take a ``user_id`` as their first argument for
 per-user isolation; these tests pin a single ``UID``.
 """
 
-from app.services import conversation_memory as cm
+from backend.app.services import conversation_memory as cm
 
 UID = "test-user"
 

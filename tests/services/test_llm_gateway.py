@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import llm_gateway as gw
+from backend.app.services import llm_gateway as gw
 
 
 # ── normalize_backend ────────────────────────────────────────────────────
@@ -203,7 +203,7 @@ def test_get_ollama_api_base_falls_back_to_config_on_import_error(monkeypatch):
     real_import = __import__
 
     def _fake_import(name, *args, **kwargs):
-        if name == "app.services.host_service_manager":
+        if name == "backend.app.services.host_service_manager":
             raise ImportError("forced")
         return real_import(name, *args, **kwargs)
 

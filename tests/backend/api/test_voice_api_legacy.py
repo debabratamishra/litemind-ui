@@ -2,12 +2,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.auth_deps import User, get_current_user
 
 
 @pytest.fixture
 def client(monkeypatch):
-    import app.backend.api.voice as voice_mod
+    import backend.app.backend.api.voice as voice_mod
 
     calls = {}
 
@@ -32,8 +32,14 @@ def client(monkeypatch):
         async def renegotiate(self, sdp, type, restart_pc=False):
             calls["reneg"] = True
 
-    monkeypatch.setattr(voice_mod, "SmallWebRTCConnection", FakeConn)
-    monkeypatch.setattr(voice_mod, "run_voice_pipeline", lambda conn, settings: None)
+    # The route imports Pipecat and the pipeline at call time, so patch them
+    # at their source modules rather than on the router.
+    monkeypatch.setattr(
+        "pipecat.transports.smallwebrtc.connection.SmallWebRTCConnection", FakeConn
+    )
+    monkeypatch.setattr(
+        "backend.app.services.voice_pipeline.run_voice_pipeline", lambda conn, settings: None
+    )
     app = FastAPI()
     app.include_router(voice_mod.router)
     # Voice offer now requires authentication; provide a user for the tests.
@@ -58,7 +64,7 @@ def test_offer_creates_connection(client):
     body = resp.json()
     assert body["pc_id"] == "test-pc"
     assert body["type"] == "answer"
-    import app.backend.api.voice as voice_mod
+    import backend.app.backend.api.voice as voice_mod
 
     assert "test-pc" in voice_mod.pcs_map
 

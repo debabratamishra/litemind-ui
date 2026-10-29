@@ -113,7 +113,7 @@ Supported component names and their expected payloads are defined in `src/lib/` 
 1. Add the payload type in `src/lib/` (TypeScript interface).
 2. Add the renderer component in `src/components/`.
 3. Add the case to the generative UI dispatcher.
-4. Update the backend system prompt instructions in `app/backend/api/chat.py` to document
+4. Update the backend system prompt instructions in `backend/app/backend/api/chat.py` to document
    the new component name and payload schema.
 
 ---

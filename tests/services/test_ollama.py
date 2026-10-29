@@ -8,8 +8,8 @@ made.
 """
 from unittest.mock import patch
 
-from app.services import llm_gateway as gw
-from app.services import ollama
+from backend.app.services import llm_gateway as gw
+from backend.app.services import ollama
 
 
 def test_get_ollama_url_returns_http_url():

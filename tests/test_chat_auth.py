@@ -1,5 +1,5 @@
 """
-Auth-gate tests for the chat endpoints (app/backend/api/chat.py).
+Auth-gate tests for the chat endpoints (backend/app/backend/api/chat.py).
 
 Verifies that the chat, stream, web-search, and memory endpoints require a
 valid user (401 when unauthenticated) and accept requests once a user is
@@ -9,8 +9,8 @@ injected via dependency override. LLM calls are stubbed so no model is needed.
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.api import chat as chat_api
-from app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api import chat as chat_api
+from backend.app.backend.api.auth_deps import User, get_current_user
 
 
 def _make_app(authed: bool):

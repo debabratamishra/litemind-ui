@@ -1,4 +1,4 @@
-"""Unit tests for ``app/backend/api/chat.py`` route handlers.
+"""Unit tests for ``backend/app/backend/api/chat.py`` route handlers.
 
 The chat route delegates to the LLM gateway (``complete_text`` /
 ``stream_completion``) and to the pluggable chat skill layer
@@ -16,10 +16,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.backend.api import chat as chat_api
-from app.backend.api.auth_deps import User, get_current_user
-from app.skills.base import SkillValidationResult
-from main import app
+from backend.app.backend.api import chat as chat_api
+from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.skills.base import SkillValidationResult
+from backend.main import app
 
 # Chat endpoints now require authentication; satisfy it for these unit tests.
 app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@x.com")

@@ -157,14 +157,23 @@ class HealthChecker:
 
     def check_filesystem_health(self) -> Dict[str, Dict[str, Any]]:
         """Check filesystem and volume mount health."""
-        # Critical directories that should be accessible
-        critical_dirs = [
-            "/app/uploads",
-            "/app/chroma_db",
-            "/app/storage",
-            "/root/.cache/huggingface",
-            "/root/.ollama"
-        ]
+        in_container = Path("/.dockerenv").exists() or (Path("/app").is_dir() and Path("/app/uploads").exists())
+        if in_container:
+            critical_dirs = [
+                "/app/uploads",
+                "/app/chroma_db",
+                "/app/storage",
+                "/root/.cache/huggingface",
+                "/root/.ollama"
+            ]
+        else:
+            critical_dirs = [
+                os.getenv("HOST_UPLOADS_DIR", "./uploads"),
+                os.getenv("HOST_CHROMA_DB_DIR", "./chroma_db"),
+                os.getenv("HOST_STORAGE_DIR", "./storage"),
+                os.getenv("HOST_HF_CACHE", str(Path.home() / ".cache" / "huggingface")),
+                os.getenv("HOST_OLLAMA_CACHE", str(Path.home() / ".ollama")),
+            ]
 
         results = {}
 

@@ -80,9 +80,9 @@ scripts/test-docker-publish.py
 .claude
 .superpowers
 # Astro site
-site/node_modules/
-site/dist/
-site/.astro/
+docs/site/node_modules/
+docs/site/dist/
+docs/site/.astro/
 
 # Ignore docs/superpowers (plans and specs)
 docs/superpowers/

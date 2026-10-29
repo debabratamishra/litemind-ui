@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from app.services import conversation_db as cdb
+from backend.app.services import conversation_db as cdb
 
 
 # ── ID generation ──────────────────────────────────────────────────────────

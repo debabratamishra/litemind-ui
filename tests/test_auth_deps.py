@@ -4,8 +4,8 @@ import jwt as jose_jwt
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.api import auth_deps
-from config import Config
+from backend.app.backend.api import auth_deps
+from backend.config import Config
 
 
 def _app():

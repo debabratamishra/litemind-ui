@@ -15,7 +15,7 @@ class FakeStore:
         return result
 
     async def add_memory(self, user_id, content, source="auto"):
-        from app.backend.user_memory_store import UserMemoryRecord
+        from backend.app.backend.user_memory_store import UserMemoryRecord
 
         rec = UserMemoryRecord(
             id=str(uuid.uuid4()), user_id=user_id, content=content, source=source,
@@ -47,14 +47,14 @@ class FakeStore:
 
 @pytest.fixture()
 def client(monkeypatch):
-    from app.backend.api.auth_deps import User, get_current_user
-    from main import app
+    from backend.app.backend.api.auth_deps import User, get_current_user
+    from backend.main import app
 
     store = FakeStore()
     # Patch the function where it's defined to affect all importers
     def get_store():
         return store
-    monkeypatch.setattr("app.backend.user_memory_store.get_user_memory_store", get_store)
+    monkeypatch.setattr("backend.app.backend.user_memory_store.get_user_memory_store", get_store)
     # Same override pattern as tests/test_chat_auth.py:_make_app
     # Create a single user instance to return consistently
     test_user = User(id=str(uuid.uuid4()), email="u1@x.com")
@@ -71,7 +71,7 @@ def test_memory_requires_auth():
     # Router mounting on main.app is covered by the fixture-based tests below.
     from fastapi import FastAPI
 
-    from app.backend.api.memory import router
+    from backend.app.backend.api.memory import router
 
     app = FastAPI()
     app.include_router(router)

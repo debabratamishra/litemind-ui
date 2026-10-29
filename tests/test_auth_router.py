@@ -5,9 +5,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.api import auth
-from app.backend.api.auth_service import GoTrueError
-from config import Config
+from backend.app.backend.api import auth
+from backend.app.backend.api.auth_service import GoTrueError
+from backend.config import Config
 
 SECRET = "s3cr3t"
 TOKEN = jose_jwt.encode({"sub": "u1", "email": "a@b.com"}, SECRET, algorithm="HS256")
