@@ -122,3 +122,8 @@ def test_astro_site_is_under_docs_site():
     root = Path(".")
     assert (root / "docs" / "site" / "package.json").exists()
     assert not (root / "site").exists()
+
+
+def test_root_app_directory_does_not_exist():
+    root = Path(".")
+    assert not (root / "app").exists(), "Stale root app/ directory must not exist"

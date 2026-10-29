@@ -25,6 +25,12 @@ async def test_health_check_returns_healthy():
     assert result.service == "LiteMindUI API"
 
 
+async def test_liveness_check_returns_alive():
+    result = await health.liveness_check()
+    assert result["status"] == "alive"
+    assert "timestamp" in result
+
+
 async def test_readiness_check_ready(tmp_path, monkeypatch):
     up = tmp_path / "uploads"
     st = tmp_path / "storage"

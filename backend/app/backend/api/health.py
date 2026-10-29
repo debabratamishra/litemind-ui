@@ -21,6 +21,12 @@ async def health_check():
     return HealthResponse(status="healthy", service="LiteMindUI API")
 
 
+@router.get("/live")
+async def liveness_check():
+    """Liveness check indicating whether the server process is alive"""
+    return {"status": "alive", "timestamp": time.time()}
+
+
 @router.get("/ready")
 async def readiness_check():
     """Container readiness check with detailed status"""

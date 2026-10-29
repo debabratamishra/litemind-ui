@@ -26,6 +26,7 @@ def _route(path: str) -> APIRoute:
 
 def test_public_api_routes_are_owned_by_feature_routers():
     assert _route("/health").endpoint is health_api.health_check
+    assert _route("/health/live").endpoint is health_api.liveness_check
     assert _route("/api/rag/query").endpoint is rag_api.rag_query
     assert _route("/api/rag/check-duplicates").endpoint is rag_api.duplicate_check_rag
     assert _route("/models").endpoint is models_api.get_available_models

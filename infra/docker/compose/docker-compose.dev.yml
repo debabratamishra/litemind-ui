@@ -95,7 +95,7 @@ services:
         labels: "environment=development,service=frontend"
     # Development health check - more frequent
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
       interval: 15s
       timeout: 5s
       retries: 3
