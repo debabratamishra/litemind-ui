@@ -162,4 +162,36 @@ describe('api client — streaming', () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(init.body).n_results).toBe(5);
   });
+
+  it('streamRagQuery passes backend, api_key, and api_base in the request body', async () => {
+    fetchMock.mockResolvedValue(makeTextResponse('rag answer'));
+    const chunks: string[] = [];
+    for await (const c of api.streamRagQuery({
+      query: 'q',
+      backend: 'openrouter',
+      api_key: 'secret-key',
+      api_base: 'https://openrouter.ai/api',
+    } as api.RAGQueryRequest)) {
+      chunks.push(c);
+    }
+    expect(chunks.join('')).toBe('rag answer');
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.backend).toBe('openrouter');
+    expect(body.api_key).toBe('secret-key');
+    expect(body.api_base).toBe('https://openrouter.ai/api');
+  });
+
+  it('streamRagQuery sends null for api_key and api_base when not provided', async () => {
+    fetchMock.mockResolvedValue(makeTextResponse('rag answer'));
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _ of api.streamRagQuery({ query: 'q' } as api.RAGQueryRequest)) {
+      /* drain */
+    }
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.backend).toBeUndefined();
+    expect(body.api_key).toBeUndefined();
+    expect(body.api_base).toBeUndefined();
+  });
 });

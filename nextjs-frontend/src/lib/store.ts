@@ -1,7 +1,7 @@
 'use client';
 
 import { create } from 'zustand';
-import type { AppSettings, ConversationMode, RagFile } from '@/lib/types';
+import type { AppSettings, BackendType, ConversationMode, RagFile } from '@/lib/types';
 import { authApi } from '@/lib/api';
 
 /**
@@ -62,6 +62,7 @@ interface AppStoreState {
   selectConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
   setSettings: (partial: Partial<AppSettings>) => void;
+  setProviderKey: (backend: BackendType, key: string | null) => void;
   setRagFiles: (files: RagFile[]) => void;
 }
 
@@ -86,6 +87,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   apiBase: null,
   ollamaUrl: null,
   serpApiKey: null,
+  providerKeys: { ollama: null, openrouter: null, nvidia_nim: null },
   sessionId: newSessionId(),
   temperature: 0.7,
   maxTokens: 2048,
@@ -221,6 +223,14 @@ export const useAppStore = create<AppState>((set) => ({
     }),
 
   setSettings: (partial) => set((state) => ({ settings: { ...state.settings, ...partial } })),
+
+  setProviderKey: (backend, key) =>
+    set((state) => ({
+      settings: {
+        ...state.settings,
+        providerKeys: { ...state.settings.providerKeys, [backend]: key },
+      },
+    })),
 
   setRagFiles: (files) => set({ ragFiles: files }),
 }));
