@@ -80,6 +80,8 @@ backend = [
     # Auth: Supabase GoTrue (JWT verify) + async Postgres conversation store
     "python-jose[cryptography]>=3.3.0",
     "asyncpg>=0.29.0",
+    # Kernel key vault: Fernet encryption for stored credentials
+    "cryptography>=42",
 ]
 
 [tool.uv]
@@ -155,6 +157,8 @@ backend = [
     # Auth: Supabase GoTrue (JWT verify) + async Postgres conversation store
     "python-jose[cryptography]>=3.3.0",
     "asyncpg>=0.29.0",
+    # Kernel key vault: Fernet encryption for stored credentials
+    "cryptography>=42",
 ]
 
 dev = [
