@@ -1,4 +1,4 @@
-"""User-level persistent memory CRUD endpoints (all require authentication)."""
+"""User-level persistent memory CRUD endpoints (seeded system user)."""
 
 from __future__ import annotations
 

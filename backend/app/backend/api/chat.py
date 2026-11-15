@@ -254,7 +254,7 @@ async def summarize_memory(session_id: str, user: User = Depends(get_system_user
 
 @router.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequestEnhanced, user: User = Depends(get_system_user)):
-    """Single chat message processing (requires authentication)."""
+    """Single chat message processing."""
     logger.info(f"Chat request - User: {user.id}, Backend: {request.backend}, Model: {request.model}")
 
     try:
@@ -267,7 +267,7 @@ async def chat_endpoint(request: ChatRequestEnhanced, user: User = Depends(get_s
 
 @router.post("/api/chat/stream")
 async def chat_stream(request: ChatRequestEnhanced, user: User = Depends(get_system_user)):
-    """Stream chat responses (requires authentication)."""
+    """Stream chat responses."""
     logger.info(f"Streaming chat - User: {user.id}, Backend: {request.backend}, Model: {request.model}")
 
     async def event_generator():
@@ -382,7 +382,7 @@ async def _stream_chat_response(request: ChatRequestEnhanced, user_id: Optional[
 
 @router.post("/api/chat/web-search")
 async def chat_web_search(request: ChatRequestEnhanced, user: User = Depends(get_system_user)):
-    """Process chat with optional web search integration (requires authentication)."""
+    """Process chat with optional web search integration."""
     logger.info(f"Web search chat request - User: {user.id}, use_web_search: {request.use_web_search}, Model: {request.model}")
 
     try:

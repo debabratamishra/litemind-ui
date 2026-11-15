@@ -145,11 +145,11 @@
 - [ ] **Step 3:** Verify: `docker build --build-arg PROFILE=core -t litemindui:core .` boots; `curl localhost:8000/health` 200; `docker images` size ≤ 1 GB; `make up` default stack still healthy (RAG needs ml).
 - [ ] **Step 4:** Commit: `build(docker): multi-stage core/ml profiles, drop auth stack, shrink base`
 
-### Task 8: Frontend auth removal + docs + gate
+### Task 8: Frontend auth removal + leftover cleanup + docs + gate
 
 **Files:**
 - Delete: `nextjs-frontend/src/app/auth-provider.tsx`, `nextjs-frontend/src/app/(auth)/`
-- Modify: `nextjs-frontend/src/app/layout.tsx:6,52-54`, `CLAUDE.md`, `README.md`
+- Modify: `nextjs-frontend/src/app/layout.tsx:6,52-54`, `CLAUDE.md`, `README.md`, `pyproject.toml` (drop `python-jose[cryptography]` from all three dependency lists), `backend/config.py` (drop `GOTRUE_API_URL`/`GOTRUE_JWT_SECRET` fields + comment), `backend/app/backend/conversation_store.py` (GoTrue mirror comment)
 - Test: full gates
 
 **Interfaces:**
@@ -157,6 +157,7 @@
 - Produces: auth-free frontend; docs matching new layout (`backend/app/kernel/`, uv profiles, `/api/keys`, `/api/kernel/providers`).
 
 - [ ] **Step 1:** Delete auth files, unwrap `<AuthProvider>` in layout; grep `src` for `auth|supabase|gotrue` (case-insensitive) → zero hits outside `(auth)`-free tree.
-- [ ] **Step 2:** Update CLAUDE.md (commands use uv groups core/ml/voice/ocr; directory layout adds `kernel/`; remove auth rows/tables mentions) and README auth sections.
-- [ ] **Step 3:** Final gate: `uv run ruff check . && uv run pytest -q && uv run ty check backend/app backend/main.py` and `cd nextjs-frontend && npm run lint && npm run build`.
-- [ ] **Step 4:** Commit: `chore: remove auth surface, document kernel layout and uv profiles`
+- [ ] **Step 2:** Remove `python-jose[cryptography]` from `pyproject.toml` (3 lists: optional-dependencies backend, dependency-groups backend, all); drop `GOTRUE_API_URL`/`GOTRUE_JWT_SECRET` from `backend/config.py` and the GoTrue comment in `conversation_store.py`; verify `uv run python -c "import backend.config"` still passes.
+- [ ] **Step 3:** Update CLAUDE.md (commands use uv groups core/ml/voice/ocr; directory layout adds `kernel/`; remove auth rows/tables mentions) and README auth sections.
+- [ ] **Step 4:** Final gate: `uv run ruff check . && uv run pytest -q && uv run ty check backend/app backend/main.py` and `cd nextjs-frontend && npm run lint && npm run build`.
+- [ ] **Step 5:** Commit: `chore: remove auth surface, config, deps, document kernel layout`
