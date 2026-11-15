@@ -355,6 +355,55 @@ export async function clearMemories(): Promise<{ deleted: number }> {
   return res.json();
 }
 
+// ─── Provider API keys (encrypted vault) ─────────────────────────────────────
+
+export interface ApiKeyRecord {
+  id: string;
+  kind: string;
+  provider: string;
+  label: string;
+  updated_at: string;
+  configured: boolean;
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  latency_ms?: number;
+  error?: string;
+}
+
+export async function getApiKeys(): Promise<ApiKeyRecord[]> {
+  const res = await fetch(`${API_BASE}/api/keys`, { credentials: 'include', cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to load API keys: ${res.status}`);
+  return res.json();
+}
+
+export async function saveApiKey(input: {
+  kind: string;
+  provider: string;
+  label: string;
+  value: string;
+}): Promise<ApiKeyRecord> {
+  const res = await postJSON('/api/keys', input);
+  if (!res.ok) throw new Error(await errorText(res));
+  return res.json();
+}
+
+export async function deleteApiKey(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/keys/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`Failed to delete API key: ${res.status}`);
+}
+
+export async function testProvider(capability: string): Promise<ProviderTestResult> {
+  const res = await postJSON('/api/kernel/providers/test', { capability });
+  if (!res.ok) throw new Error(await errorText(res));
+  return res.json();
+}
+
 // ─── Error extraction ───────────────────────────────────────────────────────────
 
 async function errorText(res: Response): Promise<string> {

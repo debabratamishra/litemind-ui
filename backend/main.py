@@ -24,6 +24,7 @@ from backend.app.backend.api import chat as chat_api
 from backend.app.backend.api import conversations as conversations_api
 from backend.app.backend.api import health as health_api
 from backend.app.backend.api import kernel as kernel_api
+from backend.app.backend.api import keys as keys_api
 from backend.app.backend.api import memory as memory_api
 from backend.app.backend.api import models as models_api
 from backend.app.backend.api import rag as rag_api
@@ -296,6 +297,7 @@ app.include_router(tts_api.router)
 app.include_router(voice_api.router)
 app.include_router(memory_api.router)
 app.include_router(kernel_api.router)
+app.include_router(keys_api.router)
 
 # NOTE: Chat endpoints have been moved to backend/app/backend/api/chat.py.
 # They are included via the router above to support web search functionality.
