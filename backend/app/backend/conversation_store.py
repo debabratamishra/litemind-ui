@@ -3,8 +3,8 @@ User-scoped conversation persistence backed by PostgreSQL (asyncpg).
 
 This replaces the previous SQLite ``conversation_db`` module. Every query is
 filtered by ``user_id`` so that one user can never read or mutate another
-user's conversations or messages — this is the core isolation guarantee for
-the authentication feature.
+user's conversations or messages — this is the core isolation guarantee
+between users.
 
 The schema (users / conversations / messages) is created idempotently by
 ``init_schema()``, which also seeds the system user (``deps.SYSTEM_USER_ID``)
@@ -141,7 +141,7 @@ class ConversationStore:
         logger.info("Conversation store schema initialized")
 
     async def upsert_user(self, user_id: str, email: Optional[str] = None) -> None:
-        """Mirror a GoTrue user into the local users table (idempotent)."""
+        """Ensure a user row exists in the local users table (idempotent)."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(

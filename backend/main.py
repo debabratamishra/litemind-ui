@@ -28,6 +28,7 @@ from backend.app.backend.api import models as models_api
 from backend.app.backend.api import rag as rag_api
 from backend.app.backend.api import tts as tts_api
 from backend.app.backend.api import voice as voice_api
+from backend.app.backend.conversation_store import get_conversation_store
 from backend.app.backend.core.config import DEFAULT_RAG_CONFIG
 from backend.app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
 from backend.app.backend.user_memory_store import get_user_memory_store
@@ -142,6 +143,14 @@ async def lifespan(app: FastAPI):
         logger.info("User memory store ready")
     except Exception as e:
         logger.warning(f"User memory schema init skipped: {e}")
+
+    # Seed the system user and backfill orphaned conversations (idempotent);
+    # degrade gracefully
+    try:
+        await get_conversation_store().init_schema()
+        logger.info("Conversation store ready")
+    except Exception as e:
+        logger.warning(f"Conversation store schema init skipped: {e}")
 
     # Restore configuration
     if rag_service is None:
