@@ -153,3 +153,54 @@ async def test_update_requires_ownership():
     assert await s.update_conversation(a.id, "userB", title="hacked") is None
     updated = await s.update_conversation(a.id, "userA", title="renamed")
     assert updated.title == "renamed"
+
+
+@pytest.mark.asyncio
+async def test_init_schema_seeds_system_user_and_backfills_orphans():
+    """init_schema() seeds the system user and repoints orphaned conversations."""
+    from backend.app.backend.api.deps import SYSTEM_USER_ID
+
+    executed = []
+    users = set()
+    orphan_owner = str(uuid.uuid4())
+    conversations = [{"id": "orphan-conv", "user_id": orphan_owner}]
+
+    class FakeConn:
+        async def execute(self, sql, *params):
+            executed.append((sql, params))
+            sql = sql.strip()
+            if sql.startswith("INSERT INTO users"):
+                users.add(str(params[0]))
+            elif sql.startswith("UPDATE conversations"):
+                for c in conversations:
+                    if c["user_id"] not in users:
+                        c["user_id"] = str(params[0])
+            return "OK"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class FakeAcquire:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class FakePool:
+        def acquire(self):
+            return FakeAcquire()
+
+    store = ConversationStore()
+    store._pool = FakePool()
+    await store.init_schema()
+
+    assert SYSTEM_USER_ID in users
+    assert conversations[0]["user_id"] == SYSTEM_USER_ID
+    assert any("INSERT INTO users" in sql for sql, _ in executed)
+    assert any("UPDATE conversations" in sql and "NOT IN" in sql for sql, _ in executed)
+    # messages has no user_id column; it must not be backfilled.
+    assert not any("UPDATE messages" in sql for sql, _ in executed)
