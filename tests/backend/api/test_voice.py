@@ -12,11 +12,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.backend.api import voice as voice_api
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 from backend.main import app
 
-# Voice offer now requires authentication; satisfy it for these unit tests.
-app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@x.com")
+# Voice offer resolves the seeded system user; override it for these unit tests.
+app.dependency_overrides[get_system_user] = lambda: User(id="u1", email="u1@x.com")
 
 
 @pytest.fixture

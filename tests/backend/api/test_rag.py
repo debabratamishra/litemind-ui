@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 import backend.main
 from backend.app.backend.api import rag as rag_api
 from backend.app.backend.api import security_utils
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 from backend.app.services import user_memory_service
 
 
@@ -53,7 +53,7 @@ def rag_client(monkeypatch, tmp_path):
     monkeypatch.setattr(rag_api.backend_config, "upload_folder", upload_dir)
 
     app = FastAPI()
-    app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@example.com")
+    app.dependency_overrides[get_system_user] = lambda: User(id="u1", email="u1@example.com")
     monkeypatch.setattr(user_memory_service, "load_memory_block", AsyncMock(return_value=""))
     app.include_router(rag_api.router)
 

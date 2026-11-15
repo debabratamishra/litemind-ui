@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 # Ensure environment variables are loaded before importing services
 load_dotenv()
 
-from backend.app.backend.api.auth_deps import User, get_current_user  # noqa: E402
+from backend.app.backend.api.deps import User, get_system_user  # noqa: E402
 from backend.app.backend.models.api_models import (  # noqa: E402
     ChatRequestEnhanced,
     ChatResponse,
@@ -217,7 +217,7 @@ def _build_messages_with_history(
 
 
 @router.get("/api/chat/memory/stats/{session_id}", response_model=MemoryStatsResponse)
-async def get_memory_stats(session_id: str, user: User = Depends(get_current_user)):
+async def get_memory_stats(session_id: str, user: User = Depends(get_system_user)):
     """Get memory statistics for a session (scoped to the authenticated user)."""
     memory_service = get_memory_service()
     stats = memory_service.get_session_stats(user.id, session_id)
@@ -236,7 +236,7 @@ async def get_memory_stats(session_id: str, user: User = Depends(get_current_use
 
 
 @router.post("/api/chat/memory/clear/{session_id}")
-async def clear_memory(session_id: str, user: User = Depends(get_current_user)):
+async def clear_memory(session_id: str, user: User = Depends(get_system_user)):
     """Clear memory for a session (scoped to the authenticated user)."""
     memory_service = get_memory_service()
     success = memory_service.clear_session(user.id, session_id)
@@ -244,7 +244,7 @@ async def clear_memory(session_id: str, user: User = Depends(get_current_user)):
 
 
 @router.post("/api/chat/memory/summarize/{session_id}")
-async def summarize_memory(session_id: str, user: User = Depends(get_current_user)):
+async def summarize_memory(session_id: str, user: User = Depends(get_system_user)):
     """Force summarization for a session (scoped to the authenticated user)."""
     memory_service = get_memory_service()
     summarized = await memory_service.summarize_if_needed(user.id, session_id, force=True)
@@ -253,7 +253,7 @@ async def summarize_memory(session_id: str, user: User = Depends(get_current_use
 
 
 @router.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequestEnhanced, user: User = Depends(get_current_user)):
+async def chat_endpoint(request: ChatRequestEnhanced, user: User = Depends(get_system_user)):
     """Single chat message processing (requires authentication)."""
     logger.info(f"Chat request - User: {user.id}, Backend: {request.backend}, Model: {request.model}")
 
@@ -266,7 +266,7 @@ async def chat_endpoint(request: ChatRequestEnhanced, user: User = Depends(get_c
 
 
 @router.post("/api/chat/stream")
-async def chat_stream(request: ChatRequestEnhanced, user: User = Depends(get_current_user)):
+async def chat_stream(request: ChatRequestEnhanced, user: User = Depends(get_system_user)):
     """Stream chat responses (requires authentication)."""
     logger.info(f"Streaming chat - User: {user.id}, Backend: {request.backend}, Model: {request.model}")
 
@@ -381,7 +381,7 @@ async def _stream_chat_response(request: ChatRequestEnhanced, user_id: Optional[
 
 
 @router.post("/api/chat/web-search")
-async def chat_web_search(request: ChatRequestEnhanced, user: User = Depends(get_current_user)):
+async def chat_web_search(request: ChatRequestEnhanced, user: User = Depends(get_system_user)):
     """Process chat with optional web search integration (requires authentication)."""
     logger.info(f"Web search chat request - User: {user.id}, use_web_search: {request.use_web_search}, Model: {request.model}")
 

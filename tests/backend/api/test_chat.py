@@ -17,12 +17,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.backend.api import chat as chat_api
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 from backend.app.skills.base import SkillValidationResult
 from backend.main import app
 
-# Chat endpoints now require authentication; satisfy it for these unit tests.
-app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@x.com")
+# Chat endpoints resolve the seeded system user; override it for these unit tests.
+app.dependency_overrides[get_system_user] = lambda: User(id="u1", email="u1@x.com")
 
 client = TestClient(app)
 
@@ -339,3 +339,30 @@ def test_memory_summarize(monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["status"] == "summarized"
     svc.summarize_if_needed.assert_awaited_once()
+
+
+# --------------------------------------------------------------------------- #
+# Moved from tests/test_chat_auth.py (auth strip): chat and stream stay
+# reachable with the seeded system user and a stubbed LLM.
+# --------------------------------------------------------------------------- #
+async def _fake_complete(*_args, **_kwargs):
+    # complete_text returns a plain string (the production code wraps it in ChatResponse)
+    return "stub-response"
+
+
+def test_chat_with_system_user_uses_stub(monkeypatch):
+    monkeypatch.setattr(chat_api, "complete_text", _fake_complete)
+    resp = client.post("/api/chat", json={"message": "hi"})
+    assert resp.status_code == 200
+    assert resp.json()["response"] == "stub-response"
+
+
+def test_stream_with_system_user_uses_stub(monkeypatch):
+    async def _stub_stream(*_args, **_kwargs):
+        yield "stub"
+        yield "-chunk"
+
+    monkeypatch.setattr(chat_api, "stream_completion", _stub_stream)
+    resp = client.post("/api/chat/stream", json={"message": "hi"})
+    assert resp.status_code == 200
+    assert "stub" in resp.text and "chunk" in resp.text

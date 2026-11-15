@@ -2,7 +2,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 
 
 @pytest.fixture
@@ -42,8 +42,8 @@ def client(monkeypatch):
     )
     app = FastAPI()
     app.include_router(voice_mod.router)
-    # Voice offer now requires authentication; provide a user for the tests.
-    app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@x.com")
+    # Voice offer resolves the seeded system user; provide a user for the tests.
+    app.dependency_overrides[get_system_user] = lambda: User(id="u1", email="u1@x.com")
     voice_mod.pcs_map.clear()
     yield TestClient(app)
     voice_mod.pcs_map.clear()

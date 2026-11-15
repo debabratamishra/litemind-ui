@@ -1,9 +1,8 @@
 """
 Conversation CRUD API.
 
-All endpoints require authentication (``get_current_user``) and are scoped to
-the calling user via ``user.id``. A user can only read or mutate their own
-conversations and messages.
+All endpoints resolve the seeded system user (``get_system_user``) and are
+scoped to that user via ``user.id``.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 from backend.app.backend.conversation_store import (
     ConversationStore,
     get_conversation_store,
@@ -52,7 +51,7 @@ class CreateMessageRequest(BaseModel):
 @router.get("")
 async def list_conversations(
     conversation_type: Optional[str] = None,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_system_user),
     store: ConversationStore = Depends(get_store),
 ):
     """List the current user's conversations."""
@@ -63,7 +62,7 @@ async def list_conversations(
 @router.post("")
 async def create_conversation(
     body: CreateConversationRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_system_user),
     store: ConversationStore = Depends(get_store),
 ):
     """Create a new conversation owned by the current user."""
@@ -77,7 +76,7 @@ async def create_conversation(
 @router.get("/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_system_user),
     store: ConversationStore = Depends(get_store),
 ):
     """Get a single conversation (404 if not found or not owned)."""
@@ -91,7 +90,7 @@ async def get_conversation(
 async def update_conversation(
     conversation_id: str,
     body: UpdateConversationRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_system_user),
     store: ConversationStore = Depends(get_store),
 ):
     """Rename or set the summary of a conversation (must be owner)."""
@@ -104,7 +103,7 @@ async def update_conversation(
 @router.delete("/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_system_user),
     store: ConversationStore = Depends(get_store),
 ):
     """Delete a conversation owned by the current user."""
@@ -117,7 +116,7 @@ async def delete_conversation(
 @router.get("/{conversation_id}/messages")
 async def list_messages(
     conversation_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_system_user),
     store: ConversationStore = Depends(get_store),
 ):
     """List messages for a conversation (must be owner)."""
@@ -129,7 +128,7 @@ async def list_messages(
 async def add_message(
     conversation_id: str,
     body: CreateMessageRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_system_user),
     store: ConversationStore = Depends(get_store),
 ):
     """Append a message to a conversation (must be owner)."""

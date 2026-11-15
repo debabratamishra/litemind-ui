@@ -20,7 +20,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.app.backend.api import auth as auth_api
 from backend.app.backend.api import chat as chat_api
 from backend.app.backend.api import conversations as conversations_api
 from backend.app.backend.api import health as health_api
@@ -278,7 +277,6 @@ app.add_middleware(
 )
 
 # Include API routers
-app.include_router(auth_api.router)
 app.include_router(conversations_api.router)
 app.include_router(chat_api.router)
 app.include_router(health_api.router)

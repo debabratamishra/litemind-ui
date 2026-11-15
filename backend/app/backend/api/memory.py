@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 from backend.app.backend.models.api_models import MemoryContentRequest, MemoryRecordResponse
 
 logger = logging.getLogger(__name__)
@@ -30,13 +30,13 @@ def _response(record) -> MemoryRecordResponse:
 
 
 @router.get("", response_model=list[MemoryRecordResponse])
-async def list_memories(user: User = Depends(get_current_user)):
+async def list_memories(user: User = Depends(get_system_user)):
     records = await _get_user_memory_store().list_memories(user.id)
     return [_response(r) for r in records]
 
 
 @router.post("", response_model=MemoryRecordResponse)
-async def add_memory(request: MemoryContentRequest, user: User = Depends(get_current_user)):
+async def add_memory(request: MemoryContentRequest, user: User = Depends(get_system_user)):
     content = request.content.strip()
     if not content:
         raise HTTPException(status_code=422, detail="Memory content cannot be empty")
@@ -46,7 +46,7 @@ async def add_memory(request: MemoryContentRequest, user: User = Depends(get_cur
 
 
 @router.put("/{memory_id}")
-async def update_memory(memory_id: str, request: MemoryContentRequest, user: User = Depends(get_current_user)):
+async def update_memory(memory_id: str, request: MemoryContentRequest, user: User = Depends(get_system_user)):
     content = request.content.strip()
     if not content:
         raise HTTPException(status_code=422, detail="Memory content cannot be empty")
@@ -57,7 +57,7 @@ async def update_memory(memory_id: str, request: MemoryContentRequest, user: Use
 
 
 @router.delete("/{memory_id}")
-async def delete_memory(memory_id: str, user: User = Depends(get_current_user)):
+async def delete_memory(memory_id: str, user: User = Depends(get_system_user)):
     deleted = await _get_user_memory_store().delete_memory(user.id, memory_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory not found")
@@ -65,6 +65,6 @@ async def delete_memory(memory_id: str, user: User = Depends(get_current_user)):
 
 
 @router.post("/clear")
-async def clear_memories(user: User = Depends(get_current_user)):
+async def clear_memories(user: User = Depends(get_system_user)):
     count = await _get_user_memory_store().clear_memories(user.id)
     return {"status": "cleared", "deleted": count}

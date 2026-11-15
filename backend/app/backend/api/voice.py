@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 
 if TYPE_CHECKING:
     from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
@@ -50,7 +50,7 @@ async def run_voice_pipeline_safe(connection: SmallWebRTCConnection, settings: V
 
 
 @router.post("/api/voice/offer")
-async def offer(request: dict, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+async def offer(request: dict, background_tasks: BackgroundTasks, user: User = Depends(get_system_user)):
     from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
 
     from backend.app.services.voice_pipeline import VoiceSettings
