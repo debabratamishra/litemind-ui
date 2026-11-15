@@ -28,26 +28,19 @@ class FakeConn:
         return "CREATE TABLE"
 
     async def fetchrow(self, sql, *params):
-        if sql.startswith("SELECT id FROM"):
-            for row in self._rows.values():
-                if row["kind"] == params[0] and row["provider"] == params[1]:
-                    return row
-            return None
         if sql.startswith("SELECT token"):
             for row in self._rows.values():
                 if row["kind"] == params[0] and row["provider"] == params[1]:
                     return row
             return None
-        if sql.startswith("UPDATE"):
-            label, token, row_id = params
-            row = self._rows.get(str(row_id))
-            if row is None:
-                return None
-            row["label"], row["token"] = label, token
-            row["updated_at"] = "2026-01-01T00:00:01+00:00"
-            return row
         if sql.startswith("INSERT"):
+            # INSERT ... ON CONFLICT (kind, provider) DO UPDATE
             kind, label, provider, token = params
+            for row in self._rows.values():
+                if row["kind"] == kind and row["provider"] == provider:
+                    row["label"], row["token"] = label, token
+                    row["updated_at"] = "2026-01-01T00:00:01+00:00"
+                    return row
             row = {
                 "id": str(uuid.uuid4()),
                 "kind": kind,
@@ -164,3 +157,9 @@ async def test_key_file_persisted_0600_and_reused_by_second_instance(tmp_path, m
 
 def test_get_key_vault_singleton():
     assert get_key_vault() is get_key_vault()
+
+
+def test_malformed_keyvault_key_raises_clear_error(monkeypatch):
+    monkeypatch.setenv("KEYVAULT_KEY", "not-a-valid-fernet-key")
+    with pytest.raises(RuntimeError, match="KEYVAULT_KEY is invalid"):
+        KeyVault()

@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS user_credentials (
     label TEXT NOT NULL DEFAULT '',
     provider TEXT NOT NULL DEFAULT '',
     token TEXT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (kind, provider)
 );
 """
 
@@ -67,7 +68,12 @@ class KeyVault:
     def __init__(self, dsn: Optional[str] = None):
         self._dsn = dsn or Config.DATABASE_URL
         self._pool: Optional[asyncpg.Pool] = None
-        self._fernet = Fernet(_resolve_fernet_key())
+        try:
+            self._fernet = Fernet(_resolve_fernet_key())
+        except Exception as exc:
+            raise RuntimeError(
+                "KEYVAULT_KEY is invalid: must be a urlsafe-base64-encoded 32-byte key"
+            ) from exc
 
     async def _get_pool(self) -> asyncpg.Pool:
         if self._pool is None:
@@ -92,34 +98,24 @@ class KeyVault:
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id FROM user_credentials WHERE kind = $1 AND provider = $2",
+                "INSERT INTO user_credentials (kind, label, provider, token)"
+                " VALUES ($1, $2, $3, $4)"
+                " ON CONFLICT (kind, provider) DO UPDATE SET"
+                " label = EXCLUDED.label, token = EXCLUDED.token, updated_at = NOW()"
+                " RETURNING id",
                 kind,
+                label,
                 provider,
+                token,
             )
-            if row is not None:
-                row = await conn.fetchrow(
-                    "UPDATE user_credentials SET label = $1, token = $2, updated_at = NOW()"
-                    " WHERE id = $3 RETURNING id",
-                    label,
-                    token,
-                    row["id"],
-                )
-            else:
-                row = await conn.fetchrow(
-                    "INSERT INTO user_credentials (kind, label, provider, token)"
-                    " VALUES ($1, $2, $3, $4) RETURNING id",
-                    kind,
-                    label,
-                    provider,
-                    token,
-                )
         return str(row["id"])
 
     async def get_credential(self, kind: str, provider: str) -> Optional[str]:
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT token FROM user_credentials WHERE kind = $1 AND provider = $2",
+                "SELECT token FROM user_credentials WHERE kind = $1 AND provider = $2"
+                " ORDER BY updated_at DESC LIMIT 1",
                 kind,
                 provider,
             )
