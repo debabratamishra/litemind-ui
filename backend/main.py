@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from backend.app.backend.api import chat as chat_api
 from backend.app.backend.api import conversations as conversations_api
 from backend.app.backend.api import health as health_api
+from backend.app.backend.api import kernel as kernel_api
 from backend.app.backend.api import memory as memory_api
 from backend.app.backend.api import models as models_api
 from backend.app.backend.api import rag as rag_api
@@ -185,7 +186,6 @@ async def lifespan(app: FastAPI):
             model_name,
         )
 
-    # Performance tuning
     try:
         cpu_threads = max(1, (os.cpu_count() or 4) - 1)
         os.environ.setdefault("OMP_NUM_THREADS", str(cpu_threads))
@@ -195,8 +195,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Thread tuning failed: {e}")
 
-    # Preload speech models for reduced latency
-    # This now runs synchronously to ensure models are ready before "startup complete"
     preload_enabled = os.getenv("PRELOAD_SPEECH_MODELS", "1").strip().lower() not in {"0", "false", "no"}
     preload_async_raw = os.getenv("PRELOAD_SPEECH_MODELS_ASYNC")
     preload_async = (
@@ -243,12 +241,10 @@ async def lifespan(app: FastAPI):
             logger.info("=" * 60)
 
         if preload_async:
-            # Optional: Run in background (set PRELOAD_SPEECH_MODELS_ASYNC=1)
             logger.info("(Running in background mode)")
             preload_thread = threading.Thread(target=preload_models, daemon=True)
             preload_thread.start()
         else:
-            # Default: Run synchronously so models are ready before server starts
             preload_models()
     else:
         logger.info("Speech model preloading disabled (PRELOAD_SPEECH_MODELS=0)")
@@ -294,9 +290,8 @@ app.include_router(rag_api.router)
 app.include_router(tts_api.router)
 app.include_router(voice_api.router)
 app.include_router(memory_api.router)
+app.include_router(kernel_api.router)
 
-# NOTE: Chat endpoints have been moved to backend/app/backend/api/chat.py.
-# They are included via the router above to support web search functionality.
 
 # Error handlers
 @app.exception_handler(404)
