@@ -84,6 +84,14 @@ async def test_ollama_default_without_key(fake_vault, clean_env):
     assert cfg.model
 
 
+async def test_search_env_key_returns_key_without_param_or_vault(fake_vault, clean_env, monkeypatch):
+    monkeypatch.setenv("SERP_API_KEY", "serp-env-key")
+    fake_vault({})
+    cfg = await kernel_router.resolve_provider_config("search")
+    assert cfg.backend == "serpapi"
+    assert cfg.api_key == "serp-env-key"
+
+
 # ── GET /api/kernel/providers ────────────────────────────────────────────────
 
 

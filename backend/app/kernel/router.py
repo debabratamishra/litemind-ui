@@ -205,7 +205,8 @@ async def resolve_provider_config(
     vault = get_key_vault()
     provider = await _select_provider(capability, vault)
     vault_key = await vault.get_credential(capability, provider)
-    resolved_key = _resolve_api_key(provider, api_key or vault_key)
+    env_key = os.getenv(_KEY_ENV_VARS.get(provider, ""))
+    resolved_key = _resolve_api_key(provider, api_key or vault_key or env_key)
     resolved_base = _resolve_api_base(provider, api_base)
     purpose = "embedding" if capability == "embeddings" else "completion"
     resolved_model = _resolve_model_name(provider, model, purpose=purpose)
