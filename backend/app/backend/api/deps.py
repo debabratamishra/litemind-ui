@@ -1,7 +1,6 @@
 """Shared route dependencies: the seeded system user.
 
-Authentication (GoTrue) was removed; every route resolves this constant
-system user instead of a JWT subject.
+No authentication layer; every route resolves this constant system user.
 """
 
 from __future__ import annotations

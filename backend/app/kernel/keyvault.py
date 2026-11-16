@@ -89,6 +89,12 @@ class KeyVault:
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(SCHEMA_SQL)
+            # Pre-existing DBs created the table before UNIQUE was inline in
+            # SCHEMA_SQL; add the constraint as a unique index for them.
+            await conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_credentials_kind_provider"
+                " ON user_credentials (kind, provider)"
+            )
 
     async def set_credential(
         self, kind: str, provider: str, label: str, plaintext: str

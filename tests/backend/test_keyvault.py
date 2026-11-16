@@ -132,6 +132,32 @@ async def test_get_unknown_returns_none():
     assert await vault.get_credential("llm", "nope") is None
 
 
+@pytest.mark.asyncio
+async def test_init_schema_creates_unique_index_on_kind_provider():
+    executed: list[str] = []
+
+    class RecordingConn(FakeConn):
+        async def execute(self, sql, *params):
+            executed.append(sql)
+            return "CREATE TABLE"
+
+    class RecordingAcquire(FakeAcquire):
+        async def __aenter__(self):
+            return RecordingConn({})
+
+    class RecordingPool(FakePool):
+        def acquire(self):
+            return RecordingAcquire(RecordingConn({}))
+
+    vault = KeyVault()
+    vault._pool = RecordingPool()
+    await vault.init_schema()
+    assert any(
+        "CREATE UNIQUE INDEX" in sql and "idx_user_credentials_kind_provider" in sql
+        for sql in executed
+    )
+
+
 # ── Key file persistence ─────────────────────────────────────────────────────
 
 

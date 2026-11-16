@@ -20,7 +20,7 @@ uv run pytest -x -q                   # fail-fast, quiet
 uv run ruff check .                   # lint (ruff)
 uv run ruff format .                  # format (ruff)
 uv run black .                        # alternative formatter (line-length 120)
-uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py
+uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/app/kernel backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py
 uv run mypy .                         # type check
 
 # ── Next.js frontend ──────────────────────────────────────────────
@@ -80,6 +80,7 @@ backend/                FastAPI backend package
     services/           business logic (LLM, RAG, speech, voice, web search)
     ingestion/          document processing pipeline
     skills/             pluggable chat and RAG capability routing
+    kernel/             provider-neutral router + encrypted key vault (keyvault.py, router.py)
 nextjs-frontend/
   src/
     app/                Next.js 16 App Router pages and layouts
@@ -159,6 +160,11 @@ Copy `.env.example` → `.env` and fill in secrets. Critical variables:
 | `CHROMA_DB_PATH` | ChromaDB storage path |
 | `UPLOAD_FOLDER` | Document upload directory |
 | `LOG_LEVEL` | Logging verbosity (`INFO` / `DEBUG`) |
+
+### Provider keys API
+
+- `POST/GET/DELETE /api/keys` — encrypted user provider keys (Fernet at rest, key in `backend/app/kernel/keyvault.py`). Responses carry `configured: bool` + metadata only; keys are never echoed.
+- `/api/kernel/providers` — provider-neutral capability resolution (`backend/app/kernel/router.py`). Resolution order everywhere: explicit request param > key vault > env var.
 
 ## CI / CD
 

@@ -2,9 +2,7 @@
 # This version uses proper port mapping instead of host networking for macOS compatibility
 
 services:
-  # PostgreSQL — users + conversations. The `auth` schema + search_path init come
-  # from scripts/db/init-auth-schema.sql; harmless now that GoTrue is gone, it
-  # keeps existing pgdata volumes consistent. Port 5432 is published to the host
+  # PostgreSQL — users + conversations. Port 5432 is published to the host
   # because backend/config.py defaults DATABASE_URL to localhost:5432, so native
   # (non-Docker) backend runs must still reach this database.
   db:
@@ -15,7 +13,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-postgres}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./scripts/db/init-auth-schema.sql:/docker-entrypoint-initdb.d/10-init-auth-schema.sql:ro
     ports:
       - "5432:5432"
     healthcheck:

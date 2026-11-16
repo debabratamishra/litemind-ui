@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { X, RotateCcw, CheckCircle2, XCircle, Loader2, ShieldCheck, Shuffle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +32,9 @@ import {
   updateMemory,
   deleteMemory,
   clearMemories,
+  getApiKeys,
+  deleteApiKey,
+  type ApiKeyRecord,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Model, BackendType, MemoryRecord } from '@/lib/types';
@@ -240,6 +244,9 @@ export function SettingsPanel({
   const [cloudModels, setCloudModels] = React.useState<Model[]>([]);
   const [serpStatus, setSerpStatus] = React.useState<{ status: string; message: string } | null>(null);
   const [checking, setChecking] = React.useState(false);
+  const [apiKeys, setApiKeys] = React.useState<ApiKeyRecord[]>([]);
+  const [keysError, setKeysError] = React.useState<string | null>(null);
+  const [deletingKeyId, setDeletingKeyId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     getEnhancedModels()
@@ -252,6 +259,36 @@ export function SettingsPanel({
         setCloudModels([]);
       });
   }, []);
+
+  const loadKeys = React.useCallback(() => {
+    getApiKeys()
+      .then((rows) => {
+        setApiKeys(rows);
+        setKeysError(null);
+      })
+      .catch(() => {
+        setApiKeys([]);
+        setKeysError('Could not load saved keys');
+      });
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    loadKeys();
+  }, [open, loadKeys]);
+
+  const deleteKey = async (id: string) => {
+    setDeletingKeyId(id);
+    try {
+      await deleteApiKey(id);
+      setApiKeys((rows) => rows.filter((r) => r.id !== id));
+      setKeysError(null);
+    } catch {
+      setKeysError('Could not delete key');
+    } finally {
+      setDeletingKeyId(null);
+    }
+  };
 
   const resetGeneration = () => setSettings({ ...GENERATION_DEFAULTS });
 
@@ -609,6 +646,55 @@ export function SettingsPanel({
                   className="h-8 text-sm"
                 />
               </div>
+            </Section>
+
+            <Separator />
+
+            <Section title="Providers">
+              {keysError && <p className="text-xs text-destructive">{keysError}</p>}
+              {apiKeys.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No provider keys saved yet.
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {apiKeys.map((k) => (
+                    <li
+                      key={k.id}
+                      className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-sm"
+                    >
+                      <span className="min-w-0 truncate">
+                        {k.kind} / {k.provider}
+                        {k.label ? ` — ${k.label}` : ''}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {k.configured ? (
+                          <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                            Configured
+                          </span>
+                        ) : (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            Not configured
+                          </span>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-1.5 text-xs"
+                          onClick={() => void deleteKey(k.id)}
+                          disabled={deletingKeyId === k.id}
+                          aria-label={`Delete ${k.provider} key`}
+                        >
+                          Delete
+                        </Button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link href="/settings/providers" className="text-xs text-primary hover:underline">
+                Manage provider keys →
+              </Link>
             </Section>
 
             <Separator />
