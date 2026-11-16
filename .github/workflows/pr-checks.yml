@@ -81,9 +81,9 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Backend + dev groups cover the core application code that `ty` checks.
-      - name: Install backend + dev dependencies
-        run: uv sync --group backend --group dev
+      # All + dev groups cover the core application code that `ty` checks.
+      - name: Install all + dev dependencies
+        run: uv sync --group all --group dev
 
       - name: Run ty
         run: uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py

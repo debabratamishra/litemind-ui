@@ -9,25 +9,12 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-# Optional imports for enhanced features
-EASYOCR_AVAILABLE = False
+# Optional imports for enhanced features (ocr group): probed on first use so a
+# core-only install can import this module.
 easyocr: Any = None
-if os.getenv("LITEMIND_DISABLE_EASYOCR", "").strip().lower() in {"1", "true", "yes", "on"}:
-    logging.info("EasyOCR disabled via LITEMIND_DISABLE_EASYOCR")
-else:
-    try:
-        import easyocr
-        EASYOCR_AVAILABLE = True
-    except Exception as e:
-        logging.warning(f"EasyOCR not available: {e}")
-
+EASYOCR_AVAILABLE: Any = None
 cv2: Any = None
-CV2_AVAILABLE = False
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except ImportError as e:
-    logging.warning(f"OpenCV not available: {e}")
+CV2_AVAILABLE: Any = None
 
 from .enhanced_document_processor import (  # noqa: E402
     extract_docx_enhanced,
@@ -38,6 +25,41 @@ from .enhanced_document_processor import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+
+def _probe_easyocr() -> None:
+    """Import EasyOCR lazily; a flag patched by tests before use is left untouched."""
+    global easyocr, EASYOCR_AVAILABLE
+    if EASYOCR_AVAILABLE is not None:
+        return
+    if os.getenv("LITEMIND_DISABLE_EASYOCR", "").strip().lower() in {"1", "true", "yes", "on"}:
+        logging.info("EasyOCR disabled via LITEMIND_DISABLE_EASYOCR")
+        EASYOCR_AVAILABLE = False
+        return
+    try:
+        import easyocr as _easyocr
+
+        easyocr = _easyocr
+        EASYOCR_AVAILABLE = True
+    except Exception as e:
+        EASYOCR_AVAILABLE = False
+        logging.warning(f"EasyOCR not available: {e}")
+
+
+def _probe_cv2() -> None:
+    """Import OpenCV lazily; a flag patched by tests before use is left untouched."""
+    global cv2, CV2_AVAILABLE
+    if CV2_AVAILABLE is not None:
+        return
+    try:
+        import cv2 as _cv2
+
+        cv2 = _cv2
+        CV2_AVAILABLE = True
+    except ImportError as e:
+        CV2_AVAILABLE = False
+        logging.warning(f"OpenCV not available: {e}")
+
+
 class EnhancedImageProcessor:
     """Enhanced image processor with OCR and content analysis."""
 
@@ -45,6 +67,7 @@ class EnhancedImageProcessor:
         self.ocr_reader = None
         self.initialized = False
 
+        _probe_easyocr()
         if EASYOCR_AVAILABLE and easyocr is not None:
             try:
                 self.ocr_reader = easyocr.Reader(['en'], gpu=False)
@@ -104,6 +127,7 @@ class EnhancedImageProcessor:
 
     def _build_ocr_variants(self, img_array: np.ndarray) -> List[np.ndarray]:
         """Create a small set of OCR-friendly image variants."""
+        _probe_cv2()
         variants = [img_array]
 
         if img_array.ndim == 3:
@@ -256,6 +280,7 @@ class EnhancedImageProcessor:
 
     def _detect_structured_content(self, img_array: np.ndarray, metadata: dict) -> List[dict]:
         """Detect tables, charts, or other structured content."""
+        _probe_cv2()
         content = []
 
         if not CV2_AVAILABLE:

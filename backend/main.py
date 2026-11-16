@@ -13,7 +13,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -34,16 +34,7 @@ from backend.app.backend.conversation_store import get_conversation_store
 from backend.app.backend.core.config import DEFAULT_RAG_CONFIG
 from backend.app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
 from backend.app.backend.user_memory_store import get_user_memory_store
-from backend.app.services.rag_service import RAGService
-from backend.app.services.speech_service import preload_stt_model
-from backend.app.services.tts_service import preload_tts_model
 from backend.config import Config
-
-torch: Any = None
-try:
-    import torch
-except ImportError:
-    pass
 
 # Configure logging early so lifespan hooks can use logger
 try:
@@ -133,6 +124,8 @@ async def lifespan(app: FastAPI):
     # Initialize services
     global rag_service
     try:
+        from backend.app.services.rag_service import RAGService
+
         rag_service = RAGService()
         logger.info("RAG service ready")
     except Exception as e:
@@ -191,8 +184,12 @@ async def lifespan(app: FastAPI):
     try:
         cpu_threads = max(1, (os.cpu_count() or 4) - 1)
         os.environ.setdefault("OMP_NUM_THREADS", str(cpu_threads))
-        if torch:
+        try:
+            import torch
+
             torch.set_num_threads(cpu_threads)
+        except ImportError:
+            pass
         logger.info(f"Thread optimization applied: {cpu_threads} threads")
     except Exception as e:
         logger.warning(f"Thread tuning failed: {e}")
@@ -215,6 +212,9 @@ async def lifespan(app: FastAPI):
         logger.info("=" * 60)
 
         def preload_models():
+            from backend.app.services.speech_service import preload_stt_model
+            from backend.app.services.tts_service import preload_tts_model
+
             start_time = time.time()
             stt_loaded = False
             tts_loaded = False

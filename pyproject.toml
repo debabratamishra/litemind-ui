@@ -77,26 +77,22 @@ backend = [
     # Required by transformers 5.x pipeline for device management
     "accelerate",
 
-    # Auth: Supabase GoTrue (JWT verify) + async Postgres conversation store
-    "python-jose[cryptography]>=3.3.0",
+    # Async Postgres conversation store (GoTrue auth removed T1)
     "asyncpg>=0.29.0",
     # Kernel key vault: Fernet encryption for stored credentials
     "cryptography>=42",
 ]
 
 [tool.uv]
-# Dependency groups for optional installation
-# Backend: FastAPI, ML, RAG
-# Dev: testing and code quality
+# Install profiles via dependency groups: core / ml / voice / ocr / dev / all.
+# `uv sync --group all` installs everything; a core-only image needs just core.
 
 [dependency-groups]
-backend = [
-    # Shared core dependencies
-    "python-dotenv",
-    "psutil",
-    "litellm",
-
-    # Core FastAPI
+# Install profiles. `core` is the always-required set: a core-only image must
+# boot (`import backend.main`) without chromadb/torch/transformers/pipecat/
+# kokoro/librosa/easyocr/cv2/crewai importable at module level.
+core = [
+    # Core FastAPI + server plumbing
     "fastapi",
     "uvicorn",
     "python-multipart",
@@ -104,61 +100,58 @@ backend = [
     "pydantic",
     "httpx",
     "requests",
-    
-    # RAG and ML
+    "python-dotenv",
+    "psutil",
+    "rank-bm25",
+    "asyncpg",
+    "cryptography",
+    "litellm",
+    "ollama",
+]
+
+ml = [
+    # RAG: vector store, embeddings, retrieval tooling
     "chromadb",
     "sentence-transformers",
-    "rank-bm25",
-    "huggingface-hub",
-    "transformers",
-    "numpy",
-    
-    # PyTorch CPU-only
     "torch",
     "torchvision",
+    "transformers",
+    "accelerate",
+    "huggingface-hub",
+    "numpy",
+    "pandas",
+    "crewai",
+    "nltk",
+]
 
-    # Document Processing
+voice = [
+    # Realtime voice mode: Pipecat WebRTC transport + Silero VAD
+    "pipecat-ai",
+    # Optional dep required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
+    "aiortc",
+    "pyttsx3",
+    "kokoro",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "librosa",
+    "soundfile",
+]
+
+ocr = [
+    # Document ingestion: OCR + PDF/Office extraction
+    "easyocr",
+    "opencv-python-headless",
+    "camelot-py[cv]",
+    "Pillow",
     "PyMuPDF",
     "pdfplumber",
     "python-docx",
     "python-pptx",
-    "beautifulsoup4",
+    "bs4",
     "trafilatura",
     "striprtf",
     "odfpy",
     "openpyxl",
     "PyYAML",
-    "camelot-py[cv]",
-    "Pillow",
-    "opencv-python-headless",
-    "easyocr",
-    "pandas",
-    "nltk",
-    "ollama",
-
-    # Web Search
-    "crewai",
-    # Note: google-search-results removed - SerpAPI is called via httpx REST API directly
-    
-    # Text-to-Speech
-    # Note: edge-tts removed - TTS uses kokoro (primary) or pyttsx3 (fallback)
-    "pyttsx3",
-    "kokoro",
-    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-    
-    # Speech-to-Text (using transformers Whisper pipeline)
-    # Note: faster-whisper removed - using transformers + Whisper for simpler stack
-    # Audio processing for STT
-    "librosa",
-    "soundfile",
-    # Required by transformers 5.x pipeline for device management
-    "accelerate",
-
-    # Auth: Supabase GoTrue (JWT verify) + async Postgres conversation store
-    "python-jose[cryptography]>=3.3.0",
-    "asyncpg>=0.29.0",
-    # Kernel key vault: Fernet encryption for stored credentials
-    "cryptography>=42",
 ]
 
 dev = [
@@ -170,21 +163,9 @@ dev = [
     "ty>=0.0.60",
 ]
 
-voice = [
-    # Realtime voice mode: Pipecat WebRTC transport + Silero VAD (core includes both)
-    "pipecat-ai",
-    # Optional dep required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
-    "aiortc",
-]
-
-# All dependencies for local development (both backend and frontend)
+# Union of every install profile, for local development
 all = [
-    # Shared core dependencies
-    "python-dotenv",
-    "psutil",
-    "litellm",
-
-    # Core FastAPI
+    # core
     "fastapi",
     "uvicorn",
     "python-multipart",
@@ -192,56 +173,48 @@ all = [
     "pydantic",
     "httpx",
     "requests",
-    
-    # RAG and ML
+    "python-dotenv",
+    "psutil",
+    "rank-bm25",
+    "asyncpg",
+    "cryptography",
+    "litellm",
+    "ollama",
+    # ml
     "chromadb",
     "sentence-transformers",
-    "rank-bm25",
-    "huggingface-hub",
-    "transformers",
-    "numpy",
-    
-    # PyTorch CPU-only
     "torch",
     "torchvision",
-
-    # Document Processing
+    "transformers",
+    "accelerate",
+    "huggingface-hub",
+    "numpy",
+    "pandas",
+    "crewai",
+    "nltk",
+    # voice
+    "pipecat-ai",
+    "aiortc",
+    "pyttsx3",
+    "kokoro",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "librosa",
+    "soundfile",
+    # ocr
+    "easyocr",
+    "opencv-python-headless",
+    "camelot-py[cv]",
+    "Pillow",
     "PyMuPDF",
     "pdfplumber",
     "python-docx",
     "python-pptx",
-    "beautifulsoup4",
+    "bs4",
     "trafilatura",
     "striprtf",
     "odfpy",
     "openpyxl",
     "PyYAML",
-    "camelot-py[cv]",
-    "Pillow",
-    "opencv-python-headless",
-    "easyocr",
-    "pandas",
-    "nltk",
-    "ollama",
-
-    # Web Search
-    "crewai",
-    
-    # Text-to-Speech
-    "pyttsx3",
-    "kokoro",
-    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-
-    # Audio Processing
-    "librosa",
-    "soundfile",
-    "pipecat-ai",
-    # Required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
-    "aiortc",
-
-    # Auth: Supabase GoTrue (JWT verify) + async Postgres conversation store
-    "python-jose[cryptography]>=3.3.0",
-    "asyncpg>=0.29.0",
 ]
 
 # Configure PyTorch to use CPU-only version
@@ -282,10 +255,10 @@ disallow_untyped_defs = false
 [tool.ty]
 environment = { python-version = "3.13" }
 
-# `pipecat` is an optional dependency (the `voice` group) that is NOT installed in
-# CI's `ty` job, which installs only `--group backend --group dev`. Allow its
-# submodules as unresolved imports so type-checking of the voice pipeline does not
-# fail in CI. New `pipecat.*` imports must be added here to avoid `unresolved-import`.
+# `pipecat` is an optional dependency (the `voice` group). CI's `ty` job
+# installs `--group all --group dev`, but its submodules are allowed as
+# unresolved imports so type-checking of the voice pipeline stays robust. New
+# `pipecat.*` imports must be added here to avoid `unresolved-import`.
 [tool.ty.analysis]
 allowed-unresolved-imports = [
     "pipecat.audio.vad.silero",

@@ -56,19 +56,17 @@ WORKDIR /app
 # Copy dependency metadata first for better caching
 COPY pyproject.toml uv.lock ./
 
-# Install backend + voice dependencies (not frontend, not dev).
-# The voice group pulls in pipecat-ai and aiortc, which main.py imports at
-# startup (backend/app/backend/api/voice.py). Without it the app fails with
-# "ModuleNotFoundError: No module named 'pipecat'".
+# Install every profile except dev (not frontend). The heavy imports are lazy,
+# so a core-only image also boots; add --only-group core to slim it further.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --only-group backend --only-group voice --no-install-project
+    uv sync --no-dev --only-group all --no-install-project
 
 # Copy application code
 COPY . .
 
-# Install the project itself (backend + voice groups)
+# Install the project itself (all profiles)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --only-group backend --only-group voice
+    uv sync --no-dev --only-group all
 
 # Ensure the container uses the project's virtual environment for runtime
 ENV VIRTUAL_ENV="/app/.venv"

@@ -5,6 +5,10 @@ LLM  -> app.services.llm_gateway       (chosen provider via LiteLLM/Ollama)
 TTS  -> app.services.tts_service       (Kokoro, primary)
 VAD  -> Pipecat SileroVADAnalyzer
 Events -> WebRTC data channel (SmallWebRTCConnection.send_app_message)
+
+Pipecat, numpy, soundfile and openai ship in the optional ``voice``/``ml``
+groups, so ``_ensure_heavy`` imports them on first use: importing this module
+(and therefore ``backend.main``) must not require the extra install.
 """
 from __future__ import annotations
 
@@ -12,36 +16,7 @@ import asyncio
 import io
 import logging
 from dataclasses import dataclass
-from typing import Any, cast
-
-import numpy as np
-import soundfile as sf
-from openai import AsyncOpenAI
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import (
-    LLMFullResponseEndFrame,
-    LLMTextFrame,
-    TextFrame,
-    TranscriptionFrame,
-    TTSAudioRawFrame,
-)
-from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.worker import PipelineParams, PipelineWorker
-from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import (
-    LLMContextAggregatorPair,
-)
-from pipecat.processors.audio.vad_processor import VADProcessor
-from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.services.openai.base_llm import BaseOpenAILLMService, OpenAILLMSettings
-from pipecat.services.settings import STTSettings, TTSSettings
-from pipecat.services.stt_service import SegmentedSTTService
-from pipecat.services.tts_service import TTSService
-from pipecat.transports.base_transport import TransportParams
-from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
-from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-from pipecat.workers.runner import WorkerRunner
+from typing import TYPE_CHECKING, Any, cast
 
 from backend.app.services.llm_gateway import stream_completion
 from backend.app.services.speech_service import get_speech_service
@@ -49,6 +24,44 @@ from backend.app.services.tts_service import get_tts_service
 from backend.app.services.user_memory_service import load_memory_block, run_memory_update
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    # Static-only names for the lazily-bound builders below. ``_ensure_heavy``
+    # fills the real bindings at runtime, so a core-only import stays light
+    # while type checking still sees the Pipecat names (voice group).
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.audio.vad.vad_analyzer import VADParams
+    from pipecat.pipeline.pipeline import Pipeline
+    from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+    from pipecat.processors.aggregators.llm_context import LLMContext
+    from pipecat.processors.aggregators.llm_response_universal import (
+        LLMContextAggregatorPair,
+    )
+    from pipecat.processors.audio.vad_processor import VADProcessor
+    from pipecat.processors.frame_processor import FrameProcessor
+    from pipecat.services.openai.base_llm import BaseOpenAILLMService
+    from pipecat.services.stt_service import SegmentedSTTService
+    from pipecat.services.tts_service import TTSService
+    from pipecat.transports.base_transport import TransportParams
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+    from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+    from pipecat.workers.runner import WorkerRunner
+
+    class BackendWhisperSTTService(SegmentedSTTService): ...
+    class BackendKokoroTTSService(TTSService): ...
+
+    class BackendLLMService(BaseOpenAILLMService):
+        def __init__(self, settings: VoiceSettings, **kwargs): ...
+
+    class UserTranscriptEmitter(FrameProcessor):
+        def __init__(self, connection: SmallWebRTCConnection, **kwargs): ...
+
+    class AssistantTranscriptEmitter(FrameProcessor):
+        def __init__(self, connection: SmallWebRTCConnection, **kwargs): ...
+
+# Lazily-imported voice-group bindings: ``_ensure_heavy`` fills these in on
+# first use, and tests may monkeypatch them before that (see module
+# ``__getattr__``).
 
 DEFAULT_SYSTEM_INSTRUCTION = (
     "You are a helpful voice assistant. Respond briefly and conversationally. "
@@ -85,162 +98,6 @@ async def apply_memory_to_voice_settings(settings: VoiceSettings) -> None:
     block = await load_memory_block(settings.user_id)
     if block:
         settings.system_instruction = f"{settings.system_instruction}\n\n{block}"
-
-
-class BackendWhisperSTTService(SegmentedSTTService):
-    """Delegates to the existing Whisper speech_service.
-
-    Whisper is a batch model, so we extend ``SegmentedSTTService`` which buffers
-    audio and only runs STT when VAD reports the user stopped speaking. The base
-    ``STTService`` fires on every ~20 ms frame, which floods Whisper with
-    near-silent chunks and makes it hallucinate ("Thank you for watching").
-
-    The buffered segment is raw 16-bit mono PCM, decoded via
-    ``SpeechService.transcribe_pcm`` (not an encoded file).
-    """
-
-    def __init__(self, **kwargs):
-        # model/language are not applicable to our backend STT — mark them
-        # explicitly as None to satisfy Pipecat's STTSettings validation
-        # (otherwise it warns "fields are NOT_GIVEN").
-        super().__init__(
-            settings=STTSettings(model=None, language=None),
-            sample_rate=16000,
-            **kwargs,
-        )
-
-    @property
-    def wants_wav_segments(self) -> bool:
-        # Whisper reads the raw PCM buffer directly; wrapping it in a WAV
-        # container would make transcribe_pcm misinterpret the 44-byte header.
-        return False
-
-    async def run_stt(self, audio: bytes):
-        text = get_speech_service().transcribe_pcm(audio, source_rate=self.sample_rate)
-        if text:
-            yield TranscriptionFrame(
-                text=text, user_id="user", timestamp="", finalized=True
-            )
-
-
-class BackendKokoroTTSService(TTSService):
-    """Delegates to the existing Kokoro tts_service (returns WAV -> 16-bit PCM)."""
-
-    def __init__(self, voice: str | None = None, **kwargs):
-        # Initialize TTSSettings fields explicitly (None for unsupported) to
-        # avoid Pipecat's "fields are NOT_GIVEN" warning. Synthesis is driven by
-        # our own Kokoro-backed get_tts_service(), not Pipecat's client.
-        super().__init__(settings=TTSSettings(model=None, voice=None, language=None), **kwargs)
-        self._voice = voice
-
-    async def run_tts(self, text: str, context_id: str):
-        logger.info("TTS run_tts: synthesizing %d chars (voice=%s)", len(text), self._voice)
-        wav = get_tts_service().synthesize_text_chunk(text, self._voice)
-        if not wav:
-            logger.warning("TTS run_tts: Kokoro returned no audio for %r", text[:40])
-            return
-        audio_array, _ = sf.read(io.BytesIO(wav), dtype="int16", always_2d=False)
-        pcm = np.asarray(audio_array, dtype=np.int16).tobytes()
-        logger.info("TTS run_tts: produced %d bytes of PCM audio", len(pcm))
-        yield TTSAudioRawFrame(
-            audio=pcm, sample_rate=24000, num_channels=1, context_id=context_id
-        )
-
-
-class BackendLLMService(BaseOpenAILLMService):
-    """Streams tokens via the existing llm_gateway (chosen backend)."""
-
-    def __init__(self, settings: VoiceSettings, **kwargs):
-        self._voice_settings = settings
-        super().__init__(settings=OpenAILLMSettings(model=settings.model or ""))
-
-    def create_client(
-        self,
-        api_key=None,
-        base_url=None,
-        organization=None,
-        project=None,
-        default_headers=None,
-        **kwargs,
-    ):
-        # We never use an AsyncOpenAI client — inference is delegated to the
-        # existing llm_gateway. Return None at runtime; we type it as the base
-        # client so the override still satisfies LSP.
-        return cast(AsyncOpenAI, None)
-
-    async def _process_context(self, context: LLMContext):
-        raw_messages = cast("list[dict[str, Any]]", context.get_messages())
-        messages = [
-            {"role": m.get("role", "user"), "content": m.get("content", "")}
-            for m in raw_messages
-        ]
-        last_user = next(
-            (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
-        )
-        reply_parts: list[str] = []
-        async for delta in stream_completion(
-            messages,
-            backend=self._voice_settings.backend,
-            model=self._voice_settings.model,
-            api_key=self._voice_settings.api_key,
-            api_base=self._voice_settings.api_base,
-            temperature=self._voice_settings.temperature,
-            max_tokens=self._voice_settings.max_tokens,
-        ):
-            if delta:
-                reply_parts.append(delta)
-                await self.push_frame(LLMTextFrame(text=delta))
-
-        # Fire-and-forget memory extraction for this voice turn
-        if self._voice_settings.user_id and last_user and reply_parts:
-            asyncio.create_task(
-                run_memory_update(
-                    self._voice_settings.user_id,
-                    last_user,
-                    "".join(reply_parts),
-                    backend=self._voice_settings.backend,
-                    model=self._voice_settings.model,
-                    api_base=self._voice_settings.api_base,
-                    api_key=self._voice_settings.api_key,
-                )
-            )
-
-
-class UserTranscriptEmitter(FrameProcessor):
-    """Sends finalized user transcripts to the browser over the data channel."""
-
-    def __init__(self, connection: SmallWebRTCConnection):
-        super().__init__()
-        self._send = connection.send_app_message
-
-    async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame) and frame.finalized:
-            self._send({"type": "user_transcript", "text": frame.text, "final": True})
-        # Pass the frame downstream. FrameProcessor does NOT forward frames on
-        # its own, so without this the TranscriptionFrame is swallowed here and
-        # never reaches the user context aggregator — the LLM never sees the
-        # user's turn and never runs.
-        await self.push_frame(frame, direction)
-
-
-class AssistantTranscriptEmitter(FrameProcessor):
-    """Sends streamed assistant text + turn-end to the browser over the data channel."""
-
-    def __init__(self, connection: SmallWebRTCConnection):
-        super().__init__()
-        self._send = connection.send_app_message
-
-    async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
-        if isinstance(frame, (TextFrame, LLMTextFrame)) and getattr(frame, "text", ""):
-            self._send({"type": "assistant_text", "text": frame.text})
-        elif isinstance(frame, LLMFullResponseEndFrame):
-            self._send({"type": "assistant_end"})
-        # Pass the frame downstream. Without this the LLMTextFrame / end frame is
-        # swallowed here and never reaches the TTS service or the assistant
-        # context aggregator, so no audio is ever produced.
-        await self.push_frame(frame, direction)
 
 
 def build_voice_pipeline(connection: SmallWebRTCConnection, settings: VoiceSettings):
@@ -297,3 +154,276 @@ async def run_voice_pipeline(connection: SmallWebRTCConnection, settings: VoiceS
 
     await runner.add_workers(worker)
     await runner.run()
+
+
+def _ensure_heavy() -> None:
+    """Import the voice-group deps and define the Pipecat-backed classes.
+
+    Runs on first attribute access (see ``__getattr__``). Assignments only
+    fill bindings that are still unset, so a test's pre-patched fake wins.
+    """
+    import numpy as np
+    import soundfile as sf
+    from openai import AsyncOpenAI
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.audio.vad.vad_analyzer import VADParams
+    from pipecat.frames.frames import (
+        LLMFullResponseEndFrame,
+        LLMTextFrame,
+        TextFrame,
+        TranscriptionFrame,
+        TTSAudioRawFrame,
+    )
+    from pipecat.pipeline.pipeline import Pipeline
+    from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+    from pipecat.processors.aggregators.llm_context import LLMContext
+    from pipecat.processors.aggregators.llm_response_universal import (
+        LLMContextAggregatorPair,
+    )
+    from pipecat.processors.audio.vad_processor import VADProcessor
+    from pipecat.processors.frame_processor import FrameProcessor
+    from pipecat.services.openai.base_llm import BaseOpenAILLMService, OpenAILLMSettings
+    from pipecat.services.settings import STTSettings, TTSSettings
+    from pipecat.services.stt_service import SegmentedSTTService
+    from pipecat.services.tts_service import TTSService
+    from pipecat.transports.base_transport import TransportParams
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+    from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+    from pipecat.workers.runner import WorkerRunner
+
+    class BackendWhisperSTTService(SegmentedSTTService):
+        """Delegates to the existing Whisper speech_service.
+
+        Whisper is a batch model, so we extend ``SegmentedSTTService`` which buffers
+        audio and only runs STT when VAD reports the user stopped speaking. The base
+        ``STTService`` fires on every ~20 ms frame, which floods Whisper with
+        near-silent chunks and makes it hallucinate ("Thank you for watching").
+
+        The buffered segment is raw 16-bit mono PCM, decoded via
+        ``SpeechService.transcribe_pcm`` (not an encoded file).
+        """
+
+        def __init__(self, **kwargs):
+            # model/language are not applicable to our backend STT — mark them
+            # explicitly as None to satisfy Pipecat's STTSettings validation
+            # (otherwise it warns "fields are NOT_GIVEN").
+            super().__init__(
+                settings=STTSettings(model=None, language=None),
+                sample_rate=16000,
+                **kwargs,
+            )
+
+        @property
+        def wants_wav_segments(self) -> bool:
+            # Whisper reads the raw PCM buffer directly; wrapping it in a WAV
+            # container would make transcribe_pcm misinterpret the 44-byte header.
+            return False
+
+        async def run_stt(self, audio: bytes):
+            text = get_speech_service().transcribe_pcm(audio, source_rate=self.sample_rate)
+            if text:
+                yield TranscriptionFrame(
+                    text=text, user_id="user", timestamp="", finalized=True
+                )
+
+    class BackendKokoroTTSService(TTSService):
+        """Delegates to the existing Kokoro tts_service (returns WAV -> 16-bit PCM)."""
+
+        def __init__(self, voice: str | None = None, **kwargs):
+            # Initialize TTSSettings fields explicitly (None for unsupported) to
+            # avoid Pipecat's "fields are NOT_GIVEN" warning. Synthesis is driven by
+            # our own Kokoro-backed get_tts_service(), not Pipecat's client.
+            super().__init__(settings=TTSSettings(model=None, voice=None, language=None), **kwargs)
+            self._voice = voice
+
+        async def run_tts(self, text: str, context_id: str):
+            logger.info("TTS run_tts: synthesizing %d chars (voice=%s)", len(text), self._voice)
+            wav = get_tts_service().synthesize_text_chunk(text, self._voice)
+            if not wav:
+                logger.warning("TTS run_tts: Kokoro returned no audio for %r", text[:40])
+                return
+            audio_array, _ = sf.read(io.BytesIO(wav), dtype="int16", always_2d=False)
+            pcm = np.asarray(audio_array, dtype=np.int16).tobytes()
+            logger.info("TTS run_tts: produced %d bytes of PCM audio", len(pcm))
+            yield TTSAudioRawFrame(
+                audio=pcm, sample_rate=24000, num_channels=1, context_id=context_id
+            )
+
+    class BackendLLMService(BaseOpenAILLMService):
+        """Streams tokens via the existing llm_gateway (chosen backend)."""
+
+        def __init__(self, settings: VoiceSettings, **kwargs):
+            self._voice_settings = settings
+            super().__init__(settings=OpenAILLMSettings(model=settings.model or ""))
+
+        def create_client(
+            self,
+            api_key=None,
+            base_url=None,
+            organization=None,
+            project=None,
+            default_headers=None,
+            **kwargs,
+        ):
+            # We never use an AsyncOpenAI client — inference is delegated to the
+            # existing llm_gateway. Return None at runtime; we type it as the base
+            # client so the override still satisfies LSP.
+            return cast(AsyncOpenAI, None)
+
+        async def _process_context(self, context: LLMContext):
+            raw_messages = cast("list[dict[str, Any]]", context.get_messages())
+            messages = [
+                {"role": m.get("role", "user"), "content": m.get("content", "")}
+                for m in raw_messages
+            ]
+            last_user = next(
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
+            )
+            reply_parts: list[str] = []
+            async for delta in stream_completion(
+                messages,
+                backend=self._voice_settings.backend,
+                model=self._voice_settings.model,
+                api_key=self._voice_settings.api_key,
+                api_base=self._voice_settings.api_base,
+                temperature=self._voice_settings.temperature,
+                max_tokens=self._voice_settings.max_tokens,
+            ):
+                if delta:
+                    reply_parts.append(delta)
+                    await self.push_frame(LLMTextFrame(text=delta))
+
+            # Fire-and-forget memory extraction for this voice turn
+            if self._voice_settings.user_id and last_user and reply_parts:
+                asyncio.create_task(
+                    run_memory_update(
+                        self._voice_settings.user_id,
+                        last_user,
+                        "".join(reply_parts),
+                        backend=self._voice_settings.backend,
+                        model=self._voice_settings.model,
+                        api_base=self._voice_settings.api_base,
+                        api_key=self._voice_settings.api_key,
+                    )
+                )
+
+    class UserTranscriptEmitter(FrameProcessor):
+        """Sends finalized user transcripts to the browser over the data channel."""
+
+        def __init__(self, connection: SmallWebRTCConnection):
+            super().__init__()
+            self._send = connection.send_app_message
+
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, TranscriptionFrame) and frame.finalized:
+                self._send({"type": "user_transcript", "text": frame.text, "final": True})
+            # Pass the frame downstream. FrameProcessor does NOT forward frames on
+            # its own, so without this the TranscriptionFrame is swallowed here and
+            # never reaches the user context aggregator — the LLM never sees the
+            # user's turn and never runs.
+            await self.push_frame(frame, direction)
+
+    class AssistantTranscriptEmitter(FrameProcessor):
+        """Sends streamed assistant text + turn-end to the browser over the data channel."""
+
+        def __init__(self, connection: SmallWebRTCConnection):
+            super().__init__()
+            self._send = connection.send_app_message
+
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, (TextFrame, LLMTextFrame)) and getattr(frame, "text", ""):
+                self._send({"type": "assistant_text", "text": frame.text})
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                self._send({"type": "assistant_end"})
+            # Pass the frame downstream. Without this the LLMTextFrame / end frame is
+            # swallowed here and never reaches the TTS service or the assistant
+            # context aggregator, so no audio is ever produced.
+            await self.push_frame(frame, direction)
+
+    for name, value in {
+        "np": np,
+        "sf": sf,
+        "AsyncOpenAI": AsyncOpenAI,
+        "SileroVADAnalyzer": SileroVADAnalyzer,
+        "VADParams": VADParams,
+        "LLMFullResponseEndFrame": LLMFullResponseEndFrame,
+        "LLMTextFrame": LLMTextFrame,
+        "TextFrame": TextFrame,
+        "TranscriptionFrame": TranscriptionFrame,
+        "TTSAudioRawFrame": TTSAudioRawFrame,
+        "Pipeline": Pipeline,
+        "PipelineParams": PipelineParams,
+        "PipelineWorker": PipelineWorker,
+        "LLMContext": LLMContext,
+        "LLMContextAggregatorPair": LLMContextAggregatorPair,
+        "VADProcessor": VADProcessor,
+        "FrameProcessor": FrameProcessor,
+        "BaseOpenAILLMService": BaseOpenAILLMService,
+        "OpenAILLMSettings": OpenAILLMSettings,
+        "STTSettings": STTSettings,
+        "TTSSettings": TTSSettings,
+        "SegmentedSTTService": SegmentedSTTService,
+        "TTSService": TTSService,
+        "TransportParams": TransportParams,
+        "SmallWebRTCConnection": SmallWebRTCConnection,
+        "SmallWebRTCTransport": SmallWebRTCTransport,
+        "WorkerRunner": WorkerRunner,
+        "BackendWhisperSTTService": BackendWhisperSTTService,
+        "BackendKokoroTTSService": BackendKokoroTTSService,
+        "BackendLLMService": BackendLLMService,
+        "UserTranscriptEmitter": UserTranscriptEmitter,
+        "AssistantTranscriptEmitter": AssistantTranscriptEmitter,
+    }.items():
+        if globals().get(name) is None:
+            globals()[name] = value
+
+
+def __getattr__(name: str):
+    if name in _LAZY_NAMES:
+        _ensure_heavy()
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Names resolved lazily: the heavy imports above plus the public classes whose
+# definitions reference them.
+_LAZY_NAMES = frozenset(
+    {
+        "np",
+        "sf",
+        "AsyncOpenAI",
+        "SileroVADAnalyzer",
+        "VADParams",
+        "LLMFullResponseEndFrame",
+        "LLMTextFrame",
+        "TextFrame",
+        "TranscriptionFrame",
+        "TTSAudioRawFrame",
+        "Pipeline",
+        "PipelineParams",
+        "PipelineWorker",
+        "LLMContext",
+        "LLMContextAggregatorPair",
+        "VADProcessor",
+        "FrameProcessor",
+        "BaseOpenAILLMService",
+        "OpenAILLMSettings",
+        "STTSettings",
+        "TTSSettings",
+        "SegmentedSTTService",
+        "TTSService",
+        "TransportParams",
+        "SmallWebRTCConnection",
+        "SmallWebRTCTransport",
+        "WorkerRunner",
+        "BackendWhisperSTTService",
+        "BackendKokoroTTSService",
+        "BackendLLMService",
+        "UserTranscriptEmitter",
+        "AssistantTranscriptEmitter",
+        "build_voice_pipeline",
+        "run_voice_pipeline",
+    }
+)

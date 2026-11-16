@@ -8,7 +8,7 @@
 ```bash
 # ── Python / backend ──────────────────────────────────────────────
 uv sync --group all                   # install all dependency groups
-uv sync --group backend               # backend only
+uv sync --group core                  # core server only (no ml/voice/ocr deps)
 uv sync --group dev                   # dev tools only (ruff, black, mypy, ty, pytest)
 
 uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload   # start backend

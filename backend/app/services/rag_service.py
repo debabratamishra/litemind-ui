@@ -13,9 +13,7 @@ import string
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import chromadb
 import numpy as np
-from chromadb.config import Settings
 from rank_bm25 import BM25Okapi
 
 from backend.app.core.rag_formats import SUPPORTED_EXTENSIONS
@@ -239,6 +237,9 @@ class RAGService:
                     cls._shared_client.reset()
                 except Exception:
                     pass
+
+            import chromadb
+            from chromadb.config import Settings
 
             cls._shared_client = chromadb.PersistentClient(
                 path=chroma_db_path, settings=Settings(anonymized_telemetry=False)

@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import backend.main as main_module
+from backend.app.services import rag_service as rag_service_module
 
 
 # --------------------------------------------------------------------------- #
@@ -98,7 +99,8 @@ async def test_lifespan_shutdown_does_not_reset_rag_system(monkeypatch, tmp_path
     # Patching the module global records its old value, so teardown restores
     # whatever lifespan rebinds it to.
     monkeypatch.setattr(main_module, "rag_service", rag_service)
-    monkeypatch.setattr(main_module, "RAGService", lambda: rag_service)
+    # RAGService is imported lazily inside lifespan, so patch it at its source.
+    monkeypatch.setattr(rag_service_module, "RAGService", lambda: rag_service)
     monkeypatch.setattr(main_module, "UPLOAD_FOLDER", tmp_path / "uploads")
     monkeypatch.setattr(main_module, "load_rag_config", lambda: dict(main_module.DEFAULT_RAG_CONFIG))
     monkeypatch.setattr(main_module, "create_embedding_function", MagicMock())
