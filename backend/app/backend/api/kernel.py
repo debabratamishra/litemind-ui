@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 import httpx
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from backend.app.kernel.router import CAPABILITIES, list_provider_status, resolve_provider_config
 
 router = APIRouter(prefix="/api/kernel", tags=["kernel"])
+logger = logging.getLogger(__name__)
 
 _PROBE_CAPABILITIES = ("llm", "vlm", "embeddings")
 _PROBE_PATHS = {"openrouter": "/models", "nvidia_nim": "/models", "ollama": "/api/tags"}
@@ -59,7 +61,8 @@ async def test_provider(request: ProviderTestRequest) -> dict:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_SECONDS) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
-    except httpx.HTTPError as exc:
-        return {"ok": False, "error": str(exc)}
+    except httpx.HTTPError:
+        logger.exception("Provider probe failed for capability '%s'", capability)
+        return {"ok": False, "error": "Provider probe failed."}
     latency_ms = round((time.perf_counter() - started) * 1000, 2)
     return {"ok": True, "latency_ms": latency_ms}
