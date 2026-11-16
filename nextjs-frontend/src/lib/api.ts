@@ -350,6 +350,43 @@ export async function testProvider(capability: string): Promise<ProviderTestResu
   return res.json();
 }
 
+export interface VoiceSessionResponse {
+  signed_url: string;
+  agent_id: string;
+}
+
+export async function getVoiceSession(agentId?: string, apiKey?: string): Promise<VoiceSessionResponse> {
+  const body: Record<string, string> = {};
+  if (agentId) body.agent_id = agentId;
+  if (apiKey) body.api_key = apiKey;
+  const res = await postJSON('/api/voice/session', body);
+  if (!res.ok) throw new Error(await errorText(res));
+  return res.json();
+}
+
+export interface SarvamSessionResponse {
+  api_key: string;
+  org_id: string;
+  workspace_id: string;
+  app_id: string;
+}
+
+export async function getSarvamSession(overrides?: {
+  apiKey?: string;
+  orgId?: string;
+  workspaceId?: string;
+  appId?: string;
+}): Promise<SarvamSessionResponse> {
+  const body: Record<string, string> = {};
+  if (overrides?.apiKey) body.api_key = overrides.apiKey;
+  if (overrides?.orgId) body.org_id = overrides.orgId;
+  if (overrides?.workspaceId) body.workspace_id = overrides.workspaceId;
+  if (overrides?.appId) body.app_id = overrides.appId;
+  const res = await postJSON('/api/voice/sarvam-session', body);
+  if (!res.ok) throw new Error(await errorText(res));
+  return res.json();
+}
+
 // ─── Error extraction ───────────────────────────────────────────────────────────
 
 async function errorText(res: Response): Promise<string> {

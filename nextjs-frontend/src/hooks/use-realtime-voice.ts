@@ -1,6 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getVoiceSession, getSarvamSession } from '@/lib/api';
+
+// Type-only import — both SDKs are loaded dynamically to keep them out of the SSR bundle.
+import type { VoiceConversation } from '@elevenlabs/client';
+import type { ConversationAgent } from 'sarvam-conv-ai-sdk/browser';
 
 export type VoiceState = 'idle' | 'connecting' | 'listening' | 'speaking' | 'error';
 
@@ -14,10 +19,13 @@ export interface VoiceCallbacks {
 }
 
 export interface VoiceRequestSettings {
+  voiceProvider?: 'elevenlabs' | 'sarvam' | null;
+  // ElevenLabs
+  agentId?: string | null;
+  apiKey?: string | null;
+  // unused legacy fields kept for interface stability
   model?: string | null;
   backend?: string | null;
-  apiKey?: string | null;
-  apiBase?: string | null;
   temperature?: number;
   maxTokens?: number;
   voice?: string | null;
@@ -25,10 +33,11 @@ export interface VoiceRequestSettings {
 
 export function useRealtimeVoice(settings: VoiceRequestSettings, callbacks: VoiceCallbacks) {
   const [state, setState] = useState<VoiceState>('idle');
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const dcRef = useRef<RTCDataChannel | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // One ref per provider — only one is ever populated at a time.
+  const elevenRef = useRef<VoiceConversation | null>(null);
+  const sarvamRef = useRef<ConversationAgent | null>(null);
+
   const settingsRef = useRef(settings);
   const callbacksRef = useRef(callbacks);
   useEffect(() => {
@@ -37,98 +46,167 @@ export function useRealtimeVoice(settings: VoiceRequestSettings, callbacks: Voic
   }, [settings, callbacks]);
 
   const cleanup = useCallback(() => {
-    try { dcRef.current?.close(); } catch { /* ignore */ }
-    try { pcRef.current?.close(); } catch { /* ignore */ }
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    if (audioRef.current) audioRef.current.srcObject = null;
-    pcRef.current = null;
-    dcRef.current = null;
-    streamRef.current = null;
+    if (elevenRef.current) {
+      try { elevenRef.current.endSession(); } catch { /* ignore */ }
+      elevenRef.current = null;
+    }
+    if (sarvamRef.current) {
+      try { sarvamRef.current.stop(); } catch { /* ignore */ }
+      sarvamRef.current = null;
+    }
     setState('idle');
   }, []);
 
   const stop = useCallback(() => {
-    try { dcRef.current?.send(JSON.stringify({ type: 'end' })); } catch { /* ignore */ }
     cleanup();
+    callbacksRef.current.onEnded?.();
   }, [cleanup]);
 
+  // ── ElevenLabs session ────────────────────────────────────────────────────
+  const startElevenLabs = useCallback(async () => {
+    const { agentId, apiKey } = settingsRef.current;
+    const session = await getVoiceSession(agentId ?? undefined, apiKey ?? undefined);
+
+    const { Conversation } = await import('@elevenlabs/client');
+
+    const conversation = await Conversation.startSession({
+      signedUrl: session.signed_url,
+      connectionType: 'websocket',
+
+      onConnect: () => {
+        setState('listening');
+        callbacksRef.current.onReady?.();
+      },
+
+      onDisconnect: () => {
+        elevenRef.current = null;
+        setState('idle');
+        callbacksRef.current.onEnded?.();
+      },
+
+      onError: (message: string) => {
+        setState('error');
+        callbacksRef.current.onError?.(message);
+      },
+
+      onModeChange: ({ mode }: { mode: 'speaking' | 'listening' }) => {
+        setState(mode === 'speaking' ? 'speaking' : 'listening');
+      },
+
+      onMessage: ({ role, message }: { role: 'user' | 'agent'; message: string }) => {
+        if (role === 'user') {
+          callbacksRef.current.onUserTranscript?.(message);
+        } else {
+          callbacksRef.current.onAssistantText?.(message);
+          callbacksRef.current.onAssistantEnd?.();
+        }
+      },
+    }) as VoiceConversation;
+
+    elevenRef.current = conversation;
+  }, []);
+
+  // ── Sarvam session ────────────────────────────────────────────────────────
+  const startSarvam = useCallback(async () => {
+    // Fetch resolved credentials from our backend — API key never lives in the store.
+    const creds = await getSarvamSession();
+
+    const {
+      ConversationAgent,
+      BrowserAudioInterface,
+      InteractionType,
+      AgentState,
+    } = await import('sarvam-conv-ai-sdk/browser');
+
+    const audioInterface = new BrowserAudioInterface(16000);
+
+    const agent = new ConversationAgent({
+      apiKey: creds.api_key,
+      config: {
+        org_id: creds.org_id,
+        workspace_id: creds.workspace_id,
+        app_id: creds.app_id,
+        user_identifier: `litemind-${Date.now()}`,
+        user_identifier_type: 'custom',
+        interaction_type: InteractionType.CALL,
+        input_sample_rate: 16000,
+        output_sample_rate: 16000,
+      },
+      audioInterface,
+
+      stateCallback: (newState: typeof AgentState[keyof typeof AgentState]) => {
+        switch (newState) {
+          case AgentState.LISTENING:
+            setState('listening');
+            break;
+          case AgentState.SPEAKING:
+            setState('speaking');
+            break;
+          case AgentState.CONNECTING:
+          case AgentState.CONNECTED:
+            setState('connecting');
+            break;
+          case AgentState.ERROR:
+            setState('error');
+            break;
+          default:
+            setState('idle');
+        }
+      },
+
+      startCallback: async () => {
+        setState('listening');
+        callbacksRef.current.onReady?.();
+      },
+
+      // Role enum values: Role.USER = 'user', Role.BOT = 'bot'.
+      // Compare against raw string literals to avoid dynamic-import closure issues
+      // where the captured Role reference can be undefined when the callback fires.
+      transcriptCallback: async (msg: { role: string; content: string }) => {
+        if (msg.role === 'user') {
+          callbacksRef.current.onUserTranscript?.(msg.content);
+        } else {
+          callbacksRef.current.onAssistantText?.(msg.content);
+          callbacksRef.current.onAssistantEnd?.();
+        }
+      },
+
+      endCallback: async () => {
+        sarvamRef.current = null;
+        setState('idle');
+        callbacksRef.current.onEnded?.();
+      },
+    });
+
+    sarvamRef.current = agent;
+    await agent.start();
+  }, []);
+
+  // ── Unified start ─────────────────────────────────────────────────────────
   const start = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setState('error');
       callbacksRef.current.onError?.('Voice mode is not supported in this browser.');
       return;
     }
+
     setState('connecting');
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-      });
-      pcRef.current = pc;
-
-      // MUST be created before the offer, or Pipecat disables the channel.
-      const dc = pc.createDataChannel('events');
-      dcRef.current = dc;
-      dc.onmessage = (e: MessageEvent) => {
-        let msg: { type: string; text?: string; message?: string };
-        try { msg = JSON.parse(e.data); } catch { return; }
-        const cb = callbacksRef.current;
-        switch (msg.type) {
-          case 'ready': cb.onReady?.(); break;
-          case 'user_transcript': setState('listening'); cb.onUserTranscript?.(msg.text ?? ''); break;
-          case 'assistant_text': setState('speaking'); cb.onAssistantText?.(msg.text ?? ''); break;
-          case 'assistant_end': setState('listening'); cb.onAssistantEnd?.(); break;
-          case 'error': setState('error'); cb.onError?.(msg.message ?? ''); break;
-          case 'ended': cb.onEnded?.(); cleanup(); break;
-        }
-      };
-      pc.ondatachannel = (e: RTCDataChannelEvent) => { e.channel.onmessage = dc.onmessage; };
-      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-
-      const audio = new Audio();
-      audio.autoplay = true;
-      audioRef.current = audio;
-      pc.ontrack = (e: RTCTrackEvent) => { audio.srcObject = e.streams[0]; };
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') cleanup();
-      };
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      const s = settingsRef.current;
-      const resp = await fetch('/api/voice/offer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pc_id: crypto.randomUUID(),
-          sdp: offer.sdp,
-          type: offer.type,
-          model: s.model ?? null,
-          backend: s.backend ?? null,
-          api_key: s.apiKey ?? null,
-          api_base: s.apiBase ?? null,
-          temperature: s.temperature ?? 0.7,
-          max_tokens: s.maxTokens ?? 512,
-          voice: s.voice ?? null,
-        }),
-      });
-      if (!resp.ok) {
-        setState('error');
-        callbacksRef.current.onError?.('Failed to start voice session.');
-        cleanup();
-        return;
+      const provider = settingsRef.current.voiceProvider ?? 'elevenlabs';
+      if (provider === 'sarvam') {
+        await startSarvam();
+      } else {
+        await startElevenLabs();
       }
-      const answer = await resp.json();
-      await pc.setRemoteDescription(new RTCSessionDescription({ type: answer.type, sdp: answer.sdp }));
-      setState('listening');
     } catch (err) {
       setState('error');
-      callbacksRef.current.onError?.(err instanceof Error ? err.message : 'Voice start failed.');
+      callbacksRef.current.onError?.(
+        err instanceof Error ? err.message : 'Failed to start voice session.'
+      );
       cleanup();
     }
-  }, [cleanup]);
+  }, [startElevenLabs, startSarvam, cleanup]);
 
   useEffect(() => () => cleanup(), [cleanup]);
 

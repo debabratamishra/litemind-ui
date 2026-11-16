@@ -80,6 +80,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   voiceMode: false,
   enableGenerativeUI: false,
   genUIDisplayMode: 'rendered',
+  elevenlabsAgentId: null,
+  elevenlabsApiKey: null,
+  voiceProvider: 'elevenlabs',
 };
 
 function patchConversation(

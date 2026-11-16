@@ -71,6 +71,12 @@ export interface AppSettings {
   voiceMode: boolean;
   enableGenerativeUI: boolean;
   genUIDisplayMode: 'rendered' | 'code';
+  /** ElevenLabs Conversational AI agent ID for speech-to-speech voice mode. */
+  elevenlabsAgentId: string | null;
+  /** ElevenLabs API key override for voice mode (falls back to KeyVault / env if null). */
+  elevenlabsApiKey: string | null;
+  /** Which voice provider to use for realtime voice mode. */
+  voiceProvider: 'elevenlabs' | 'sarvam';
 }
 
 /** A persisted per-user memory record (GET/POST /api/memory). */

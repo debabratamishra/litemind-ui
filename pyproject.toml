@@ -53,14 +53,8 @@ ml = [
 ]
 
 voice = [
-    # Realtime voice mode: Pipecat WebRTC transport + Silero VAD
-    "pipecat-ai",
-    # Optional dep required by the Pipecat small-webrtc transport (SmallWebRTCConnection)
-    "aiortc",
+    # Lightweight offline voice fallback
     "pyttsx3",
-    "kokoro",
-    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-    "librosa",
     "soundfile",
 ]
 
@@ -121,12 +115,7 @@ all = [
     "crewai",
     "nltk",
     # voice
-    "pipecat-ai",
-    "aiortc",
     "pyttsx3",
-    "kokoro",
-    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-    "librosa",
     "soundfile",
     # ocr
     "easyocr",
@@ -183,30 +172,8 @@ disallow_untyped_defs = false
 [tool.ty]
 environment = { python-version = "3.13" }
 
-# `pipecat` is an optional dependency (the `voice` group). CI's `ty` job
-# installs `--group all --group dev`, but its submodules are allowed as
-# unresolved imports so type-checking of the voice pipeline stays robust. New
-# `pipecat.*` imports must be added here to avoid `unresolved-import`.
 [tool.ty.analysis]
-allowed-unresolved-imports = [
-    "pipecat.audio.vad.silero",
-    "pipecat.audio.vad.vad_analyzer",
-    "pipecat.frames.frames",
-    "pipecat.pipeline.pipeline",
-    "pipecat.pipeline.worker",
-    "pipecat.processors.aggregators.llm_context",
-    "pipecat.processors.aggregators.llm_response_universal",
-    "pipecat.processors.audio.vad_processor",
-    "pipecat.processors.frame_processor",
-    "pipecat.services.openai.base_llm",
-    "pipecat.services.settings",
-    "pipecat.services.stt_service",
-    "pipecat.services.tts_service",
-    "pipecat.transports.base_transport",
-    "pipecat.transports.smallwebrtc.connection",
-    "pipecat.transports.smallwebrtc.transport",
-    "pipecat.workers.runner",
-]
+allowed-unresolved-imports = []
 
 [tool.pytest.ini_options]
 # Async tests (Pipecat voice pipeline) run via the anyio pytest plugin, which

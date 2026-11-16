@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 _CAPABILITY_PROVIDERS = {
     "llm": ("openrouter", "nvidia_nim"),
     "vlm": ("openrouter", "nvidia_nim"),
-    "stt": (),
-    "tts": (),
+    "stt": ("elevenlabs",),
+    "tts": ("elevenlabs",),
+    "voice": ("elevenlabs", "sarvam"),
     "embeddings": ("openrouter", "nvidia_nim"),
     "search": ("serpapi",),
 }
@@ -29,13 +30,15 @@ _KEY_ENV_VARS = {
     "openrouter": "OPENROUTER_API_KEY",
     "nvidia_nim": "NVIDIA_NIM_API_KEY",
     "serpapi": "SERP_API_KEY",
+    "elevenlabs": "ELEVENLABS_API_KEY",
+    "sarvam": "SARVAM_API_KEY",
 }
 _BASE_ENV_VARS = {
     "openrouter": ("OPENROUTER_API_BASE", "OPENROUTER_BASE_URL"),
     "nvidia_nim": ("NVIDIA_NIM_API_BASE",),
 }
 
-CAPABILITIES = ("llm", "vlm", "stt", "tts", "embeddings", "search")
+CAPABILITIES = ("llm", "vlm", "stt", "tts", "voice", "embeddings", "search")
 
 _SUPPORTED_BACKENDS = {"ollama", "openrouter", "nvidia_nim"}
 _OPENROUTER_DEFAULT_API_BASE = "https://openrouter.ai/api/v1"
@@ -111,6 +114,9 @@ def _resolve_api_base(backend: str, api_base: Optional[str]) -> Optional[str]:
     if backend == "nvidia_nim":
         return os.getenv("NVIDIA_NIM_API_BASE") or _NVIDIA_NIM_DEFAULT_API_BASE
 
+    if backend == "elevenlabs":
+        return os.getenv("ELEVENLABS_API_BASE") or "https://api.elevenlabs.io"
+
     return None
 
 
@@ -134,6 +140,14 @@ def _resolve_api_key(backend: str, api_key: Optional[str]) -> Optional[str]:
             "Nvidia NIM requires an API key. Set NVIDIA_NIM_API_KEY or pass api_key in the request."
         )
 
+    if backend == "elevenlabs":
+        env_api_key = os.getenv("ELEVENLABS_API_KEY")
+        if env_api_key:
+            return env_api_key
+        raise LLMGatewayConfigurationError(
+            "ElevenLabs requires an API key. Set ELEVENLABS_API_KEY or pass api_key in the request."
+        )
+
     return None
 
 
@@ -151,6 +165,8 @@ def _resolve_model_name(
             requested_model = os.getenv("DEFAULT_OPENROUTER_MODEL", _DEFAULT_OPENROUTER_MODEL)
         elif backend == "nvidia_nim":
             requested_model = os.getenv("DEFAULT_NVIDIA_NIM_MODEL", _DEFAULT_NVIDIA_NIM_MODEL)
+        elif backend == "elevenlabs":
+            requested_model = os.getenv("DEFAULT_ELEVENLABS_MODEL", "eleven_turbo_v2_5")
 
     if backend == "ollama":
         stripped_model = _strip_known_prefix(requested_model, ("ollama_chat/", "ollama/"))
@@ -181,14 +197,25 @@ def _strip_known_prefix(value: str, prefixes: tuple[str, ...]) -> str:
 
 
 async def _select_provider(capability: str, vault) -> str:
-    """First provider with a vault credential, then an env key, else ollama."""
-    for provider in ("ollama",) + _CAPABILITY_PROVIDERS[capability]:
+    """First provider with a vault credential, then an env key, else default."""
+    candidates = _CAPABILITY_PROVIDERS.get(capability, ())
+    if capability in ("llm", "vlm", "embeddings"):
+        candidates = ("ollama",) + candidates
+
+    for provider in candidates:
         if await vault.get_credential(capability, provider):
             return provider
-    for provider in _CAPABILITY_PROVIDERS[capability]:
-        if os.getenv(_KEY_ENV_VARS[provider]):
+        if capability in ("stt", "tts", "voice"):
+            for alt_cap in ("stt", "tts", "voice"):
+                if alt_cap != capability and await vault.get_credential(alt_cap, provider):
+                    return provider
+
+    for provider in candidates:
+        env_var = _KEY_ENV_VARS.get(provider)
+        if env_var and os.getenv(env_var):
             return provider
-    return "ollama"
+
+    return candidates[0] if candidates else "ollama"
 
 
 async def resolve_provider_config(
@@ -205,8 +232,19 @@ async def resolve_provider_config(
     vault = get_key_vault()
     provider = await _select_provider(capability, vault)
     vault_key = await vault.get_credential(capability, provider)
+    if not vault_key and capability in ("stt", "tts"):
+        other_cap = "tts" if capability == "stt" else "stt"
+        vault_key = await vault.get_credential(other_cap, provider)
+    if not vault_key and capability == "voice":
+        for alt_cap in ("stt", "tts"):
+            vault_key = await vault.get_credential(alt_cap, provider)
+            if vault_key:
+                break
     env_key = os.getenv(_KEY_ENV_VARS.get(provider, ""))
-    resolved_key = _resolve_api_key(provider, api_key or vault_key or env_key)
+    try:
+        resolved_key = _resolve_api_key(provider, api_key or vault_key or env_key)
+    except LLMGatewayConfigurationError:
+        resolved_key = None
     resolved_base = _resolve_api_base(provider, api_base)
     purpose = "embedding" if capability == "embeddings" else "completion"
     resolved_model = _resolve_model_name(provider, model, purpose=purpose)
@@ -221,8 +259,8 @@ async def resolve_provider_config(
 async def list_provider_status() -> dict[str, dict]:
     """Per-capability provider status for ``GET /api/kernel/providers``.
 
-    ``configured`` means a key/endpoint is present (vault or env), NOT
-live-validated.
+        ``configured`` means a key/endpoint is present (vault or env), NOT
+    live-validated.
     """
     status: dict[str, dict] = {}
     for capability in CAPABILITIES:

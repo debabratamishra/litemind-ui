@@ -14,8 +14,13 @@ from backend.app.kernel.router import CAPABILITIES, list_provider_status, resolv
 router = APIRouter(prefix="/api/kernel", tags=["kernel"])
 logger = logging.getLogger(__name__)
 
-_PROBE_CAPABILITIES = ("llm", "vlm", "embeddings")
-_PROBE_PATHS = {"openrouter": "/models", "nvidia_nim": "/models", "ollama": "/api/tags"}
+_PROBE_CAPABILITIES = ("llm", "vlm", "embeddings", "stt", "tts", "voice")
+_PROBE_PATHS = {
+    "openrouter": "/models",
+    "nvidia_nim": "/models",
+    "ollama": "/api/tags",
+    "elevenlabs": "/v1/user",
+}
 _PROBE_TIMEOUT_SECONDS = 10.0
 
 
@@ -41,21 +46,20 @@ async def test_provider(request: ProviderTestRequest) -> dict:
             detail=f"Unknown capability '{capability}'. Expected one of: {', '.join(CAPABILITIES)}.",
         )
     if capability not in _PROBE_CAPABILITIES:
-        raise HTTPException(
-            status_code=501, detail=f"No probe implemented for capability '{capability}'"
-        )
+        raise HTTPException(status_code=501, detail=f"No probe implemented for capability '{capability}'")
 
     config = await resolve_provider_config(capability)
     probe_path = _PROBE_PATHS.get(config.backend)
     if probe_path is None:
-        raise HTTPException(
-            status_code=501, detail=f"No probe implemented for provider '{config.backend}'"
-        )
+        raise HTTPException(status_code=501, detail=f"No probe implemented for provider '{config.backend}'")
 
     if config.api_base is None:
         return {"ok": False, "error": f"No API base configured for provider '{config.backend}'"}
     url = f"{config.api_base.rstrip('/')}{probe_path}"
-    headers = {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
+    if config.backend == "elevenlabs":
+        headers = {"xi-api-key": config.api_key} if config.api_key else {}
+    else:
+        headers = {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_SECONDS) as client:

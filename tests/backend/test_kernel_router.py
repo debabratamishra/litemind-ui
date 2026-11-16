@@ -43,6 +43,7 @@ def clean_env(monkeypatch):
         "OPENROUTER_BASE_URL",
         "NVIDIA_NIM_API_BASE",
         "SERP_API_KEY",
+        "ELEVENLABS_API_KEY",
         "DEFAULT_OLLAMA_MODEL",
         "OLLAMA_MODEL",
     ):
@@ -90,6 +91,24 @@ async def test_search_env_key_returns_key_without_param_or_vault(fake_vault, cle
     cfg = await kernel_router.resolve_provider_config("search")
     assert cfg.backend == "serpapi"
     assert cfg.api_key == "serp-env-key"
+
+
+async def test_elevenlabs_vault_key_configures_stt_and_tts(fake_vault, clean_env):
+    fake_vault({("tts", "elevenlabs"): "xi-vault-key"})
+    stt_cfg = await kernel_router.resolve_provider_config("stt")
+    tts_cfg = await kernel_router.resolve_provider_config("tts")
+    assert stt_cfg.backend == "elevenlabs"
+    assert stt_cfg.api_key == "xi-vault-key"
+    assert tts_cfg.backend == "elevenlabs"
+    assert tts_cfg.api_key == "xi-vault-key"
+
+
+async def test_elevenlabs_env_key_selects_stt_and_tts(fake_vault, clean_env, monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "xi-env-key")
+    fake_vault({})
+    stt_cfg = await kernel_router.resolve_provider_config("stt")
+    assert stt_cfg.backend == "elevenlabs"
+    assert stt_cfg.api_key == "xi-env-key"
 
 
 # ── GET /api/kernel/providers ────────────────────────────────────────────────

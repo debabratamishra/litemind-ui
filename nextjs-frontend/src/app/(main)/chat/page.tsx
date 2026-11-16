@@ -99,7 +99,14 @@ export default function ChatPage() {
     },
   }), [addMessage, updateLastMessage]);
 
-  const { state: realtimeState, start: startRealtime, stop: stopRealtime, isConnected: realtimeOn } = useRealtimeVoice(settings, voiceCallbacks);
+  const { state: realtimeState, start: startRealtime, stop: stopRealtime, isConnected: realtimeOn } = useRealtimeVoice(
+    {
+      voiceProvider: settings.voiceProvider,
+      agentId: settings.elevenlabsAgentId ?? null,
+      apiKey: settings.elevenlabsApiKey ?? null,
+    },
+    voiceCallbacks,
+  );
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });

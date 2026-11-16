@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 import {
   deleteApiKey,
   getApiKeys,
@@ -24,19 +25,35 @@ import {
   type ProviderTestResult,
 } from '@/lib/api';
 
-const KIND_OPTIONS = ['llm', 'vlm', 'stt', 'tts', 'embeddings', 'search'] as const;
+const KIND_OPTIONS = ['llm', 'voice', 'stt', 'tts', 'embeddings', 'search'] as const;
+
+const PROVIDER_PRESETS: Record<string, string[]> = {
+  llm: ['openrouter', 'nvidia_nim'],
+  voice: ['elevenlabs', 'sarvam'],
+  stt: ['elevenlabs'],
+  tts: ['elevenlabs'],
+  embeddings: ['openrouter', 'nvidia_nim'],
+  search: ['serpapi'],
+};
 
 export default function ProvidersSettingsPage(): React.ReactElement {
   const [keys, setKeys] = React.useState<ApiKeyRecord[]>([]);
   const [kind, setKind] = React.useState<string>('llm');
   const [provider, setProvider] = React.useState('');
+  const [agentId, setAgentId] = React.useState('');
   const [label, setLabel] = React.useState('');
   const [value, setValue] = React.useState('');
+  // Sarvam-specific credential fields
+  const [sarvamOrgId, setSarvamOrgId] = React.useState('');
+  const [sarvamWorkspaceId, setSarvamWorkspaceId] = React.useState('');
+  const [sarvamAppId, setSarvamAppId] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [testResult, setTestResult] = React.useState<ProviderTestResult | null>(null);
+
+  const isSarvam = provider === 'sarvam';
 
   React.useEffect(() => {
     let cancelled = false;
@@ -52,6 +69,14 @@ export default function ProvidersSettingsPage(): React.ReactElement {
     };
   }, []);
 
+  const handleKindChange = (newKind: string) => {
+    setKind(newKind);
+    const presets = PROVIDER_PRESETS[newKind] || [];
+    if (presets.length > 0 && (!provider.trim() || Object.values(PROVIDER_PRESETS).flat().includes(provider.trim()))) {
+      setProvider(presets[0]);
+    }
+  };
+
   const onSave = async () => {
     if (!provider.trim()) {
       setError('Provider is required');
@@ -64,12 +89,68 @@ export default function ProvidersSettingsPage(): React.ReactElement {
     setSaving(true);
     setError(null);
     try {
-      const saved = await saveApiKey({ kind, provider: provider.trim(), label: label.trim(), value });
-      setKeys((rows) => [
+      const saved = await saveApiKey({
+        kind,
+        provider: provider.trim(),
+        label: agentId.trim() || label.trim(),
+        value,
+      });
+
+      let updatedKeys = [
         saved,
-        ...rows.filter((r) => !(r.kind === saved.kind && r.provider === saved.provider)),
-      ]);
+        ...keys.filter((r) => !(r.kind === saved.kind && r.provider === saved.provider)),
+      ];
+
+      // ElevenLabs Agent ID — stored as a second credential entry
+      if (agentId.trim() && provider === 'elevenlabs') {
+        try {
+          const savedAgent = await saveApiKey({
+            kind: 'voice',
+            provider: 'elevenlabs_agent_id',
+            label: 'Agent ID',
+            value: agentId.trim(),
+          });
+          updatedKeys = [
+            savedAgent,
+            ...updatedKeys.filter((r) => !(r.kind === savedAgent.kind && r.provider === savedAgent.provider)),
+          ];
+        } catch {
+          /* non-fatal */
+        }
+      }
+
+      // Sarvam org_id, workspace_id, app_id — each stored as a separate credential
+      if (provider === 'sarvam') {
+        for (const [field, fieldValue] of [
+          ['sarvam_org_id', sarvamOrgId],
+          ['sarvam_workspace_id', sarvamWorkspaceId],
+          ['sarvam_app_id', sarvamAppId],
+        ] as const) {
+          if (fieldValue.trim()) {
+            try {
+              const savedField = await saveApiKey({
+                kind: 'voice',
+                provider: field,
+                label: field.replace('sarvam_', '').replace('_', ' '),
+                value: fieldValue.trim(),
+              });
+              updatedKeys = [
+                savedField,
+                ...updatedKeys.filter((r) => !(r.kind === savedField.kind && r.provider === savedField.provider)),
+              ];
+            } catch {
+              /* non-fatal */
+            }
+          }
+        }
+      }
+
+      setKeys(updatedKeys);
       setValue('');
+      setAgentId('');
+      setSarvamOrgId('');
+      setSarvamWorkspaceId('');
+      setSarvamAppId('');
     } catch {
       setError('Could not save key');
     } finally {
@@ -108,7 +189,7 @@ export default function ProvidersSettingsPage(): React.ReactElement {
       <div>
         <h1 className="text-lg font-semibold">Providers</h1>
         <p className="text-sm text-muted-foreground">
-          API keys for LLM, VLM, speech, embedding, and search providers. Keys are encrypted at rest.
+          API keys for LLM, voice agent, speech, embedding, and search providers. Keys are encrypted at rest.
         </p>
       </div>
 
@@ -122,14 +203,14 @@ export default function ProvidersSettingsPage(): React.ReactElement {
         <CardContent className="space-y-4">
           <div className="grid gap-2">
             <Label htmlFor="prov-kind">Capability</Label>
-            <Select value={kind} onValueChange={(v) => v && setKind(v)}>
+            <Select value={kind} onValueChange={(v) => v && handleKindChange(v)}>
               <SelectTrigger id="prov-kind" className="h-8 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {KIND_OPTIONS.map((k) => (
                   <SelectItem key={k} value={k} className="text-sm">
-                    {k}
+                    {k === 'voice' ? 'voice (speech-to-speech agent)' : k}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -140,11 +221,86 @@ export default function ProvidersSettingsPage(): React.ReactElement {
             <Input
               id="prov-provider"
               className="h-8 text-sm"
-              placeholder="e.g. openrouter, nvidia_nim, ollama"
+              placeholder="e.g. elevenlabs, openrouter, nvidia_nim"
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
             />
+            {PROVIDER_PRESETS[kind] && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-[11px] text-muted-foreground mr-1">Presets:</span>
+                {PROVIDER_PRESETS[kind].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setProvider(p)}
+                    className={cn(
+                      'rounded px-2 py-0.5 text-xs font-mono transition-colors border',
+                      provider === p
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-muted/50 hover:bg-muted text-muted-foreground'
+                    )}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
+          {provider === 'elevenlabs' && (
+            <div className="grid gap-2 rounded-md border border-primary/20 bg-primary/5 p-3">
+              <Label htmlFor="prov-agent" className="text-xs font-semibold">
+                {kind === 'voice' ? 'Agent ID (required for voice agent)' : 'Agent ID (Conversational AI — optional for STT / TTS)'}
+              </Label>
+              <Input
+                id="prov-agent"
+                className="h-8 text-sm font-mono"
+                placeholder="agent_abc123def456 (from ElevenLabs dashboard)"
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                {kind === 'voice'
+                  ? 'Get this from elevenlabs.io → Conversational AI. Required for speech-to-speech voice mode — no STT or TTS models needed.'
+                  : 'Get this from elevenlabs.io → Conversational AI. Enables real-time speech-to-speech with no local models.'}
+              </p>
+            </div>
+          )}
+          {isSarvam && (
+            <div className="grid gap-2 rounded-md border border-primary/20 bg-primary/5 p-3">
+              <p className="text-xs font-semibold">Sarvam agent identifiers</p>
+              <p className="text-[11px] text-muted-foreground">
+                Find these in your{' '}
+                <a href="https://app.sarvam.ai" target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                  Sarvam dashboard
+                </a>
+                {' '}→ Conversations → your agent → Deploy with Code.
+              </p>
+              <Label htmlFor="prov-sarvam-org" className="text-xs">Org ID</Label>
+              <Input
+                id="prov-sarvam-org"
+                className="h-8 text-sm font-mono"
+                placeholder="org_…"
+                value={sarvamOrgId}
+                onChange={(e) => setSarvamOrgId(e.target.value)}
+              />
+              <Label htmlFor="prov-sarvam-ws" className="text-xs">Workspace ID</Label>
+              <Input
+                id="prov-sarvam-ws"
+                className="h-8 text-sm font-mono"
+                placeholder="ws_…"
+                value={sarvamWorkspaceId}
+                onChange={(e) => setSarvamWorkspaceId(e.target.value)}
+              />
+              <Label htmlFor="prov-sarvam-app" className="text-xs">App ID</Label>
+              <Input
+                id="prov-sarvam-app"
+                className="h-8 text-sm font-mono"
+                placeholder="app_…"
+                value={sarvamAppId}
+                onChange={(e) => setSarvamAppId(e.target.value)}
+              />
+            </div>
+          )}
           <div className="grid gap-2">
             <Label htmlFor="prov-label">Label</Label>
             <Input
@@ -162,7 +318,13 @@ export default function ProvidersSettingsPage(): React.ReactElement {
               type="password"
               autoComplete="off"
               className="h-8 text-sm font-mono"
-              placeholder="Paste the key"
+              placeholder={
+                provider === 'elevenlabs'
+                  ? 'Paste your ElevenLabs xi-api-key'
+                  : provider === 'sarvam'
+                  ? 'Paste your Sarvam API key'
+                  : 'Paste the key'
+              }
               value={value}
               onChange={(e) => setValue(e.target.value)}
             />

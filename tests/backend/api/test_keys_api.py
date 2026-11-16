@@ -196,7 +196,7 @@ def test_probe_http_error_returns_ok_false_without_secret(client, httpx_mock):
 
 
 def test_probe_unsupported_capability_returns_501(client):
-    for capability in ("stt", "tts", "search"):
+    for capability in ("search",):
         resp = client.post("/api/kernel/providers/test", json={"capability": capability})
         assert resp.status_code == 501, capability
 
