@@ -15,6 +15,7 @@ from typing import Any, AsyncGenerator, Iterable, Optional
 
 import litellm
 
+from backend.app.kernel.keyvault import get_key_vault
 from backend.app.kernel.router import (  # noqa: F401 - back-compat re-exports
     _NVIDIA_NIM_DEFAULT_API_BASE,
     _OPENROUTER_DEFAULT_API_BASE,
@@ -174,6 +175,13 @@ async def stream_completion(
     streaming assembler that surfaces in Docker environments.
     """
     try:
+        if not api_key:
+            # Resolution order: explicit request param > user key vault > env
+            # var. The vault row for the requested backend lets a key saved in
+            # the UI reach real inference without touching the request params.
+            vault_key = await get_key_vault().get_credential("llm", backend or "")
+            if vault_key:
+                api_key = vault_key
         config = resolve_backend_config(
             backend=backend,
             model=model,

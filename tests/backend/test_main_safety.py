@@ -90,6 +90,8 @@ async def test_lifespan_shutdown_does_not_reset_rag_system(monkeypatch, tmp_path
     memory_store.init_schema = AsyncMock()
     conv_store = MagicMock()
     conv_store.init_schema = AsyncMock()
+    key_vault = MagicMock()
+    key_vault.init_schema = AsyncMock()
     config_info = {
         "is_containerized": False,
         "storage_dir": str(tmp_path),
@@ -106,6 +108,7 @@ async def test_lifespan_shutdown_does_not_reset_rag_system(monkeypatch, tmp_path
     monkeypatch.setattr(main_module, "create_embedding_function", MagicMock())
     monkeypatch.setattr(main_module, "get_user_memory_store", lambda: memory_store)
     monkeypatch.setattr(main_module, "get_conversation_store", lambda: conv_store)
+    monkeypatch.setattr(main_module, "get_key_vault", lambda: key_vault)
     monkeypatch.setattr(main_module.Config, "get_dynamic_config", classmethod(lambda cls: dict(config_info)))
     monkeypatch.setenv("PRELOAD_SPEECH_MODELS", "0")
 
@@ -116,6 +119,7 @@ async def test_lifespan_shutdown_does_not_reset_rag_system(monkeypatch, tmp_path
     rag_service.reset_system.assert_not_awaited()
     memory_store.init_schema.assert_awaited_once()
     conv_store.init_schema.assert_awaited_once()
+    key_vault.init_schema.assert_awaited_once()
 
 
 # --------------------------------------------------------------------------- #

@@ -114,6 +114,17 @@ describe('api client — REST endpoints', () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(init.body).toBeInstanceOf(FormData);
   });
+
+  it('saveApiKey sends PUT to /api/keys', async () => {
+    fetchMock.mockResolvedValue(
+      makeJsonResponse({ id: 'c-1', kind: 'llm', provider: 'openrouter', label: '', updated_at: '', configured: true }),
+    );
+    await api.saveApiKey({ kind: 'llm', provider: 'openrouter', label: '', value: 'sk-x' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/api/keys');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body)).toMatchObject({ kind: 'llm', provider: 'openrouter', value: 'sk-x' });
+  });
 });
 
 describe('api client — streaming', () => {

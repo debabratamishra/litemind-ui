@@ -40,17 +40,22 @@ CREATE TABLE IF NOT EXISTS user_credentials (
 _KEY_FILE_NAME = "keyvault.key"
 
 
-def _resolve_fernet_key() -> bytes:
-    """Env KEYVAULT_KEY wins; otherwise generate, persist 0600, reuse."""
+def _resolve_fernet_key() -> tuple[bytes, bool]:
+    """Env KEYVAULT_KEY wins; otherwise generate, persist 0600, reuse.
+
+    Returns ``(key, fresh)`` where ``fresh`` is True when a key was generated
+    this run (no env key, no persisted file) — callers use it to warn when a
+    fresh key would orphan credentials already in the database.
+    """
     env_key = os.getenv("KEYVAULT_KEY")
     if env_key:
-        return env_key.encode("utf-8")
+        return env_key.encode("utf-8"), False
 
     storage = Path(Config.get_storage_path())
     storage.mkdir(parents=True, exist_ok=True)
     key_path = storage / _KEY_FILE_NAME
     if key_path.exists():
-        return key_path.read_bytes().strip()
+        return key_path.read_bytes().strip(), False
 
     key = Fernet.generate_key()
     fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -59,7 +64,7 @@ def _resolve_fernet_key() -> bytes:
             fh.write(key)
     finally:
         os.chmod(key_path, 0o600)
-    return key
+    return key, True
 
 
 class KeyVault:
@@ -68,12 +73,46 @@ class KeyVault:
     def __init__(self, dsn: Optional[str] = None):
         self._dsn = dsn or Config.DATABASE_URL
         self._pool: Optional[asyncpg.Pool] = None
+        self._fresh_fernet_key = False
         try:
-            self._fernet = Fernet(_resolve_fernet_key())
+            raw_key, fresh = _resolve_fernet_key()
+            self._fernet = Fernet(raw_key)
+            self._fresh_fernet_key = fresh
         except Exception as exc:
             raise RuntimeError(
                 "KEYVAULT_KEY is invalid: must be a urlsafe-base64-encoded 32-byte key"
             ) from exc
+
+    async def init_schema(self) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(SCHEMA_SQL)
+            if self._fresh_fernet_key:
+                # A key generated this run cannot decrypt anything written by
+                # a previous one; if rows already exist (volume replaced, key
+                # file lost), say so loudly instead of failing silently later.
+                count = await conn.fetchval("SELECT COUNT(*) FROM user_credentials")
+                if count:
+                    logger.warning(
+                        "KEYVAULT_KEY was not set and no keyvault.key was found; a fresh"
+                        " Fernet key was generated while %s credential row(s) already exist."
+                        " Those rows are now undecryptable. Set KEYVAULT_KEY to keep stored"
+                        " keys decryptable across redeploys.",
+                        count,
+                    )
+            # Pre-existing DBs created the table before UNIQUE was inline in
+            # SCHEMA_SQL, so they can hold duplicate (kind, provider) rows from
+            # the old SELECT-then-write race. Dedupe first (keep newest by
+            # updated_at) or the unique index below fails on exactly those DBs.
+            await conn.execute(
+                "DELETE FROM user_credentials a USING user_credentials b"
+                " WHERE a.kind = b.kind AND a.provider = b.provider"
+                " AND (a.updated_at, a.id) < (b.updated_at, b.id)"
+            )
+            await conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_credentials_kind_provider"
+                " ON user_credentials (kind, provider)"
+            )
 
     async def _get_pool(self) -> asyncpg.Pool:
         if self._pool is None:
@@ -84,17 +123,6 @@ class KeyVault:
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
-
-    async def init_schema(self) -> None:
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(SCHEMA_SQL)
-            # Pre-existing DBs created the table before UNIQUE was inline in
-            # SCHEMA_SQL; add the constraint as a unique index for them.
-            await conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_credentials_kind_provider"
-                " ON user_credentials (kind, provider)"
-            )
 
     async def set_credential(
         self, kind: str, provider: str, label: str, plaintext: str

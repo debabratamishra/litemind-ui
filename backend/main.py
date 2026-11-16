@@ -34,6 +34,7 @@ from backend.app.backend.conversation_store import get_conversation_store
 from backend.app.backend.core.config import DEFAULT_RAG_CONFIG
 from backend.app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
 from backend.app.backend.user_memory_store import get_user_memory_store
+from backend.app.kernel.keyvault import get_key_vault
 from backend.config import Config
 
 # Configure logging early so lifespan hooks can use logger
@@ -138,6 +139,14 @@ async def lifespan(app: FastAPI):
         logger.info("User memory store ready")
     except Exception as e:
         logger.warning(f"User memory schema init skipped: {e}")
+
+    # Ensure the credentials table + unique index exist (idempotent); degrade
+    # gracefully so a Postgres hiccup never blocks boot.
+    try:
+        await get_key_vault().init_schema()
+        logger.info("Key vault schema ready")
+    except Exception as e:
+        logger.warning(f"Key vault schema init skipped: {e}")
 
     # Seed the system user and backfill orphaned conversations (idempotent);
     # degrade gracefully

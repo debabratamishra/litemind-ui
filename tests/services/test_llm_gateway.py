@@ -17,6 +17,16 @@ import pytest
 from backend.app.services import llm_gateway as gw
 
 
+@pytest.fixture(autouse=True)
+def _no_vault_key(monkeypatch):
+    """Keep stream_completion tests off the real Postgres vault.
+
+    ``stream_completion`` falls back to the user key vault when no api_key
+    param is given; without this patch those tests would hit a live DB.
+    """
+    monkeypatch.setattr(gw, "get_key_vault", lambda: _FakeVault(None))
+
+
 # ── normalize_backend ────────────────────────────────────────────────────
 def test_normalize_backend_known_canonical():
     assert gw.normalize_backend("Ollama") == "ollama"
@@ -379,3 +389,91 @@ async def test_complete_text_handles_empty_stream():
     with patch.object(gw, "_stream_ollama_native", fake_stream):
         out = await gw.complete_text(messages=[], backend="ollama", model="llama3")
     assert out == ""
+
+
+# ── stream_completion: vault key fallback (param > vault > env) ─────────
+class _FakeVault:
+    """Minimal key-vault stand-in holding one (kind, provider) credential."""
+
+    def __init__(self, key: str | None):
+        self._key = key
+
+    async def get_credential(self, kind, provider):
+        return self._key if kind == "llm" and provider == "openrouter" else None
+
+
+async def test_stream_completion_uses_vault_key_when_param_absent():
+    captured: dict = {}
+
+    async def fake(**kwargs):
+        return await _patched_acompletion(captured, **kwargs)
+
+    with patch.object(gw, "get_key_vault", lambda: _FakeVault("sk-vault")), patch.object(
+        gw.litellm, "acompletion", side_effect=fake
+    ):
+        chunks = [
+            c
+            async for c in gw.stream_completion(
+                backend="openrouter", model="gpt-4", messages=[]
+            )
+        ]
+    assert "".join(chunks) == "Hello"
+    assert captured["api_key"] == "sk-vault"
+
+
+async def test_stream_completion_explicit_param_beats_vault_key():
+    captured: dict = {}
+
+    async def fake(**kwargs):
+        return await _patched_acompletion(captured, **kwargs)
+
+    with patch.object(gw, "get_key_vault", lambda: _FakeVault("sk-vault")), patch.object(
+        gw.litellm, "acompletion", side_effect=fake
+    ):
+        chunks = [
+            c
+            async for c in gw.stream_completion(
+                backend="openrouter", model="gpt-4", api_key="sk-param", messages=[]
+            )
+        ]
+    assert "".join(chunks) == "Hello"
+    assert captured["api_key"] == "sk-param"
+
+
+async def test_stream_completion_env_key_beats_missing_vault_key(mock_env):
+    mock_env(OPENROUTER_API_KEY="sk-env")
+    captured: dict = {}
+
+    async def fake(**kwargs):
+        return await _patched_acompletion(captured, **kwargs)
+
+    with patch.object(gw, "get_key_vault", lambda: _FakeVault(None)), patch.object(
+        gw.litellm, "acompletion", side_effect=fake
+    ):
+        chunks = [
+            c
+            async for c in gw.stream_completion(
+                backend="openrouter", model="gpt-4", messages=[]
+            )
+        ]
+    assert "".join(chunks) == "Hello"
+    assert captured["api_key"] == "sk-env"
+
+
+async def test_stream_completion_vault_key_reaches_ollama_native_path():
+    captured: dict = {}
+
+    async def fake_stream(*a, **k):
+        captured.update(k)
+        yield "hi"
+
+    with patch.object(gw, "get_key_vault", lambda: _FakeVault("sk-vault")), patch.object(
+        gw, "_stream_ollama_native", fake_stream
+    ):
+        chunks = [
+            c async for c in gw.stream_completion(backend="ollama", model="llama3", messages=[])
+        ]
+    assert chunks == ["hi"]
+    # The vault row is keyed by the requested backend name, so an "ollama"
+    # lookup finds nothing and the native path proceeds keyless.
+    assert captured.get("api_key") is None

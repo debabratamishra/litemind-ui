@@ -6,6 +6,7 @@ delete works, unknown -> None, and the Fernet key file is persisted at
 <storage>/keyvault.key mode 0600 and reused by later KeyVault instances.
 """
 
+import logging
 import os
 import stat
 import uuid
@@ -141,9 +142,18 @@ async def test_init_schema_creates_unique_index_on_kind_provider():
             executed.append(sql)
             return "CREATE TABLE"
 
+        async def fetchval(self, sql, *params):
+            return 0
+
     class RecordingAcquire(FakeAcquire):
+        def __init__(self, conn):
+            self._conn = conn
+
         async def __aenter__(self):
-            return RecordingConn({})
+            return self._conn
+
+        async def __aexit__(self, *exc):
+            return False
 
     class RecordingPool(FakePool):
         def acquire(self):
@@ -152,10 +162,52 @@ async def test_init_schema_creates_unique_index_on_kind_provider():
     vault = KeyVault()
     vault._pool = RecordingPool()
     await vault.init_schema()
-    assert any(
-        "CREATE UNIQUE INDEX" in sql and "idx_user_credentials_kind_provider" in sql
-        for sql in executed
+    # Dedupe must run BEFORE the unique index: on a pre-existing DB holding
+    # duplicate (kind, provider) rows, the index creation fails otherwise.
+    dedupe_idx = next(
+        (i for i, sql in enumerate(executed) if sql.startswith("DELETE FROM user_credentials")),
+        None,
     )
+    index_idx = next(
+        (i for i, sql in enumerate(executed) if "CREATE UNIQUE INDEX" in sql),
+        None,
+    )
+    assert dedupe_idx is not None, "dedupe DELETE missing from init_schema"
+    assert index_idx is not None, "CREATE UNIQUE INDEX missing from init_schema"
+    assert dedupe_idx < index_idx, "dedupe must run before the unique index"
+    assert "idx_user_credentials_kind_provider" in executed[index_idx]
+    assert "kind" in executed[index_idx] and "provider" in executed[index_idx]
+
+
+@pytest.mark.asyncio
+async def test_init_schema_warns_when_fresh_key_orphans_existing_rows(caplog):
+    """A key generated this run cannot decrypt pre-existing rows; say so loudly."""
+    import backend.app.kernel.keyvault as kv
+
+    conn = FakeConn({})
+    conn_count = {"n": 0}
+
+    async def execute(sql, *params):
+        return "ok"
+
+    async def fetchval(sql, *params):
+        conn_count["n"] += 1
+        return 3  # rows already present under the lost key
+
+    conn.execute = execute
+    conn.fetchval = fetchval
+
+    class OneConnPool:
+        def acquire(self):
+            return FakeAcquire(conn)
+
+    vault = kv.KeyVault()
+    vault._pool = OneConnPool()
+    vault._fresh_fernet_key = True
+    with caplog.at_level(logging.WARNING):
+        await vault.init_schema()
+    assert conn_count["n"] == 1, "row count must be checked exactly once"
+    assert any("undecryptable" in r.message for r in caplog.records)
 
 
 # ── Key file persistence ─────────────────────────────────────────────────────

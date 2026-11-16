@@ -8,8 +8,21 @@ made.
 """
 from unittest.mock import patch
 
+import pytest
+
 from backend.app.services import llm_gateway as gw
 from backend.app.services import ollama
+
+
+@pytest.fixture(autouse=True)
+def _no_vault_key(monkeypatch):
+    """Keep stream_completion's vault fallback off the real Postgres vault."""
+
+    class _KeylessVault:
+        async def get_credential(self, kind, provider):
+            return None
+
+    monkeypatch.setattr(gw, "get_key_vault", lambda: _KeylessVault())
 
 
 def test_get_ollama_url_returns_http_url():

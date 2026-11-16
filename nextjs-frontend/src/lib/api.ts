@@ -312,13 +312,25 @@ export async function getApiKeys(): Promise<ApiKeyRecord[]> {
   return res.json();
 }
 
+async function putJSON(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  return res;
+}
+
 export async function saveApiKey(input: {
   kind: string;
   provider: string;
   label: string;
   value: string;
 }): Promise<ApiKeyRecord> {
-  const res = await postJSON('/api/keys', input);
+  const res = await putJSON('/api/keys', input);
   if (!res.ok) throw new Error(await errorText(res));
   return res.json();
 }
