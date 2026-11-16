@@ -8,7 +8,6 @@ infra/docker/
   Dockerfile.nextjs  Next.js frontend image
   compose/
     docker-compose.yml
-    docker-compose.auth.yml
     docker-compose.dev.yml
     docker-compose.prod.yml
     docker-compose.hub.yml
@@ -19,7 +18,7 @@ infra/docker/
 The repository `Makefile` is the supported entry point:
 
 ```bash
-make up          # build/start the default stack with auth services
+make up          # build/start the default stack
 make dev         # start the development stack
 make prod        # start the production stack
 make hub-up      # pull and start Docker Hub images
@@ -32,6 +31,4 @@ The underlying Compose files are referenced with `-f infra/docker/compose/<file>
 
 ## Environment and persistence
 
-Copy `.env.example` to `.env` and fill in the required provider and authentication values. The default stack persists `uploads/`, `chroma_db/`, `storage/`, and `logs/` through bind mounts. Do not commit `.env` or provider credentials.
-
-`make gotrue-up` starts the standalone GoTrue/PostgreSQL services for a natively running backend. `make gotrue-down` stops them and removes the legacy standalone containers if present.
+Copy `.env.example` to `.env` and fill in the required provider values. The default stack persists `uploads/`, `chroma_db/`, `storage/`, and `logs/` through bind mounts. Do not commit `.env` or provider credentials.

@@ -3,72 +3,91 @@ import { renderHook, act } from "@testing-library/react";
 import { useRealtimeVoice } from "./use-realtime-voice";
 
 function mockBrowser() {
-  const dataChannelHandlers: Record<string, ((e: { data: string }) => void)> = {};
-  const dc = {
-    send: vi.fn(),
-    close: vi.fn(),
+  const wsHandlers: Record<string, ((e: any) => void)> = {};
+  class FakeWebSocket {
+    static OPEN = 1;
+    readyState = 1;
+    send = vi.fn();
+    close = vi.fn().mockImplementation(() => {
+      this.readyState = 3;
+      wsHandlers["close"]?.({});
+    });
+    set onopen(fn: any) {
+      wsHandlers["open"] = fn;
+      queueMicrotask(() => {
+        if (this.readyState === 1 && wsHandlers["open"] === fn) {
+          fn({});
+        }
+      });
+    }
     set onmessage(fn: any) {
-      dataChannelHandlers["message"] = fn;
-    },
-    get onmessage() {
-      return dataChannelHandlers["message"];
-    },
+      wsHandlers["message"] = fn;
+    }
+    set onerror(fn: any) {
+      wsHandlers["error"] = fn;
+    }
+    set onclose(fn: any) {
+      wsHandlers["close"] = fn;
+    }
+    constructor(public url: string) {}
+  }
+  (globalThis as any).WebSocket = FakeWebSocket;
+
+  const mockAudioContext = {
+    currentTime: 0,
+    createMediaStreamSource: vi.fn().mockReturnValue({ connect: vi.fn() }),
+    createScriptProcessor: vi.fn().mockReturnValue({
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      onaudioprocess: null,
+    }),
+    createGain: vi.fn().mockReturnValue({
+      gain: { value: 1 },
+      connect: vi.fn(),
+    }),
+    createBuffer: vi.fn().mockReturnValue({
+      duration: 1,
+      getChannelData: vi.fn().mockReturnValue(new Float32Array(100)),
+    }),
+    createBufferSource: vi.fn().mockReturnValue({
+      connect: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+      onended: null,
+    }),
+    destination: {},
+    close: vi.fn().mockResolvedValue(undefined),
   };
-  const pc = {
-    createDataChannel: () => dc,
-    createOffer: vi.fn().mockResolvedValue({ sdp: "offer-sdp", type: "offer" }),
-    setLocalDescription: vi.fn().mockResolvedValue(undefined),
-    setRemoteDescription: vi.fn().mockResolvedValue(undefined),
-    addTrack: vi.fn(),
-    close: vi.fn(),
-    ondatachannel: null as any,
-    ontrack: null as any,
-    onconnectionstatechange: null as any,
-    connectionState: "connected",
-  };
-  (globalThis as any).RTCPeerConnection = vi.fn().mockImplementation(function () {
-    return pc;
-  });
-  (globalThis as any).RTCSessionDescription = class {
-    constructor(public init: any) {}
-  };
+  (globalThis as any).AudioContext = vi.fn().mockImplementation(() => mockAudioContext);
+
   (globalThis as any).navigator = {
     mediaDevices: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [] }) },
   };
-  if (!(globalThis as any).crypto?.randomUUID) {
-    Object.defineProperty(globalThis, "crypto", {
-      value: { randomUUID: () => "pc-123" },
-      configurable: true,
-      writable: true,
-    });
-  }
+
   (globalThis as any).fetch = vi.fn().mockResolvedValue({
     ok: true,
-    json: async () => ({ sdp: "answer-sdp", type: "answer", pc_id: "pc-123" }),
+    json: async () => ({ signed_url: "wss://api.elevenlabs.io/v1/convai/conversation?signed=true", agent_id: "agent-123" }),
   });
-  (globalThis as any).Audio = class {
-    autoplay = false;
-    srcObject: any = null;
-  };
-  return { pc, dc, dataChannelHandlers };
+
+  return { wsHandlers, mockAudioContext };
 }
 
 describe("useRealtimeVoice", () => {
   beforeEach(() => mockBrowser());
 
-  it("transitions to listening on a successful offer", async () => {
+  it("transitions to listening on successful ElevenLabs ConvAI connection", async () => {
     const { result } = renderHook(() => useRealtimeVoice({}, {}));
     await act(async () => {
       await result.current.start();
     });
     expect(result.current.state).toBe("listening");
     expect((globalThis as any).fetch).toHaveBeenCalledWith(
-      "/api/voice/offer",
+      expect.stringContaining("/api/voice/session"),
       expect.objectContaining({ method: "POST" }),
     );
   });
 
-  it("fires onAssistantText when a data-channel message arrives", async () => {
+  it("fires onAssistantText when an agent_response event arrives", async () => {
     const env = mockBrowser();
     const onAssistantText = vi.fn();
     const { result } = renderHook(() =>
@@ -78,11 +97,33 @@ describe("useRealtimeVoice", () => {
       await result.current.start();
     });
     await act(async () => {
-      env.dataChannelHandlers["message"]({
-        data: JSON.stringify({ type: "assistant_text", text: "Hi there" }),
+      env.wsHandlers["message"]?.({
+        data: JSON.stringify({
+          type: "agent_response",
+          agent_response_event: { agent_response: "Hi there from ElevenLabs" },
+        }),
       });
     });
-    expect(onAssistantText).toHaveBeenCalledWith("Hi there");
-    expect(result.current.state).toBe("speaking");
+    expect(onAssistantText).toHaveBeenCalledWith("Hi there from ElevenLabs");
+  });
+
+  it("fires onUserTranscript when a user_transcript event arrives", async () => {
+    const env = mockBrowser();
+    const onUserTranscript = vi.fn();
+    const { result } = renderHook(() =>
+      useRealtimeVoice({}, { onUserTranscript }),
+    );
+    await act(async () => {
+      await result.current.start();
+    });
+    await act(async () => {
+      env.wsHandlers["message"]?.({
+        data: JSON.stringify({
+          type: "user_transcript",
+          user_transcription_event: { user_transcript: "Hello assistant" },
+        }),
+      });
+    });
+    expect(onUserTranscript).toHaveBeenCalledWith("Hello assistant");
   });
 });

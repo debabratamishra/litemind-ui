@@ -9,7 +9,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 from backend.app.backend.api.security_utils import sanitize_filename, validate_file_size
 from backend.app.backend.core.config import backend_config
 from backend.app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
@@ -325,7 +325,7 @@ async def delete_rag_file(filename: str):
 
 
 @router.post("/query")
-async def rag_query(request: RAGQueryRequestEnhanced, user: User = Depends(get_current_user)):
+async def rag_query(request: RAGQueryRequestEnhanced, user: User = Depends(get_system_user)):
     """Query RAG system"""
     try:
         from backend.main import rag_service

@@ -8,7 +8,7 @@
 ```bash
 # ── Python / backend ──────────────────────────────────────────────
 uv sync --group all                   # install all dependency groups
-uv sync --group backend               # backend only
+uv sync --group core                  # core server only (no ml/voice/ocr deps)
 uv sync --group dev                   # dev tools only (ruff, black, mypy, ty, pytest)
 
 uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload   # start backend
@@ -20,7 +20,7 @@ uv run pytest -x -q                   # fail-fast, quiet
 uv run ruff check .                   # lint (ruff)
 uv run ruff format .                  # format (ruff)
 uv run black .                        # alternative formatter (line-length 120)
-uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py
+uv run ty check backend/app/backend backend/app/services backend/app/core backend/app/ingestion backend/app/skills backend/app/kernel backend/main.py backend/config.py backend/logging_config.py main.py config.py logging_config.py
 uv run mypy .                         # type check
 
 # ── Next.js frontend ──────────────────────────────────────────────
@@ -80,6 +80,7 @@ backend/                FastAPI backend package
     services/           business logic (LLM, RAG, speech, voice, web search)
     ingestion/          document processing pipeline
     skills/             pluggable chat and RAG capability routing
+    kernel/             provider-neutral router + encrypted key vault (keyvault.py, router.py)
 nextjs-frontend/
   src/
     app/                Next.js 16 App Router pages and layouts
@@ -130,7 +131,7 @@ offer to `POST /api/voice/offer`; the server answers and runs a Pipecat pipeline
 (`build_voice_pipeline` → `run_voice_pipeline`) as a background task. All
 transcript/control events flow back over the WebRTC data channel.
 
-- STT: `BackendWhisperSTTService` (segmented, VAD-gated). TTS: `BackendKokoroTTSService`.
+- STT: `BackendWhisperSTTService` (segmented, VAD-gated). Local TTS is pyttsx3 via `tts_service.py`.
 - The LLM leg is `BackendLLMService` (subclasses `BaseOpenAILLMService`); `process_frame`
   drives inference, so do not call the LLM gateway directly inside the voice pipeline.
 - Backend→browser events: `ready`, `user_transcript`, `assistant_text`, `assistant_end`,
@@ -159,6 +160,11 @@ Copy `.env.example` → `.env` and fill in secrets. Critical variables:
 | `CHROMA_DB_PATH` | ChromaDB storage path |
 | `UPLOAD_FOLDER` | Document upload directory |
 | `LOG_LEVEL` | Logging verbosity (`INFO` / `DEBUG`) |
+
+### Provider keys API
+
+- `POST/GET/DELETE /api/keys` — encrypted user provider keys (Fernet at rest, key in `backend/app/kernel/keyvault.py`). Responses carry `configured: bool` + metadata only; keys are never echoed.
+- `/api/kernel/providers` — provider-neutral capability resolution (`backend/app/kernel/router.py`). Resolution order everywhere: explicit request param > key vault > env var.
 
 ## CI / CD
 

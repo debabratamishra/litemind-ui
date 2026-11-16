@@ -5,15 +5,8 @@ import logging
 from typing import Any, Dict, List, Union
 
 import litellm
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
 from backend.app.services.llm_gateway import resolve_embedding_config
-
-torch: Any = None
-try:
-    import torch
-except ImportError:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +28,14 @@ class LocalHFEmbeddingFunction:
 
     def __init__(self, model_name: str, device: str | None = None, batch_size: int = 64):
         from sentence_transformers import SentenceTransformer
+
         if device is None:
-            device = "cuda" if torch and torch.cuda.is_available() else "cpu"
+            try:
+                import torch
+
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            except ImportError:
+                device = "cpu"
 
         self.model = SentenceTransformer(model_name, device=device)
         self.batch_size = batch_size
@@ -150,6 +149,8 @@ def create_embedding_function(
     if provider == "ollama":
         if not ollama_url:
             raise ValueError("Ollama URL required for Ollama provider")
+        from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+
         return OllamaEmbeddingFunction(
             model_name=model_name,
             url=f"{ollama_url}/api/embeddings",

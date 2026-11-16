@@ -25,7 +25,7 @@ cd "$REPO_ROOT"
 # Name the same stack the Makefile's default target uses, and pin the compose project
 # directory to the repository root (the directory we just cd'd into) so the .env lookup,
 # the project/volume names and every relative path inside the files stay correct.
-COMPOSE_CMD="$COMPOSE_CMD --project-directory . -f infra/docker/compose/docker-compose.yml -f infra/docker/compose/docker-compose.auth.yml"
+COMPOSE_CMD="$COMPOSE_CMD --project-directory . -f infra/docker/compose/docker-compose.yml"
 
 echo "🚀 Starting LiteMindUI..."
 echo "========================="

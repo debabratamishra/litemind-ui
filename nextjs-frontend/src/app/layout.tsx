@@ -3,7 +3,6 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/theme-provider';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { AuthProvider } from '@/app/auth-provider';
 
 // ─── Font ─────────────────────────────────────────────────────────────────────
 
@@ -48,11 +47,7 @@ export default function RootLayout({
       <body className="h-full bg-background font-sans antialiased">
         <ThemeProvider>
           {/* delay=300 gives tooltips a 300ms hover delay before showing */}
-          <TooltipProvider delay={300}>
-            {/* AuthProvider rehydrates the session on mount; route groups
-                decide what to render (sidebar shell vs. auth pages). */}
-            <AuthProvider>{children}</AuthProvider>
-          </TooltipProvider>
+          <TooltipProvider delay={300}>{children}</TooltipProvider>
         </ThemeProvider>
       </body>
     </html>

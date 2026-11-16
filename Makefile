@@ -1,6 +1,6 @@
 # LiteMindUI Docker Makefile
 
-.PHONY: help setup build up down logs clean health dev prod hub-up hub-down version tag-release test-docker-local create-docker-repos gotrue-up gotrue-down
+.PHONY: help setup build up down logs clean health dev prod hub-up hub-down version tag-release test-docker-local create-docker-repos
 
 COMPOSE_CMD ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; elif docker compose version >/dev/null 2>&1; then echo "docker compose"; fi)
 COMPOSE_DIR := infra/docker/compose
@@ -10,7 +10,7 @@ COMPOSE_DIR := infra/docker/compose
 # (and therefore the pgdata volume name) equal to the checkout directory basename,
 # as it was before the files moved.
 COMPOSE_PROJECT_FLAGS := --project-directory .
-COMPOSE_FILES := $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.yml -f $(COMPOSE_DIR)/docker-compose.auth.yml
+COMPOSE_FILES := $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.yml
 
 # Default target
 help:
@@ -31,8 +31,6 @@ help:
 	@echo "  tag-release - Create a new release tag"
 	@echo "  test-docker-local - Test Docker build and push locally"
 	@echo "  create-docker-repos - Create required Docker Hub repositories"
-	@echo "  gotrue-up - Start standalone GoTrue auth container (non-Docker/native mode)"
-	@echo "  gotrue-down - Stop and remove the standalone GoTrue container"
 
 # Setup directories and environment
 setup:
@@ -140,37 +138,3 @@ test-docker-local:
 create-docker-repos:
 	@echo "🐳 Creating Docker Hub repositories..."
 	@python3 scripts/create-docker-repos.py
-
-# ── Authentication (GoTrue) ───────────────────────────────────────
-# Auth infrastructure (Postgres + GoTrue) lives in infra/docker/compose/docker-compose.auth.yml —
-# the single source of truth for BOTH modes:
-#   Docker mode     — `make up` layers infra/docker/compose/docker-compose.yml + infra/docker/compose/docker-compose.auth.yml.
-#                     Backend uses AUTH_MODE=docker and reaches GoTrue at
-#                     http://gotrue:9999 and Postgres at db:5432.
-#   Standalone mode — backend runs natively (`uv run uvicorn ...`) with
-#                     AUTH_MODE=standalone. `make gotrue-up` starts only the
-#                     auth services; backend reaches GoTrue at
-#                     http://localhost:9999 and Postgres at localhost:5432.
-# Set GOTRUE_JWT_SECRET and POSTGRES_PASSWORD in .env (see .env.example).
-
-# Start auth services (Postgres + GoTrue) for standalone/native backend mode.
-gotrue-up:
-	@test -f .env || { echo "❌ .env not found. Copy .env.example to .env and set GOTRUE_JWT_SECRET."; exit 1; }
-	@secret=$$(grep -E '^GOTRUE_JWT_SECRET=' .env | head -1 | cut -d= -f2-); \
-	if [ -z "$$secret" ] || [ "$$secret" = "change-me-to-a-long-random-string" ]; then \
-		echo "❌ GOTRUE_JWT_SECRET is empty or still the placeholder in .env."; \
-		echo "   Set it to a long random string, e.g.: openssl rand -hex 32"; \
-		exit 1; \
-	fi
-	@echo "🔐 Starting auth services (Postgres + GoTrue)..."
-	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.auth.yml up -d
-	@echo "✅ GoTrue running at http://localhost:9999 (Postgres at localhost:5432)."
-	@echo "   Set AUTH_MODE=standalone in .env for the native backend."
-
-# Stop auth services; also removes legacy pre-compose containers if present.
-gotrue-down:
-	@echo "🛑 Stopping auth services..."
-	$(COMPOSE_CMD) $(COMPOSE_PROJECT_FLAGS) -f $(COMPOSE_DIR)/docker-compose.auth.yml down
-	@docker rm -f litemind-gotrue litemind-postgres 2>/dev/null || true
-	@docker network rm litemind-auth 2>/dev/null || true
-	@echo "✅ Auth services stopped."

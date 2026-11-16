@@ -13,35 +13,29 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.app.backend.api import auth as auth_api
 from backend.app.backend.api import chat as chat_api
 from backend.app.backend.api import conversations as conversations_api
 from backend.app.backend.api import health as health_api
+from backend.app.backend.api import kernel as kernel_api
+from backend.app.backend.api import keys as keys_api
 from backend.app.backend.api import memory as memory_api
 from backend.app.backend.api import models as models_api
 from backend.app.backend.api import rag as rag_api
 from backend.app.backend.api import tts as tts_api
 from backend.app.backend.api import voice as voice_api
+from backend.app.backend.conversation_store import get_conversation_store
 from backend.app.backend.core.config import DEFAULT_RAG_CONFIG
 from backend.app.backend.core.embeddings import create_embedding_function, resolve_embedding_provider
 from backend.app.backend.user_memory_store import get_user_memory_store
-from backend.app.services.rag_service import RAGService
-from backend.app.services.speech_service import preload_stt_model
-from backend.app.services.tts_service import preload_tts_model
+from backend.app.kernel.keyvault import get_key_vault
 from backend.config import Config
-
-torch: Any = None
-try:
-    import torch
-except ImportError:
-    pass
 
 # Configure logging early so lifespan hooks can use logger
 try:
@@ -131,6 +125,8 @@ async def lifespan(app: FastAPI):
     # Initialize services
     global rag_service
     try:
+        from backend.app.services.rag_service import RAGService
+
         rag_service = RAGService()
         logger.info("RAG service ready")
     except Exception as e:
@@ -143,6 +139,22 @@ async def lifespan(app: FastAPI):
         logger.info("User memory store ready")
     except Exception as e:
         logger.warning(f"User memory schema init skipped: {e}")
+
+    # Ensure the credentials table + unique index exist (idempotent); degrade
+    # gracefully so a Postgres hiccup never blocks boot.
+    try:
+        await get_key_vault().init_schema()
+        logger.info("Key vault schema ready")
+    except Exception as e:
+        logger.warning(f"Key vault schema init skipped: {e}")
+
+    # Seed the system user and backfill orphaned conversations (idempotent);
+    # degrade gracefully
+    try:
+        await get_conversation_store().init_schema()
+        logger.info("Conversation store ready")
+    except Exception as e:
+        logger.warning(f"Conversation store schema init skipped: {e}")
 
     # Restore configuration
     if rag_service is None:
@@ -181,8 +193,12 @@ async def lifespan(app: FastAPI):
     try:
         cpu_threads = max(1, (os.cpu_count() or 4) - 1)
         os.environ.setdefault("OMP_NUM_THREADS", str(cpu_threads))
-        if torch:
+        try:
+            import torch
+
             torch.set_num_threads(cpu_threads)
+        except ImportError:
+            pass
         logger.info(f"Thread optimization applied: {cpu_threads} threads")
     except Exception as e:
         logger.warning(f"Thread tuning failed: {e}")
@@ -205,6 +221,9 @@ async def lifespan(app: FastAPI):
         logger.info("=" * 60)
 
         def preload_models():
+            from backend.app.services.speech_service import preload_stt_model
+            from backend.app.services.tts_service import preload_tts_model
+
             start_time = time.time()
             stt_loaded = False
             tts_loaded = False
@@ -219,8 +238,8 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"  ✗ Failed to preload STT model: {e}")
 
             try:
-                # Preload TTS (Kokoro) model
-                logger.info("  → Loading TTS (Kokoro) model...")
+                # Preload TTS (pyttsx3) — no-op, kept for startup compatibility
+                logger.info("  → Loading TTS (pyttsx3) model...")
                 preload_tts_model()
                 tts_loaded = True
                 logger.info("  ✓ TTS model loaded successfully")
@@ -278,7 +297,6 @@ app.add_middleware(
 )
 
 # Include API routers
-app.include_router(auth_api.router)
 app.include_router(conversations_api.router)
 app.include_router(chat_api.router)
 app.include_router(health_api.router)
@@ -287,6 +305,8 @@ app.include_router(rag_api.router)
 app.include_router(tts_api.router)
 app.include_router(voice_api.router)
 app.include_router(memory_api.router)
+app.include_router(kernel_api.router)
+app.include_router(keys_api.router)
 
 # NOTE: Chat endpoints have been moved to backend/app/backend/api/chat.py.
 # They are included via the router above to support web search functionality.

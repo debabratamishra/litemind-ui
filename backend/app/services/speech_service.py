@@ -19,20 +19,8 @@ from typing import Any, Callable, Generator, Optional, Tuple
 import numpy as np
 
 librosa: Any = None
-try:
-    import librosa
-except Exception:
-    pass
-
 torch: Any = None
-try:
-    import torch
-except Exception as _torch_err:
-    # Log at import time so the root cause appears in startup logs
-    logging.getLogger(__name__).warning(
-        f"PyTorch (torch) failed to import — STT will be unavailable. "
-        f"Root cause: {_torch_err!r}"
-    )
+_heavy_probed = False
 
 # Suppress the FutureWarning from transformers about 'inputs' deprecation
 # This is an internal transformers issue that will be fixed in a future version
@@ -44,6 +32,34 @@ warnings.filterwarnings(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _probe_heavy_deps() -> None:
+    """Import the ml/voice-group deps on first use so core-only images boot.
+
+    Probes exactly once, so tests that monkeypatch ``librosa``/``torch`` after
+    construction keep full control of the bindings.
+    """
+    global _heavy_probed, librosa, torch
+    if _heavy_probed:
+        return
+    _heavy_probed = True
+    try:
+        import librosa as _librosa
+
+        librosa = _librosa
+    except Exception:
+        pass
+    try:
+        import torch as _torch
+
+        torch = _torch
+    except Exception as _torch_err:
+        # Log at first use so the root cause appears in startup logs
+        logger.warning(
+            f"PyTorch (torch) failed to import — STT will be unavailable. "
+            f"Root cause: {_torch_err!r}"
+        )
 
 
 def _get_transformers_pipeline():
@@ -63,6 +79,7 @@ class SpeechService:
             model_name: Hugging Face model name for Whisper
             preload: If True, load the model immediately during init
         """
+        _probe_heavy_deps()
         self.model_name = model_name
         self.backend = "transformers"  # Only transformers backend supported now
         self.pipe = None

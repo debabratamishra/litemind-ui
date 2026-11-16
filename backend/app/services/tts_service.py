@@ -1,15 +1,11 @@
-"""
-Text-to-Speech service using lightweight open-source models.
+"""Text-to-Speech service using local voices.
 
-This module provides TTS functionality using:
-1. Kokoro TTS (High quality, offline, fast) - Primary/Preferred
-2. pyttsx3 as fallback (offline, system voices)
-
-Kokoro is preferred as it's offline, high quality, and supports streaming.
+This module provides offline TTS via pyttsx3 (system voices). No external
+model download or network call is required.
 
 Features:
 - Streaming TTS: Generate audio chunks as text streams in
-- Model preloading: Load models at startup for reduced latency
+- Model preloading: No-op kept for startup compatibility
 - Text preprocessing: Clean text for natural speech output
 """
 
@@ -17,13 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import logging
 import os
 import tempfile
 import unicodedata
-import warnings
-from typing import Any, AsyncGenerator, Generator, Optional, Tuple
+from typing import Any, AsyncGenerator, Optional, Tuple
 
 from ..core.text_markup import remove_tagged_sections, replace_fenced_code_blocks
 
@@ -49,62 +43,26 @@ logger = logging.getLogger(__name__)
 
 # TTS Configuration
 TTS_CONFIG: dict[str, Any] = {
-    "kokoro_voice": "af_heart",           # Default Kokoro voice (warm, expressive)
-    "kokoro_repo_id": "hexgrad/Kokoro-82M",  # Explicit repo_id to suppress warning
-    # Available voice options - expressive voices first
-    "expressive_voices": {
-        "af_heart": "Warm, expressive female voice",
-        "af_bella": "Friendly, engaging female voice",
-        "af_sarah": "Clear, professional female voice",
-        "am_adam": "Warm, friendly male voice",
-        "am_michael": "Clear, professional male voice",
-    },
-    # Voice style presets for different contexts
-    "voice_styles": {
-        "default": {"voice": "af_heart", "speed": 1.0},
-        "friendly": {"voice": "af_bella", "speed": 1.0},
-        "professional": {"voice": "af_sarah", "speed": 1.05},
-        "conversational": {"voice": "af_heart", "speed": 0.95},
-    },
-    # Default speed for more natural-sounding speech
-    "default_speed": 0.95,  # Slightly slower for more natural cadence
+    "default_voice": "default",
 }
 
 # Cache directory for TTS audio
 CACHE_DIR = os.path.join(tempfile.gettempdir(), "litemind_tts_cache")
 
-# Sentence-ending punctuation for streaming chunking
 # Minimum characters before attempting to synthesize a chunk
 # Lower values = faster first audio, but more synthesis calls
-MIN_CHUNK_SIZE = 20  # Reduced from 50 for faster streaming
-MAX_CHUNK_SIZE = 300  # Reduced from 500 for more frequent audio chunks
-
-# Kokoro pipeline split patterns (plain strings passed to the Kokoro library)
-_KOKORO_SPLIT_NEWLINES = '\n+'
-_KOKORO_SPLIT_SENTENCES = r'[.!?;:,]\s*'
+MIN_CHUNK_SIZE = 20
+MAX_CHUNK_SIZE = 300
 
 
 class TTSService:
-    """Text-to-Speech service with Kokoro as primary and pyttsx3 as fallback."""
+    """Text-to-Speech service backed by pyttsx3 local voices."""
 
     def __init__(self, preload_models: bool = False):
-        """
-        Initialize TTS service.
-
-        Args:
-            preload_models: If True, load Kokoro model immediately during init
-        """
-        self._preferred_backend = os.getenv("TTS_BACKEND", "kokoro").strip().lower()
         self._pyttsx3_available = False
-        self._kokoro_available = False
         self._pyttsx3_engine = None
-        self._kokoro_pipeline = None
-        self._kokoro_loaded = False
         self._check_backends()
         self._ensure_cache_dir()
-
-        if preload_models:
-            self._preload_kokoro()
 
     def _ensure_cache_dir(self):
         """Ensure cache directory exists."""
@@ -114,55 +72,21 @@ class TTSService:
             logger.warning(f"Failed to create TTS cache directory: {e}")
 
     def _check_backends(self):
-        """Check which TTS backends are available."""
-        # Check for Kokoro
-        try:
-            import soundfile  # noqa: F401
-            from kokoro import KPipeline  # noqa: F401
-            self._kokoro_available = True
-            logger.info("Kokoro TTS backend available")
-        except ImportError:
-            logger.warning("kokoro or soundfile not installed")
-
-        # Check for pyttsx3 fallback
+        """Check whether the pyttsx3 backend is available."""
         try:
             import pyttsx3  # noqa: F401
             self._pyttsx3_available = True
-            logger.info("pyttsx3 fallback available")
+            logger.info("pyttsx3 TTS backend available")
         except ImportError:
             logger.warning("pyttsx3 not installed")
 
-    def _preload_kokoro(self):
-        """Preload Kokoro model into memory."""
-        if not self._kokoro_available or self._kokoro_loaded:
-            return
-
-        try:
-            from kokoro import KPipeline
-
-            # Suppress PyTorch deprecation warnings during model loading
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=UserWarning)
-                warnings.filterwarnings("ignore", category=FutureWarning)
-
-                logger.info("Preloading Kokoro TTS model...")
-                # Pass explicit repo_id to suppress the warning
-                self._kokoro_pipeline = KPipeline(
-                    lang_code='a',
-                    repo_id=TTS_CONFIG["kokoro_repo_id"]
-                )
-                self._kokoro_loaded = True
-                logger.info("Kokoro TTS model preloaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to preload Kokoro model: {e}")
-
     def preload(self):
-        """Public method to preload models. Call during app startup."""
-        self._preload_kokoro()
+        """Compatibility no-op — pyttsx3 needs no model preload."""
+        return None
 
     def is_model_loaded(self) -> bool:
-        """Check if the TTS model is loaded in memory."""
-        return self._kokoro_loaded
+        """pyttsx3 loads on demand, so there is no resident model."""
+        return False
 
     def _clean_text_for_tts(self, text: str) -> str:
         """
@@ -218,7 +142,7 @@ class TTSService:
         # Remove HTML tags (no regex — avoids ReDoS on malformed input)
         text = _strip_html_tags(text)
 
-        # Remove emojis and special unicode characters
+        # Remove emojis and other non-speech characters
         text = self._remove_emojis(text)
 
         # Remove special characters that don't sound good when read
@@ -319,115 +243,8 @@ class TTSService:
         except Exception as e:
             logger.warning(f"Failed to cache audio: {e}")
 
-    def _synthesize_kokoro(self, text: str, voice: str | None = None, speed: float | None = None) -> Optional[bytes]:
-        """Synthesize speech using Kokoro TTS with expressive settings.
-
-        Args:
-            text: Text to synthesize
-            voice: Voice to use (defaults to expressive af_heart)
-            speed: Speech speed (defaults to slightly slower for natural cadence)
-        """
-        try:
-            import soundfile as sf
-            import torch
-            from kokoro import KPipeline
-
-            if self._kokoro_pipeline is None:
-                # Suppress warnings during initialization
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=UserWarning)
-                    warnings.filterwarnings("ignore", category=FutureWarning)
-
-                    logger.info("Initializing Kokoro pipeline (first run may take a moment)...")
-                    self._kokoro_pipeline = KPipeline(
-                        lang_code='a',
-                        repo_id=TTS_CONFIG["kokoro_repo_id"]
-                    )
-                    self._kokoro_loaded = True
-
-            voice = voice or TTS_CONFIG["kokoro_voice"]
-            speed = speed if speed is not None else TTS_CONFIG.get("default_speed", 0.95)
-
-            # Kokoro generator yields (graphemes, phonemes, audio_tensor)
-            generator = self._kokoro_pipeline(
-                text,
-                voice=voice,
-                speed=speed,
-                split_pattern=_KOKORO_SPLIT_NEWLINES
-            )
-
-            all_audio = []
-            for i, (gs, ps, audio) in enumerate(generator):
-                all_audio.append(audio)
-
-            if not all_audio:
-                return None
-
-            # Concatenate all audio chunks
-            final_audio = torch.cat(all_audio, dim=0)
-
-            # Convert to WAV bytes
-            buf = io.BytesIO()
-            sf.write(buf, final_audio.cpu().numpy(), 24000, format='WAV')
-            return buf.getvalue()
-
-        except Exception as e:
-            logger.error(f"Kokoro synthesis failed: {e}")
-            return None
-
-    def _synthesize_kokoro_streaming(self, text: str, voice: str | None = None, speed: float | None = None) -> Generator[bytes, None, None]:
-        """
-        Synthesize speech using Kokoro TTS with streaming output.
-
-        Yields audio chunks as they are generated.
-        Optimized for low latency with smaller split patterns.
-
-        Args:
-            text: Text to synthesize
-            voice: Voice to use (defaults to expressive af_heart)
-            speed: Speech speed (defaults to slightly slower for natural cadence)
-        """
-        try:
-            import soundfile as sf
-            from kokoro import KPipeline
-
-            if self._kokoro_pipeline is None:
-                # Suppress warnings during initialization
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=UserWarning)
-                    warnings.filterwarnings("ignore", category=FutureWarning)
-
-                    logger.info("Initializing Kokoro pipeline for streaming...")
-                    self._kokoro_pipeline = KPipeline(
-                        lang_code='a',
-                        repo_id=TTS_CONFIG["kokoro_repo_id"]
-                    )
-                    self._kokoro_loaded = True
-
-            voice = voice or TTS_CONFIG["kokoro_voice"]
-            speed = speed if speed is not None else TTS_CONFIG.get("default_speed", 0.95)
-
-            # Use more aggressive split pattern for faster first audio
-            # Split on sentence boundaries AND commas for smaller chunks
-            generator = self._kokoro_pipeline(
-                text,
-                voice=voice,
-                speed=speed,
-                split_pattern=_KOKORO_SPLIT_SENTENCES
-            )
-
-            for gs, ps, audio in generator:
-                if audio is not None and len(audio) > 0:
-                    # Convert each chunk to WAV bytes
-                    buf = io.BytesIO()
-                    sf.write(buf, audio, 24000, format='WAV')
-                    yield buf.getvalue()
-
-        except Exception as e:
-            logger.error(f"Kokoro streaming synthesis failed: {e}")
-
     def _synthesize_pyttsx3(self, text: str) -> Optional[bytes]:
-        """Synthesize speech using pyttsx3 (offline fallback)."""
+        """Synthesize speech using pyttsx3 (offline, system voices)."""
         try:
             import pyttsx3
 
@@ -468,8 +285,8 @@ class TTSService:
 
         Args:
             text: Text to convert to speech
-            voice: Voice ID to use (optional, uses Kokoro default if not specified)
-            use_cache: Whether to use caching (currently not used with Kokoro)
+            voice: Voice ID (unused; kept for API compatibility)
+            use_cache: Whether to use caching (currently unused)
 
         Returns:
             Tuple of (audio_bytes, content_type)
@@ -492,31 +309,16 @@ class TTSService:
         if len(clean_text) > 5000:
             clean_text = clean_text[:5000] + "... Text truncated for speech output."
 
-        # Use Kokoro voice (ignore Edge TTS voice names)
-        kokoro_voice = voice if voice and not voice.startswith("en-") else TTS_CONFIG["kokoro_voice"]
-
-        # Try Kokoro first (High quality, offline) - Primary backend
-        if self._kokoro_available:
-            logger.info("TTS: Using Kokoro backend")
-            # Run in thread pool to avoid blocking event loop
-            loop = asyncio.get_running_loop()
-            audio_data = await loop.run_in_executor(None, self._synthesize_kokoro, clean_text, kokoro_voice)
-            if audio_data:
-                logger.info(f"TTS: Kokoro success, {len(audio_data)} bytes")
-                return audio_data, "audio/wav"
-            logger.warning("TTS: Kokoro returned no data, trying fallback")
-
-        # Fallback to pyttsx3
         if self._pyttsx3_available:
-            logger.info("TTS: Falling back to pyttsx3")
-            audio_data = self._synthesize_pyttsx3(clean_text)
+            logger.info("TTS: Using pyttsx3 backend")
+            loop = asyncio.get_running_loop()
+            audio_data = await loop.run_in_executor(None, self._synthesize_pyttsx3, clean_text)
             if audio_data:
                 logger.info(f"TTS: pyttsx3 success, {len(audio_data)} bytes")
                 return audio_data, "audio/wav"
-            else:
-                logger.error("TTS: pyttsx3 returned no data")
+            logger.warning("TTS: pyttsx3 returned no data")
 
-        logger.error("TTS: No backend available or all backends failed")
+        logger.error("TTS: No backend available or synthesis failed")
         return None, ""
 
     async def synthesize_streaming(
@@ -527,19 +329,12 @@ class TTSService:
         """
         Synthesize speech from streaming text input.
 
-        This method accepts an async generator of text chunks and yields
-        audio chunks as they become available, significantly reducing
-        time-to-first-audio.
+        Yields audio chunks as sentences complete.
 
         Args:
             text_generator: Async generator yielding text chunks
-            voice: Voice ID to use
-
-        Yields:
-            Audio bytes chunks (WAV format for Kokoro)
+            voice: Voice ID (unused; kept for API compatibility)
         """
-        # Use Kokoro voice
-        kokoro_voice = voice or TTS_CONFIG["kokoro_voice"]
         buffer = ""
 
         async for text_chunk in text_generator:
@@ -557,48 +352,41 @@ class TTSService:
             sentences = self._split_into_sentences(buffer)
 
             if len(sentences) > 1:
-                # Synthesize all complete sentences using Kokoro
+                # Synthesize all complete sentences
                 for sentence in sentences[:-1]:
-                    if self._kokoro_available:
+                    if self._pyttsx3_available:
                         loop = asyncio.get_running_loop()
-                        for audio_chunk in await loop.run_in_executor(
-                            None,
-                            lambda s=sentence: list(self._synthesize_kokoro_streaming(s, kokoro_voice))
-                        ):
-                            yield audio_chunk
+                        audio = await loop.run_in_executor(
+                            None, lambda s=sentence: self._synthesize_pyttsx3(s)
+                        )
+                        if audio:
+                            yield audio
 
                 # Keep the last incomplete sentence in buffer
                 buffer = sentences[-1]
             elif len(buffer) > MAX_CHUNK_SIZE:
                 # Force synthesis if buffer is too large
-                if self._kokoro_available:
+                if self._pyttsx3_available:
                     loop = asyncio.get_running_loop()
-                    for audio_chunk in await loop.run_in_executor(
-                        None,
-                        lambda: list(self._synthesize_kokoro_streaming(buffer, kokoro_voice))
-                    ):
-                        yield audio_chunk
+                    audio = await loop.run_in_executor(None, self._synthesize_pyttsx3, buffer)
+                    if audio:
+                        yield audio
                 buffer = ""
 
         # Synthesize any remaining text
-        if buffer.strip() and self._kokoro_available:
+        if buffer.strip() and self._pyttsx3_available:
             loop = asyncio.get_running_loop()
-            for audio_chunk in await loop.run_in_executor(
-                None,
-                lambda: list(self._synthesize_kokoro_streaming(buffer, kokoro_voice))
-            ):
-                yield audio_chunk
+            audio = await loop.run_in_executor(None, self._synthesize_pyttsx3, buffer)
+            if audio:
+                yield audio
 
     def synthesize_text_chunk(self, text: str, voice: Optional[str] = None) -> Optional[bytes]:
         """
         Synchronously synthesize a single text chunk.
 
-        Useful for streaming scenarios where you want to synthesize
-        sentence by sentence.
-
         Args:
             text: Text chunk to synthesize
-            voice: Voice ID to use (Kokoro voice name)
+            voice: Voice ID (unused; kept for API compatibility)
 
         Returns:
             Audio bytes or None
@@ -610,13 +398,6 @@ class TTSService:
         if not clean_text:
             return None
 
-        # Use Kokoro voice
-        kokoro_voice = voice if voice and not voice.startswith("en-") else TTS_CONFIG["kokoro_voice"]
-
-        if self._kokoro_available:
-            return self._synthesize_kokoro(clean_text, kokoro_voice)
-
-        # Fallback to pyttsx3
         if self._pyttsx3_available:
             return self._synthesize_pyttsx3(clean_text)
 
@@ -638,35 +419,20 @@ class TTSService:
         return loop.run_until_complete(self.synthesize(text, voice, use_cache))
 
     def get_available_voices(self) -> list:
-        """Get list of available Kokoro voices."""
-        kokoro_voices = [
-            {"id": "af_heart", "name": "Heart (Female, American)"},
-            {"id": "af_bella", "name": "Bella (Female, American)"},
-            {"id": "af_nicole", "name": "Nicole (Female, American)"},
-            {"id": "af_sarah", "name": "Sarah (Female, American)"},
-            {"id": "af_sky", "name": "Sky (Female, American)"},
-            {"id": "am_adam", "name": "Adam (Male, American)"},
-            {"id": "am_michael", "name": "Michael (Male, American)"},
-            {"id": "bf_emma", "name": "Emma (Female, British)"},
-            {"id": "bf_isabella", "name": "Isabella (Female, British)"},
-            {"id": "bm_george", "name": "George (Male, British)"},
-            {"id": "bm_lewis", "name": "Lewis (Male, British)"},
-        ]
-        return kokoro_voices
+        """Get list of available local voices (pyttsx3 is system-dependent)."""
+        return [{"id": "default", "name": "System default"}]
 
     def is_available(self) -> bool:
-        """Check if any TTS backend is available."""
-        return self._kokoro_available or self._pyttsx3_available
+        """Check if the pyttsx3 backend is available."""
+        return self._pyttsx3_available
 
     def get_status(self) -> dict:
         """Get TTS service status."""
         return {
             "available": self.is_available(),
-            "preferred_backend": self._preferred_backend,
-            "kokoro": self._kokoro_available,
-            "kokoro_loaded": self._kokoro_loaded,
-            "pyttsx3_fallback": self._pyttsx3_available,
-            "default_voice": TTS_CONFIG["kokoro_voice"],
+            "backend": "pyttsx3",
+            "pyttsx3": self._pyttsx3_available,
+            "default_voice": TTS_CONFIG["default_voice"],
         }
 
 
@@ -679,7 +445,7 @@ def get_tts_service(preload: bool = False) -> TTSService:
     Get or create the global TTS service instance.
 
     Args:
-        preload: If True and creating new instance, preload models
+        preload: Kept for API compatibility; pyttsx3 needs no preload.
     """
     global _tts_service
     if _tts_service is None:
@@ -688,7 +454,5 @@ def get_tts_service(preload: bool = False) -> TTSService:
 
 
 def preload_tts_model():
-    """Preload TTS model. Call during application startup."""
-    service = get_tts_service()
-    service.preload()
+    """Compatibility no-op — pyttsx3 needs no model preload."""
     logger.info("TTS model preloaded")

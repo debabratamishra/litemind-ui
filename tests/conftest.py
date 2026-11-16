@@ -1,7 +1,7 @@
 """Shared pytest fixtures for the LiteMindUI backend test suite.
 
 All tests are offline: external services (Ollama, ChromaDB, LLM providers,
-Whisper, Kokoro, SerpAPI, CrewAI, Pipecat) are mocked at their boundary by
+Whisper, pyttsx3, SerpAPI, CrewAI, Pipecat) are mocked at their boundary by
 the individual test modules. This file only provides cross-cutting helpers.
 """
 from __future__ import annotations

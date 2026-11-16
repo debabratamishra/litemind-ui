@@ -243,72 +243,6 @@ export async function uploadRagFile(file: File): Promise<unknown> {
   return (await res.json()) as unknown;
 }
 
-// ─── Auth ──────────────────────────────────────────────────────────────────
-
-export interface AuthUserResponse {
-  id: string;
-  email: string | null;
-  name: string | null;
-}
-
-export interface AuthResponse {
-  access_token: string;
-  token_type?: string;
-  user: AuthUserResponse;
-}
-
-async function authRequest(path: string, body: unknown): Promise<AuthResponse> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    credentials: 'include',
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    let message = `${res.status} ${res.statusText}`;
-    try {
-      const data = await res.json();
-      message = data.detail ?? data.msg ?? data.message ?? message;
-    } catch {
-      /* keep status text */
-    }
-    throw new Error(message);
-  }
-  return (await res.json()) as AuthResponse;
-}
-
-/**
- * Auth client. Web auth relies on the httpOnly `access_token` cookie (sent via
- * `credentials: 'include'`); `access_token` in the response body is kept in
- * memory for CLI/desktop Bearer parity.
- */
-export const authApi = {
-  async login(email: string, password: string, remember?: boolean): Promise<AuthResponse> {
-    return authRequest('/api/auth/login', { email, password, remember });
-  },
-  async register(email: string, password: string, name?: string): Promise<AuthResponse> {
-    const body: { email: string; password: string; name?: string } = { email, password };
-    if (name) body.name = name;
-    return authRequest('/api/auth/register', body);
-  },
-  async logout(): Promise<void> {
-    await fetch(`${API_BASE}/api/auth/logout`, {
-      method: 'POST',
-      credentials: 'include',
-      cache: 'no-store',
-    });
-  },
-  async me(): Promise<AuthUserResponse> {
-    const res = await fetch(`${API_BASE}/api/auth/me`, {
-      credentials: 'include',
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error('Not authenticated');
-    return (await res.json()) as AuthUserResponse;
-  },
-};
-
 // ─── User memory (personalization) ───────────────────────────────────────
 
 export async function getMemories(): Promise<MemoryRecord[]> {
@@ -352,6 +286,104 @@ export async function clearMemories(): Promise<{ deleted: number }> {
     credentials: 'include',
   });
   if (!res.ok) throw new Error(`Failed to clear memories: ${res.status}`);
+  return res.json();
+}
+
+// ─── Provider API keys (encrypted vault) ─────────────────────────────────────
+
+export interface ApiKeyRecord {
+  id: string;
+  kind: string;
+  provider: string;
+  label: string;
+  updated_at: string;
+  configured: boolean;
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  latency_ms?: number;
+  error?: string;
+}
+
+export async function getApiKeys(): Promise<ApiKeyRecord[]> {
+  const res = await fetch(`${API_BASE}/api/keys`, { credentials: 'include', cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to load API keys: ${res.status}`);
+  return res.json();
+}
+
+async function putJSON(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  return res;
+}
+
+export async function saveApiKey(input: {
+  kind: string;
+  provider: string;
+  label: string;
+  value: string;
+}): Promise<ApiKeyRecord> {
+  const res = await putJSON('/api/keys', input);
+  if (!res.ok) throw new Error(await errorText(res));
+  return res.json();
+}
+
+export async function deleteApiKey(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/keys/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`Failed to delete API key: ${res.status}`);
+}
+
+export async function testProvider(capability: string): Promise<ProviderTestResult> {
+  const res = await postJSON('/api/kernel/providers/test', { capability });
+  if (!res.ok) throw new Error(await errorText(res));
+  return res.json();
+}
+
+export interface VoiceSessionResponse {
+  signed_url: string;
+  agent_id: string;
+}
+
+export async function getVoiceSession(agentId?: string, apiKey?: string): Promise<VoiceSessionResponse> {
+  const body: Record<string, string> = {};
+  if (agentId) body.agent_id = agentId;
+  if (apiKey) body.api_key = apiKey;
+  const res = await postJSON('/api/voice/session', body);
+  if (!res.ok) throw new Error(await errorText(res));
+  return res.json();
+}
+
+export interface SarvamSessionResponse {
+  api_key: string;
+  org_id: string;
+  workspace_id: string;
+  app_id: string;
+}
+
+export async function getSarvamSession(overrides?: {
+  apiKey?: string;
+  orgId?: string;
+  workspaceId?: string;
+  appId?: string;
+}): Promise<SarvamSessionResponse> {
+  const body: Record<string, string> = {};
+  if (overrides?.apiKey) body.api_key = overrides.apiKey;
+  if (overrides?.orgId) body.org_id = overrides.orgId;
+  if (overrides?.workspaceId) body.workspace_id = overrides.workspaceId;
+  if (overrides?.appId) body.app_id = overrides.appId;
+  const res = await postJSON('/api/voice/sarvam-session', body);
+  if (!res.ok) throw new Error(await errorText(res));
   return res.json();
 }
 

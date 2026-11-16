@@ -104,19 +104,21 @@ description: >-
     <p>
       Browser and server establish a WebRTC peer connection; the browser POSTs an SDP
       offer to <code>POST /api/voice/offer</code>. A Pipecat pipeline runs in the
-      background, with Whisper STT + Kokoro TTS + LLM. Transcripts and control events flow
+      background, with Whisper STT + LLM. Transcripts and control events flow
       back over the WebRTC data channel. <strong>Voice is a separate pipeline, not a
       Skill</strong>. Do not route it through the skill layer.
     </p>
 
-    <h3>Authentication system <span style="font-weight:400;font-size:.9rem;color:var(--muted)">(<code>backend/app/backend/api/auth*</code>)</span></h3>
+    <h3>Provider keys <span style="font-weight:400;font-size:.9rem;color:var(--muted)">(<code>backend/app/kernel/</code>)</span></h3>
     <p>
-      LiteMindUI uses a hybrid authentication system powered by GoTrue (Supabase Auth).
-      On login/register, the backend sets an HTTP-only <code>access_token</code> cookie for
-      browsers and returns the JWT in the response body for CLI/desktop clients. Protected
-      routes validate the token via cookie or <code>Authorization</code> header. Every chat
-      session, conversation, and RAG context is namespaced by the authenticated user's ID,
-      ensuring per-user data isolation.
+      LiteMindUI is local-first and single-user: authentication was removed. LLM, VLM,
+      speech, embedding, and search API keys are supplied from Settings → Providers
+      (<code>GET/PUT/DELETE /api/keys</code>), stored Fernet-encrypted in Postgres
+      (<code>backend/app/kernel/keyvault.py</code>), and resolved per request in the
+      order explicit request param &gt; key vault &gt; environment variable
+      (<code>backend/app/kernel/router.py</code>). <code>GET /api/kernel/providers</code>
+      reports what is configured; responses carry metadata and a <code>configured</code>
+      flag only — keys are never echoed.
     </p>
 
     <h2>How a request travels</h2>
@@ -143,9 +145,8 @@ description: >-
       The skill layer is the main extension point for chat and RAG functionality. To add a
       capability, write a class that implements <code>supports()</code>, <code>validate()</code>,
       and <code>stream()</code>, then register it with the relevant registry. The API routes
-      never change, so new features stay isolated and testable. Voice and authentication are
-      intentional exceptions: voice runs as its own Pipecat pipeline, while authentication is
-      implemented via dedicated API routes with dependency-based route protection.
+      never change, so new features stay isolated and testable. Voice is an intentional
+      exception: it runs as its own Pipecat pipeline, not through the skill layer.
     </p>
 
     <h2>LLM provider backends</h2>

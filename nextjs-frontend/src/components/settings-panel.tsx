@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { X, RotateCcw, CheckCircle2, XCircle, Loader2, ShieldCheck, Shuffle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +32,7 @@ import {
   updateMemory,
   deleteMemory,
   clearMemories,
+  getApiKeys,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { Model, BackendType, MemoryRecord } from '@/lib/types';
@@ -120,15 +122,9 @@ export function MemorySettings() {
   React.useEffect(() => {
     let cancelled = false;
     getMemories()
-      .then((ms) => {
-        if (!cancelled) setMemories(ms);
-      })
-      .catch(() => {
-        if (!cancelled) setError('Could not load memories');
-      });
-    return () => {
-      cancelled = true;
-    };
+      .then((ms) => { if (!cancelled) setMemories(ms); })
+      .catch(() => { if (!cancelled) setError('Could not load memories'); });
+    return () => { cancelled = true; };
   }, []);
 
   const onAdd = async () => {
@@ -136,7 +132,6 @@ export function MemorySettings() {
     if (!content) return;
     try {
       const created = await addMemory(content);
-      // Backend lists newest-first; prepend so the new entry renders at the top.
       setMemories((ms) => [created, ...ms]);
       setDraft('');
       setError(null);
@@ -194,12 +189,8 @@ export function MemorySettings() {
             >
               <span>{m.content}</span>
               <span className="flex shrink-0 gap-1">
-                <Button variant="ghost" size="sm" onClick={() => onEdit(m.id, m.content)}>
-                  Edit
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => onDelete(m.id)}>
-                  Delete
-                </Button>
+                <Button variant="ghost" size="sm" onClick={() => onEdit(m.id, m.content)}>Edit</Button>
+                <Button variant="ghost" size="sm" onClick={() => onDelete(m.id)}>Delete</Button>
               </span>
             </li>
           ))}
@@ -211,18 +202,12 @@ export function MemorySettings() {
           onChange={(e) => setDraft(e.target.value)}
           placeholder="Add a memory…"
           aria-label="Add a memory"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void onAdd();
-          }}
+          onKeyDown={(e) => { if (e.key === 'Enter') void onAdd(); }}
         />
-        <Button size="sm" onClick={() => void onAdd()}>
-          Add
-        </Button>
+        <Button size="sm" onClick={() => void onAdd()}>Add</Button>
       </div>
       {memories.length > 0 && (
-        <Button variant="outline" size="sm" onClick={() => void onClearAll()}>
-          Clear all
-        </Button>
+        <Button variant="outline" size="sm" onClick={() => void onClearAll()}>Clear all</Button>
       )}
     </div>
   );
@@ -240,6 +225,8 @@ export function SettingsPanel({
   const [cloudModels, setCloudModels] = React.useState<Model[]>([]);
   const [serpStatus, setSerpStatus] = React.useState<{ status: string; message: string } | null>(null);
   const [checking, setChecking] = React.useState(false);
+  // Which voice providers have credentials saved in the vault.
+  const [configuredVoiceProviders, setConfiguredVoiceProviders] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
     getEnhancedModels()
@@ -252,6 +239,30 @@ export function SettingsPanel({
         setCloudModels([]);
       });
   }, []);
+
+  // Detect which voice providers have credentials when the panel opens.
+  React.useEffect(() => {
+    if (!open) return;
+    getApiKeys()
+      .then((rows) => {
+        const voiceProviders = new Set(
+          rows
+            .filter((r) => r.kind === 'voice' && (r.provider === 'elevenlabs' || r.provider === 'sarvam'))
+            .map((r) => r.provider),
+        );
+        // ElevenLabs also stores its key under stt/tts kinds — count those too.
+        rows
+          .filter((r) => (r.kind === 'stt' || r.kind === 'tts') && r.provider === 'elevenlabs')
+          .forEach(() => voiceProviders.add('elevenlabs'));
+        setConfiguredVoiceProviders(voiceProviders);
+        // Auto-select the only configured provider if it differs from current setting.
+        if (voiceProviders.size === 1) {
+          const only = [...voiceProviders][0] as 'elevenlabs' | 'sarvam';
+          setSettings({ voiceProvider: only });
+        }
+      })
+      .catch(() => { /* non-fatal — selector just won't appear */ });
+  }, [open, setSettings]);
 
   const resetGeneration = () => setSettings({ ...GENERATION_DEFAULTS });
 
@@ -302,11 +313,11 @@ export function SettingsPanel({
 
         <ScrollArea className="flex-1 min-h-0">
           <div className="space-y-6 p-4">
+
+            {/* ── Models ──────────────────────────────────────────────────── */}
             <Section title="Models">
               <div className="space-y-2">
-                <Label htmlFor="set-backend" className="text-xs">
-                  Backend
-                </Label>
+                <Label htmlFor="set-backend" className="text-xs">Backend</Label>
                 <Select
                   value={settings.backend}
                   onValueChange={(v) => v && setSettings({ backend: v as BackendType, model: '' })}
@@ -322,6 +333,21 @@ export function SettingsPanel({
                 </Select>
               </div>
 
+              {/* Ollama URL — only relevant when Ollama is selected */}
+              {isOllama && (
+                <div className="space-y-2">
+                  <Label htmlFor="set-ollama" className="text-xs">Ollama URL</Label>
+                  <Input
+                    id="set-ollama"
+                    placeholder="http://localhost:11434"
+                    value={settings.ollamaUrl ?? ''}
+                    onChange={(e) => setSettings({ ollamaUrl: e.target.value })}
+                    className="h-8 text-sm"
+                  />
+                </div>
+              )}
+
+              {/* API key — only for cloud backends; persistent key belongs in Providers */}
               {needsApiKey && (
                 <div className="space-y-2">
                   <Label htmlFor="set-key" className="text-xs">
@@ -349,14 +375,11 @@ export function SettingsPanel({
                     </SelectTrigger>
                     <SelectContent>
                       {allOllama.length === 0 ? (
-                        <SelectItem value="__none__" disabled>
-                          Ollama unreachable
-                        </SelectItem>
+                        <SelectItem value="__none__" disabled>Ollama unreachable</SelectItem>
                       ) : (
                         allOllama.map((m) => (
                           <SelectItem key={m.name} value={m.name} className="text-sm">
-                            {m.is_local ? '🟢 ' : '☁️ '}
-                            {m.name}
+                            {m.is_local ? '🟢 ' : '☁️ '}{m.name}
                           </SelectItem>
                         ))
                       )}
@@ -367,7 +390,7 @@ export function SettingsPanel({
                     id="set-model-in"
                     type="text"
                     placeholder={
-                      settings.backend === 'openrouter' ? 'e.g. openai/gpt-4o' : 'e.g. meta/muse-glimmer-30b'
+                      settings.backend === 'openrouter' ? 'e.g. openai/gpt-4o' : 'e.g. meta/llama3-70b'
                     }
                     value={settings.model}
                     onChange={(e) => setSettings({ model: e.target.value })}
@@ -379,6 +402,7 @@ export function SettingsPanel({
 
             <Separator />
 
+            {/* ── Generation ──────────────────────────────────────────────── */}
             <Section
               title="Generation"
               action={
@@ -399,38 +423,27 @@ export function SettingsPanel({
                 label="Temperature"
                 value={settings.temperature}
                 display={settings.temperature.toFixed(1)}
-                min={0}
-                max={2}
-                step={0.1}
+                min={0} max={2} step={0.1}
                 onChange={(v) => setSettings({ temperature: v })}
-                hint="Higher values make output more random; lower values more focused and deterministic."
+                hint="Higher values make output more random; lower values more focused."
               />
               <div className="space-y-2">
-                <Label htmlFor="set-maxtok" className="text-xs">
-                  Max tokens
-                </Label>
+                <Label htmlFor="set-maxtok" className="text-xs">Max tokens</Label>
                 <Input
                   id="set-maxtok"
                   type="number"
-                  min={128}
-                  max={32768}
-                  step={128}
+                  min={128} max={32768} step={128}
                   value={settings.maxTokens}
                   onChange={(e) => setSettings({ maxTokens: parseInt(e.target.value) || 2048 })}
                   className="h-8 text-sm"
                 />
-                <p className="text-[11px] leading-snug text-muted-foreground">
-                  Maximum length of the model&apos;s reply.
-                </p>
               </div>
               <SliderField
                 id="set-topp"
                 label="Top-P"
                 value={settings.topP}
                 display={settings.topP.toFixed(2)}
-                min={0}
-                max={1}
-                step={0.05}
+                min={0} max={1} step={0.05}
                 onChange={(v) => setSettings({ topP: v })}
                 hint="Nucleus sampling — only tokens within the top probability mass are considered."
               />
@@ -439,9 +452,7 @@ export function SettingsPanel({
                 label="Top-K"
                 value={settings.topK}
                 display={String(settings.topK)}
-                min={0}
-                max={100}
-                step={1}
+                min={0} max={100} step={1}
                 onChange={(v) => setSettings({ topK: v })}
                 hint="Limits sampling to the K most likely next tokens. 0 disables the cutoff."
               />
@@ -450,9 +461,7 @@ export function SettingsPanel({
                 label="Min-P"
                 value={settings.minP}
                 display={settings.minP.toFixed(2)}
-                min={0}
-                max={1}
-                step={0.01}
+                min={0} max={1} step={0.01}
                 onChange={(v) => setSettings({ minP: v })}
                 hint="Minimum probability a token needs relative to the most likely one."
               />
@@ -461,9 +470,7 @@ export function SettingsPanel({
                 label="Frequency penalty"
                 value={settings.frequencyPenalty}
                 display={settings.frequencyPenalty.toFixed(1)}
-                min={-2}
-                max={2}
-                step={0.1}
+                min={-2} max={2} step={0.1}
                 onChange={(v) => setSettings({ frequencyPenalty: v })}
                 hint="Penalises tokens by how often they have already appeared."
               />
@@ -472,16 +479,12 @@ export function SettingsPanel({
                 label="Repetition penalty"
                 value={settings.repetitionPenalty}
                 display={settings.repetitionPenalty.toFixed(2)}
-                min={0}
-                max={2}
-                step={0.05}
+                min={0} max={2} step={0.05}
                 onChange={(v) => setSettings({ repetitionPenalty: v })}
                 hint="Penalises repeated tokens (Ollama repeat_penalty). 1.0 turns it off."
               />
               <div className="space-y-2">
-                <Label htmlFor="set-seed" className="text-xs">
-                  Seed
-                </Label>
+                <Label htmlFor="set-seed" className="text-xs">Seed</Label>
                 <div className="flex items-center gap-2">
                   <Input
                     id="set-seed"
@@ -509,13 +512,11 @@ export function SettingsPanel({
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="set-stop" className="text-xs">
-                  Stop sequences
-                </Label>
+                <Label htmlFor="set-stop" className="text-xs">Stop sequences</Label>
                 <Input
                   id="set-stop"
                   type="text"
-                  placeholder="e.g. &quot;\n\nHuman:&quot;, &quot;###&quot;"
+                  placeholder='e.g. "\n\nHuman:", "###"'
                   value={settings.stopSequences}
                   onChange={(e) => setSettings({ stopSequences: e.target.value })}
                   className="h-8 text-sm font-mono"
@@ -528,15 +529,74 @@ export function SettingsPanel({
 
             <Separator />
 
+            {/* ── Voice agent ──────────────────────────────────────────────── */}
+            <Section title="Voice agent">
+              {configuredVoiceProviders.size >= 2 ? (
+                // Both providers configured — show the selector.
+                <div className="space-y-2">
+                  <Label htmlFor="set-voice-provider" className="text-xs">Active provider</Label>
+                  <Select
+                    value={settings.voiceProvider ?? 'elevenlabs'}
+                    onValueChange={(v) => v && setSettings({ voiceProvider: v as 'elevenlabs' | 'sarvam' })}
+                  >
+                    <SelectTrigger id="set-voice-provider" className="h-8 text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="elevenlabs">ElevenLabs Conversational AI</SelectItem>
+                      <SelectItem value="sarvam">Sarvam (Indian-language voice)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    Manage credentials in{' '}
+                    <Link href="/settings/providers" className="text-primary hover:underline" onClick={onClose}>
+                      Providers
+                    </Link>
+                    .
+                  </p>
+                </div>
+              ) : configuredVoiceProviders.has('sarvam') ? (
+                // Only Sarvam configured.
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  Using <span className="font-medium text-foreground">Sarvam</span> for voice.
+                  {' '}Manage credentials or add ElevenLabs in{' '}
+                  <Link href="/settings/providers" className="text-primary hover:underline" onClick={onClose}>
+                    Providers
+                  </Link>
+                  .
+                </p>
+              ) : configuredVoiceProviders.has('elevenlabs') ? (
+                // Only ElevenLabs configured.
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  Using <span className="font-medium text-foreground">ElevenLabs</span> for voice.
+                  {' '}Manage credentials or add Sarvam in{' '}
+                  <Link href="/settings/providers" className="text-primary hover:underline" onClick={onClose}>
+                    Providers
+                  </Link>
+                  .
+                </p>
+              ) : (
+                // Nothing configured yet.
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  No voice provider configured. Add ElevenLabs or Sarvam credentials in{' '}
+                  <Link href="/settings/providers" className="text-primary hover:underline" onClick={onClose}>
+                    Providers
+                  </Link>
+                  .
+                </p>
+              )}
+            </Section>
+
+            <Separator />
+
+            {/* ── Generative UI ───────────────────────────────────────────── */}
             <Section title="Generative UI">
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
-                  <Label htmlFor="set-genui" className="text-xs">
-                    Enable Generative UI
-                  </Label>
+                  <Label htmlFor="set-genui" className="text-xs">Enable Generative UI</Label>
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    When enabled, the assistant can respond with rich UI components (charts, tables, metrics,
-                    interactive apps). When disabled, responses use plain markdown.
+                    When enabled, the assistant can respond with rich UI components (charts, tables,
+                    metrics). When disabled, responses use plain markdown.
                   </p>
                 </div>
                 <Switch
@@ -551,25 +611,15 @@ export function SettingsPanel({
 
             <Separator />
 
+            {/* ── Web search ──────────────────────────────────────────────── */}
             <Section title="Web search">
-              <div className="space-y-2">
-                <Label htmlFor="set-serp" className="text-xs">
-                  SerpAPI key
-                </Label>
-                <Input
-                  id="set-serp"
-                  type="password"
-                  autoComplete="off"
-                  placeholder="Paste your SerpAPI key"
-                  value={settings.serpApiKey ?? ''}
-                  onChange={(e) => setSettings({ serpApiKey: e.target.value })}
-                  className="h-8 text-sm font-mono"
-                />
-                <p className="text-[11px] leading-snug text-muted-foreground">
-                  Powers web search. Provided keys override the server&apos;s SERP_API_KEY for this session
-                  only.
-                </p>
-              </div>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                SerpAPI key is managed in{' '}
+                <Link href="/settings/providers" className="text-primary hover:underline" onClick={onClose}>
+                  Providers
+                </Link>
+                . Use the button below to verify the saved key is reachable.
+              </p>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -596,32 +646,34 @@ export function SettingsPanel({
 
             <Separator />
 
-            <Section title="Backend keys">
-              <div className="space-y-2">
-                <Label htmlFor="set-ollama" className="text-xs">
-                  Ollama URL
-                </Label>
-                <Input
-                  id="set-ollama"
-                  placeholder="http://localhost:11434"
-                  value={settings.ollamaUrl ?? ''}
-                  onChange={(e) => setSettings({ ollamaUrl: e.target.value })}
-                  className="h-8 text-sm"
-                />
-              </div>
+            {/* ── Providers ───────────────────────────────────────────────── */}
+            <Section title="Providers">
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Manage encrypted API keys for LLM, voice agent, web search, and other providers.
+              </p>
+              <Link
+                href="/settings/providers"
+                onClick={onClose}
+                className="inline-flex items-center text-xs text-primary hover:underline"
+              >
+                Manage provider keys →
+              </Link>
             </Section>
 
             <Separator />
 
+            {/* ── Knowledge Base ──────────────────────────────────────────── */}
             <Section title="Knowledge Base">
               <KnowledgeBaseSection />
             </Section>
 
             <Separator />
 
+            {/* ── Memory ──────────────────────────────────────────────────── */}
             <Section title="Memory">
               <MemorySettings />
             </Section>
+
           </div>
         </ScrollArea>
       </DialogContent>

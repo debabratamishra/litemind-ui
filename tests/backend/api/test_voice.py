@@ -1,180 +1,68 @@
-"""Unit tests for ``backend/app/backend/api/voice.py`` (WebRTC SDP offer endpoint).
+"""Unit tests for ``backend/app/backend/api/voice.py`` (ElevenLabs ConvAI session)."""
 
-The voice route is mounted in ``backend.main.app``, so we test it there. The WebRTC
-peer connection (``SmallWebRTCConnection``) and the Pipecat pipeline runner
-(``run_voice_pipeline``) are mocked at their boundaries, so no real WebRTC /
-Pipecat / network activity occurs offline.
-"""
-
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.backend.api import voice as voice_api
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 from backend.main import app
 
-# Voice offer now requires authentication; satisfy it for these unit tests.
-app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@x.com")
+app.dependency_overrides[get_system_user] = lambda: User(id="u1", email="u1@x.com")
 
 
 @pytest.fixture
-def voice_client(monkeypatch):
-    calls = {}
-
-    class FakeConn:
-        pc_id = "test-pc"
-
-        def __init__(self, ice_servers):
-            self.ice_servers = ice_servers
-
-        async def initialize(self, sdp, type):
-            calls["init"] = (sdp, type)
-
-        def event_handler(self, name):
-            # The route decorates a handler for the "closed" event; we just
-            # return an identity decorator and never invoke it.
-            def decorator(fn):
-                return fn
-
-            return decorator
-
-        def get_answer(self):
-            return {"sdp": "fake-answer", "type": "answer", "pc_id": self.pc_id}
-
-        async def renegotiate(self, sdp, type, restart_pc=False):
-            calls["renegotiate"] = (sdp, type, restart_pc)
-
-    # The route imports Pipecat and the pipeline at call time, so patch them
-    # at their source modules rather than on the router.
-    monkeypatch.setattr(
-        "pipecat.transports.smallwebrtc.connection.SmallWebRTCConnection", FakeConn
-    )
-    # Background task must not touch a real Pipecat pipeline.
-    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", AsyncMock())
-
-    voice_api.pcs_map.clear()
-    client = TestClient(app)
-    yield client, calls
-    voice_api.pcs_map.clear()
+def client():
+    return TestClient(app)
 
 
-def test_voice_offer_creates_connection_and_returns_answer(voice_client):
-    client, calls = voice_client
+def test_create_voice_session_success(client):
+    with (
+        patch(
+            "backend.app.backend.api.voice.resolve_elevenlabs_credentials",
+            new=AsyncMock(return_value=("fake-key", "agent-123")),
+        ),
+        patch(
+            "backend.app.backend.api.voice.get_convai_signed_url",
+            new=AsyncMock(return_value="wss://api.elevenlabs.io/v1/convai/conversation?signed=true"),
+        ),
+    ):
+        resp = client.post("/api/voice/session", json={"agent_id": "agent-123"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["signed_url"] == "wss://api.elevenlabs.io/v1/convai/conversation?signed=true"
+        assert data["agent_id"] == "agent-123"
 
-    resp = client.post(
-        "/api/voice/offer",
-        json={
-            "pc_id": "test-pc",
-            "sdp": "v=0...",
-            "type": "offer",
-            "model": "llama3",
-            "backend": "ollama",
-        },
-    )
+
+def test_create_voice_session_missing_key(client):
+    from backend.app.services.voice_pipeline import VoiceConfigurationError
+
+    with patch(
+        "backend.app.backend.api.voice.resolve_elevenlabs_credentials",
+        side_effect=VoiceConfigurationError("ElevenLabs API key is required"),
+    ):
+        resp = client.post("/api/voice/session", json={})
+        assert resp.status_code == 400
+        assert "ElevenLabs API key is required" in resp.json()["detail"]
+
+
+def test_get_voice_session(client):
+    with (
+        patch(
+            "backend.app.backend.api.voice.resolve_elevenlabs_credentials",
+            new=AsyncMock(return_value=("fake-key", "agent-123")),
+        ),
+        patch(
+            "backend.app.backend.api.voice.get_convai_signed_url",
+            new=AsyncMock(return_value="wss://signed-url"),
+        ),
+    ):
+        resp = client.get("/api/voice/session?agent_id=agent-123")
+        assert resp.status_code == 200
+        assert resp.json()["signed_url"] == "wss://signed-url"
+
+
+def test_offer_deprecated(client):
+    resp = client.post("/api/voice/offer", json={"pc_id": "123"})
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["type"] == "answer"
-    assert body["sdp"] == "fake-answer"
-    assert body["pc_id"] == "test-pc"
-
-    # Connection was initialised with the supplied offer and registered.
-    assert calls.get("init") == ("v=0...", "offer")
-    assert "test-pc" in voice_api.pcs_map
-
-
-def test_voice_offer_requires_pc_id(voice_client):
-    client, _ = voice_client
-
-    resp = client.post("/api/voice/offer", json={"sdp": "x", "type": "offer"})
-    assert resp.status_code == 200
-    assert resp.json().get("error") == "pc_id required"
-
-
-def test_voice_offer_renegotiates_existing_connection(voice_client):
-    client, calls = voice_client
-
-    first = client.post(
-        "/api/voice/offer",
-        json={"pc_id": "test-pc", "sdp": "v=0...", "type": "offer"},
-    )
-    assert first.status_code == 200
-    calls.clear()
-
-    second = client.post(
-        "/api/voice/offer",
-        json={"pc_id": "test-pc", "sdp": "v=0...", "type": "offer", "restart_pc": True},
-    )
-    assert second.status_code == 200
-    # Reuse path: renegotiate instead of initialize.
-    assert "renegotiate" in calls
-    assert "init" not in calls
-
-
-def test_voice_offer_runs_pipeline_as_background_task(voice_client, monkeypatch):
-    # ``run_voice_pipeline_safe`` is the background task; it delegates to the
-    # mocked ``run_voice_pipeline``. We confirm the task runs to completion.
-    ran = {}
-
-    async def _fake_pipeline(conn, settings):
-        ran["ok"] = True
-
-    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _fake_pipeline)
-
-    resp = client_post_offer(voice_client)
-    assert resp.status_code == 200
-    assert ran.get("ok") is True
-
-
-def client_post_offer(voice_client):
-    client, _ = voice_client
-    return client.post(
-        "/api/voice/offer",
-        json={"pc_id": "test-pc", "sdp": "v=0...", "type": "offer"},
-    )
-
-
-def test_voice_offer_pipeline_failure_is_swallowed(voice_client, monkeypatch):
-    """A pipeline failure must not surface as an HTTP error to the client."""
-
-    async def _boom(conn, settings):
-        raise RuntimeError("pipeline down")
-
-    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _boom)
-
-    client, _ = voice_client
-    resp = client.post(
-        "/api/voice/offer",
-        json={"pc_id": "test-pc", "sdp": "v=0...", "type": "offer"},
-    )
-    # The answer is still returned; the failure is handled inside the task.
-    assert resp.status_code == 200
-    assert resp.json()["type"] == "answer"
-
-
-def test_voice_pipeline_error_event_is_generic(monkeypatch):
-    """The data-channel error event must not carry internal exception text."""
-
-    class RecordingConn:
-        pc_id = "test-pc"
-        sent: list = []
-
-        def send_app_message(self, message):
-            RecordingConn.sent.append(message)
-
-    async def _boom(conn, settings):
-        raise RuntimeError("pipecat transport died on 10.0.0.5:7860")
-
-    monkeypatch.setattr("backend.app.services.voice_pipeline.run_voice_pipeline", _boom)
-    conn = RecordingConn()
-
-    import asyncio
-
-    from backend.app.services.voice_pipeline import VoiceSettings
-
-    settings = VoiceSettings()
-    asyncio.run(voice_api.run_voice_pipeline_safe(conn, settings))
-
-    assert RecordingConn.sent
-    assert "10.0.0.5" not in str(RecordingConn.sent[0])
+    assert "deprecated" in resp.json()["error"].lower() or "elevenlabs" in resp.json()["error"].lower()

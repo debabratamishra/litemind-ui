@@ -13,8 +13,8 @@ from backend.app.backend.api import tts as tts_api
 def tts_client(monkeypatch):
     service = MagicMock()
     service.is_available.return_value = True
-    service.synthesize = AsyncMock(side_effect=RuntimeError("kokoro model missing at /opt/models/kokoro"))
-    service.synthesize_text_chunk = MagicMock(side_effect=RuntimeError("kokoro model missing at /opt/models/kokoro"))
+    service.synthesize = AsyncMock(side_effect=RuntimeError("tts engine missing at /opt/models/tts"))
+    service.synthesize_text_chunk = MagicMock(side_effect=RuntimeError("tts engine missing at /opt/models/tts"))
     service.get_status.return_value = {"available": True}
 
     monkeypatch.setattr(tts_api, "get_tts_service", lambda: service)
@@ -30,7 +30,7 @@ def test_synthesize_error_is_generic(tts_client):
     resp = client.post("/api/tts/synthesize", json={"text": "hello"})
 
     assert resp.status_code == 500
-    assert "/opt/models/kokoro" not in resp.text
+    assert "/opt/models/tts" not in resp.text
 
 
 def test_synthesize_chunk_error_is_generic(tts_client):
@@ -39,4 +39,4 @@ def test_synthesize_chunk_error_is_generic(tts_client):
     resp = client.post("/api/tts/synthesize-chunk", json={"text": "hello"})
 
     assert resp.status_code == 500
-    assert "/opt/models/kokoro" not in resp.text
+    assert "/opt/models/tts" not in resp.text

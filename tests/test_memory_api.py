@@ -1,4 +1,4 @@
-"""API tests for /api/memory — auth required, user-scoped CRUD."""
+"""API tests for /api/memory — user-scoped CRUD via the seeded system user."""
 
 import uuid
 
@@ -47,7 +47,6 @@ class FakeStore:
 
 @pytest.fixture()
 def client(monkeypatch):
-    from backend.app.backend.api.auth_deps import User, get_current_user
     from backend.main import app
 
     store = FakeStore()
@@ -55,28 +54,8 @@ def client(monkeypatch):
     def get_store():
         return store
     monkeypatch.setattr("backend.app.backend.user_memory_store.get_user_memory_store", get_store)
-    # Same override pattern as tests/test_chat_auth.py:_make_app
-    # Create a single user instance to return consistently
-    test_user = User(id=str(uuid.uuid4()), email="u1@x.com")
-    app.dependency_overrides[get_current_user] = lambda: test_user
     with TestClient(app) as c:
         yield c
-    app.dependency_overrides.pop(get_current_user, None)
-
-
-def test_memory_requires_auth():
-    # Fresh app instead of main.app: other test modules install module-level
-    # dependency_overrides on the shared main.app that never clean up, which
-    # would authenticate this request and turn the 401 into a store error.
-    # Router mounting on main.app is covered by the fixture-based tests below.
-    from fastapi import FastAPI
-
-    from backend.app.backend.api.memory import router
-
-    app = FastAPI()
-    app.include_router(router)
-    client = TestClient(app)
-    assert client.get("/api/memory").status_code == 401
 
 
 def test_memory_crud_roundtrip(client):

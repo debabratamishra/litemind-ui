@@ -5,25 +5,16 @@ import os
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
-import cv2
 import fitz
 import numpy as np
 import pandas as pd
 from PIL import Image
 
 # Optional EasyOCR import - may fail with certain PyTorch versions
-EASYOCR_AVAILABLE = False
-easyocr = None
-if os.getenv("LITEMIND_DISABLE_EASYOCR", "").strip().lower() in {"1", "true", "yes", "on"}:
-    logging.info("EasyOCR disabled via LITEMIND_DISABLE_EASYOCR")
-else:
-    try:
-        import easyocr  # noqa: E402
-        EASYOCR_AVAILABLE = True
-    except Exception as e:
-        logging.warning(f"EasyOCR not available (will use fallback text extraction): {e}")
+easyocr: Any = None
+EASYOCR_AVAILABLE: Any = None
 
 import warnings  # noqa: E402
 import xml.etree.ElementTree as ET  # noqa: E402
@@ -40,10 +31,34 @@ warnings.filterwarnings('ignore', module='pypdf')
 
 logger = logging.getLogger(__name__)
 
+
+def _probe_easyocr() -> None:
+    """Import EasyOCR lazily (ocr group) so core-only images can import this module.
+
+    Probed once; a flag patched by tests before construction is left untouched.
+    """
+    global easyocr, EASYOCR_AVAILABLE
+    if EASYOCR_AVAILABLE is not None:
+        return
+    if os.getenv("LITEMIND_DISABLE_EASYOCR", "").strip().lower() in {"1", "true", "yes", "on"}:
+        logging.info("EasyOCR disabled via LITEMIND_DISABLE_EASYOCR")
+        EASYOCR_AVAILABLE = False
+        return
+    try:
+        import easyocr as _easyocr
+
+        easyocr = _easyocr
+        EASYOCR_AVAILABLE = True
+    except Exception as e:
+        EASYOCR_AVAILABLE = False
+        logging.warning(f"EasyOCR not available (will use fallback text extraction): {e}")
+
+
 class EnhancedDocumentProcessor:
     """Enhanced processor for PDFs and mixed-content documents."""
 
     def __init__(self):
+        _probe_easyocr()
         try:
             # Initialize OCR reader for fallback text extraction
             if EASYOCR_AVAILABLE and easyocr is not None:
@@ -300,6 +315,8 @@ class EnhancedDocumentProcessor:
 
     def _run_page_ocr(self, image: Image.Image) -> Tuple[str, int]:
         """Apply a few OCR-friendly variants to a rendered PDF page."""
+        import cv2
+
         rgb = np.array(image)
         gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
         variants = [rgb, gray]

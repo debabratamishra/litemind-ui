@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import MessageBubble from '@/components/message-bubble';
 import VoiceActivityIndicator from '@/components/voice-activity';
-import { useAppStore, selectActiveConversation, selectActiveId, selectSettings, selectUser } from '@/lib/store';
+import { useAppStore, selectActiveConversation, selectActiveId, selectSettings } from '@/lib/store';
 import { streamChat, streamWebSearch } from '@/lib/api';
 import type { ChatMessage } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -38,7 +38,6 @@ export default function ChatPage() {
   const conv = useAppStore(selectActiveConversation);
   const activeId = useAppStore(selectActiveId);
   const settings = useAppStore(selectSettings);
-  const user = useAppStore(selectUser);
   const { addMessage, updateLastMessage, setWebSearch, clearConversation, createConversation } = useAppStore();
 
   const [input, setInput] = React.useState('');
@@ -100,7 +99,14 @@ export default function ChatPage() {
     },
   }), [addMessage, updateLastMessage]);
 
-  const { state: realtimeState, start: startRealtime, stop: stopRealtime, isConnected: realtimeOn } = useRealtimeVoice(settings, voiceCallbacks);
+  const { state: realtimeState, start: startRealtime, stop: stopRealtime, isConnected: realtimeOn } = useRealtimeVoice(
+    {
+      voiceProvider: settings.voiceProvider,
+      agentId: settings.elevenlabsAgentId ?? null,
+      apiKey: settings.elevenlabsApiKey ?? null,
+    },
+    voiceCallbacks,
+  );
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -179,7 +185,7 @@ export default function ChatPage() {
     if (action === 'send_message' && payload) void handleSend(payload);
   }, [handleSend]);
 
-  const greeting = user?.name ? `Hey ${user.name}, How can I help you today?` : 'How can I help you today?';
+  const greeting = 'How can I help you today?';
 
   if (!conv || !activeId) {
     return (

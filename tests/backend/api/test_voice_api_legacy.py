@@ -2,48 +2,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.app.backend.api.auth_deps import User, get_current_user
+from backend.app.backend.api.deps import User, get_system_user
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client():
     import backend.app.backend.api.voice as voice_mod
 
-    calls = {}
-
-    class FakeConn:
-        pc_id = "test-pc"
-
-        def __init__(self, ice_servers):
-            self.ice_servers = ice_servers
-
-        async def initialize(self, sdp, type):
-            calls["init"] = (sdp, type)
-
-        def event_handler(self, name):
-            def deco(fn):
-                return fn
-
-            return deco
-
-        def get_answer(self):
-            return {"sdp": "fake-answer", "type": "answer", "pc_id": self.pc_id}
-
-        async def renegotiate(self, sdp, type, restart_pc=False):
-            calls["reneg"] = True
-
-    # The route imports Pipecat and the pipeline at call time, so patch them
-    # at their source modules rather than on the router.
-    monkeypatch.setattr(
-        "pipecat.transports.smallwebrtc.connection.SmallWebRTCConnection", FakeConn
-    )
-    monkeypatch.setattr(
-        "backend.app.services.voice_pipeline.run_voice_pipeline", lambda conn, settings: None
-    )
     app = FastAPI()
     app.include_router(voice_mod.router)
-    # Voice offer now requires authentication; provide a user for the tests.
-    app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@x.com")
+    # Voice offer resolves the seeded system user; provide a user for the tests.
+    app.dependency_overrides[get_system_user] = lambda: User(id="u1", email="u1@x.com")
     voice_mod.pcs_map.clear()
     yield TestClient(app)
     voice_mod.pcs_map.clear()

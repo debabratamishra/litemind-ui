@@ -47,13 +47,15 @@ def test_create_embedding_function_huggingface_returns_callable(monkeypatch):
 
 
 def test_create_embedding_function_ollama_returns_callable():
+    from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+
     fn = embeddings.create_embedding_function(
         provider="ollama",
         model_name="nomic-embed-text",
         ollama_url="http://localhost:11434",
     )
     assert callable(fn)
-    assert isinstance(fn, embeddings.OllamaEmbeddingFunction)
+    assert isinstance(fn, OllamaEmbeddingFunction)
 
 
 def test_create_embedding_function_ollama_requires_url():

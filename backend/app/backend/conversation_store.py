@@ -3,13 +3,12 @@ User-scoped conversation persistence backed by PostgreSQL (asyncpg).
 
 This replaces the previous SQLite ``conversation_db`` module. Every query is
 filtered by ``user_id`` so that one user can never read or mutate another
-user's conversations or messages — this is the core isolation guarantee for
-the authentication feature.
+user's conversations or messages — this is the core isolation guarantee
+between users.
 
 The schema (users / conversations / messages) is created idempotently by
-``init_schema()``. The source of truth for *users* is GoTrue; we mirror the
-GoTrue ``sub`` (a UUID) into the local ``users`` table so conversations can
-reference it with a foreign key.
+``init_schema()``, which also seeds the system user (``deps.SYSTEM_USER_ID``)
+and repoints conversations orphaned by deleted auth users to it.
 """
 
 from __future__ import annotations
@@ -21,6 +20,7 @@ from typing import List, Optional
 
 import asyncpg
 
+from backend.app.backend.api.deps import SYSTEM_USER_ID
 from backend.app.backend.core.config import Config
 
 logger = logging.getLogger(__name__)
@@ -125,10 +125,23 @@ class ConversationStore:
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(SCHEMA_SQL)
+            # Seed the system user (auth was removed; it owns everything).
+            await conn.execute(
+                "INSERT INTO users (id) VALUES ($1) ON CONFLICT DO NOTHING",
+                uuid.UUID(SYSTEM_USER_ID),
+            )
+            # Repoint rows orphaned by deleted auth users (messages has no user_id).
+            await conn.execute(
+                """
+                UPDATE conversations SET user_id = $1
+                WHERE user_id NOT IN (SELECT id FROM users)
+                """,
+                uuid.UUID(SYSTEM_USER_ID),
+            )
         logger.info("Conversation store schema initialized")
 
     async def upsert_user(self, user_id: str, email: Optional[str] = None) -> None:
-        """Mirror a GoTrue user into the local users table (idempotent)."""
+        """Ensure a user row exists in the local users table (idempotent)."""
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
