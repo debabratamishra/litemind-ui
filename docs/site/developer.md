@@ -104,7 +104,7 @@ description: >-
     <p>
       Browser and server establish a WebRTC peer connection; the browser POSTs an SDP
       offer to <code>POST /api/voice/offer</code>. A Pipecat pipeline runs in the
-      background, with Whisper STT + Kokoro TTS + LLM. Transcripts and control events flow
+      background, with Whisper STT + LLM. Transcripts and control events flow
       back over the WebRTC data channel. <strong>Voice is a separate pipeline, not a
       Skill</strong>. Do not route it through the skill layer.
     </p>

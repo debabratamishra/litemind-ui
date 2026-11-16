@@ -131,7 +131,7 @@ offer to `POST /api/voice/offer`; the server answers and runs a Pipecat pipeline
 (`build_voice_pipeline` → `run_voice_pipeline`) as a background task. All
 transcript/control events flow back over the WebRTC data channel.
 
-- STT: `BackendWhisperSTTService` (segmented, VAD-gated). TTS: `BackendKokoroTTSService`.
+- STT: `BackendWhisperSTTService` (segmented, VAD-gated). Local TTS is pyttsx3 via `tts_service.py`.
 - The LLM leg is `BackendLLMService` (subclasses `BaseOpenAILLMService`); `process_frame`
   drives inference, so do not call the LLM gateway directly inside the voice pipeline.
 - Backend→browser events: `ready`, `user_transcript`, `assistant_text`, `assistant_end`,

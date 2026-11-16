@@ -18,7 +18,7 @@ dependencies = [
 [dependency-groups]
 # Install profiles. `core` is the always-required set: a core-only image must
 # boot (`import backend.main`) without chromadb/torch/transformers/pipecat/
-# kokoro/librosa/easyocr/cv2/crewai importable at module level.
+# librosa/easyocr/cv2/crewai importable at module level.
 core = [
     # Core FastAPI + server plumbing
     "fastapi",
@@ -53,9 +53,10 @@ ml = [
 ]
 
 voice = [
-    # Lightweight offline voice fallback
+    # Local speech: pyttsx3 TTS fallback + Whisper STT audio I/O
     "pyttsx3",
     "soundfile",
+    "librosa",
 ]
 
 ocr = [
@@ -117,6 +118,7 @@ all = [
     # voice
     "pyttsx3",
     "soundfile",
+    "librosa",
     # ocr
     "easyocr",
     "opencv-python-headless",

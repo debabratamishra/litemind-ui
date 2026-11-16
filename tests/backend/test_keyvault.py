@@ -107,12 +107,12 @@ async def test_set_updates_existing_kind_provider():
 async def test_list_credentials_has_no_token_field():
     vault = KeyVault()
     vault._pool = FakePool()
-    await vault.set_credential("tts", "kokoro", "voice", "plain-token")
+    await vault.set_credential("tts", "pyttsx3", "voice", "plain-token")
     rows = await vault.list_credentials()
     assert len(rows) == 1
     assert set(rows[0]) == {"id", "kind", "label", "provider", "updated_at"}
     assert rows[0]["kind"] == "tts"
-    assert rows[0]["provider"] == "kokoro"
+    assert rows[0]["provider"] == "pyttsx3"
 
 
 @pytest.mark.asyncio

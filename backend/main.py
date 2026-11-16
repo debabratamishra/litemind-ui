@@ -238,8 +238,8 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"  ✗ Failed to preload STT model: {e}")
 
             try:
-                # Preload TTS (Kokoro) model
-                logger.info("  → Loading TTS (Kokoro) model...")
+                # Preload TTS (pyttsx3) — no-op, kept for startup compatibility
+                logger.info("  → Loading TTS (pyttsx3) model...")
                 preload_tts_model()
                 tts_loaded = True
                 logger.info("  ✓ TTS model loaded successfully")

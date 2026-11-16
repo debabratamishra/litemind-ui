@@ -12,8 +12,7 @@
 #            Add `voice` for realtime voice mode, `ocr` for document ingestion,
 #            `dev` for a test-capable image.
 #   VOICE    set to 1 to add the native WebRTC/TTS libraries (aiortc dlopen()s
-#            the ffmpeg -dev .so symlinks at runtime; kokoro/espeak need
-#            libsndfile1 + espeak).
+#            the ffmpeg -dev .so symlinks at runtime; espeak backs pyttsx3).
 ARG PROFILE=core,ml
 ARG VOICE=0
 
@@ -73,7 +72,7 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:${PATH}"
 
 # Base runtime apt set: curl (healthchecks), procps (ps for graceful-shutdown
-# + diagnostics), libsndfile1 (soundfile/kokoro TTS). VOICE=1 adds the ffmpeg
+# + diagnostics), libsndfile1 (soundfile). VOICE=1 adds the ffmpeg
 # -dev family + espeak: aiortc (via Pipecat small-webrtc) dlopen()s the
 # unversioned .so symlinks only the -dev packages provide, and espeak backs the
 # pyttsx3 TTS fallback.

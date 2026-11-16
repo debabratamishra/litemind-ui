@@ -21,7 +21,6 @@ HEAVY = {
     "torch",
     "transformers",
     "pipecat",
-    "kokoro",
     "librosa",
     "easyocr",
     "cv2",
