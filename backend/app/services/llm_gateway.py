@@ -179,7 +179,14 @@ async def stream_completion(
             # Resolution order: explicit request param > user key vault > env
             # var. The vault row for the requested backend lets a key saved in
             # the UI reach real inference without touching the request params.
-            vault_key = await get_key_vault().get_credential("llm", backend or "")
+            # The lookup is best-effort: if the vault is unreachable (DB down,
+            # corrupt key file) the turn must still run on env-var keys as it
+            # did before the vault existed, not 500 the chat.
+            try:
+                vault_key = await get_key_vault().get_credential("llm", backend or "")
+            except Exception:
+                logger.warning("Key vault read failed; falling back to env keys", exc_info=True)
+                vault_key = None
             if vault_key:
                 api_key = vault_key
         config = resolve_backend_config(

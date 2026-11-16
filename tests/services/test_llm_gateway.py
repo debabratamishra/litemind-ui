@@ -395,10 +395,13 @@ async def test_complete_text_handles_empty_stream():
 class _FakeVault:
     """Minimal key-vault stand-in holding one (kind, provider) credential."""
 
-    def __init__(self, key: str | None):
+    def __init__(self, key: str | None, *, error: Exception | None = None):
         self._key = key
+        self._error = error
 
     async def get_credential(self, kind, provider):
+        if self._error:
+            raise self._error
         return self._key if kind == "llm" and provider == "openrouter" else None
 
 
@@ -477,3 +480,23 @@ async def test_stream_completion_vault_key_reaches_ollama_native_path():
     # The vault row is keyed by the requested backend name, so an "ollama"
     # lookup finds nothing and the native path proceeds keyless.
     assert captured.get("api_key") is None
+
+
+async def test_stream_completion_vault_outage_degrades_to_env_key():
+    """Vault read failure must not break the turn: env keys still work."""
+    captured: dict = {}
+
+    async def fake(**kwargs):
+        return await _patched_acompletion(captured, **kwargs)
+
+    with patch.object(
+        gw, "get_key_vault", lambda: _FakeVault(None, error=RuntimeError("db down"))
+    ), patch.object(gw.litellm, "acompletion", side_effect=fake):
+        chunks = [
+            c
+            async for c in gw.stream_completion(
+                backend="openrouter", model="gpt-4", messages=[], api_key="sk-env"
+            )
+        ]
+    assert "".join(chunks) == "Hello"
+    assert captured["api_key"] == "sk-env"
